@@ -1,0 +1,39 @@
+import express from "express";
+import { superAdminAuth } from "../middlewares/superAdminAuth.js";
+import { login } from "../controllers/superAdmin.controller.js";
+import {
+  createTenant,
+  listTenants,
+  toggleTenant,
+  deleteTenant,
+  getDashboardStats,
+  impersonateTenant,
+  createUpgradeRequest,
+  getUpgradeRequests,
+  approveUpgradeRequest,
+  getTenantDetails,
+  getTenantBySlugPublic,
+} from "../controllers/tenant.controller.js";
+
+const router = express.Router();
+
+// Auth
+router.post("/api/auth/login", login);
+
+// Tenant management — all protected except submit upgrade-request which can be called by tenant portal
+router.post("/api/tenants/upgrade-request", createUpgradeRequest);
+router.get("/api/tenants/public/by-slug/:slug", getTenantBySlugPublic);
+
+// Upgrade request management for Superadmin
+router.get("/api/tenants/upgrade-requests", superAdminAuth, getUpgradeRequests);
+router.post("/api/tenants/upgrade-approve/:id", superAdminAuth, approveUpgradeRequest);
+
+router.post("/api/tenants/create",        superAdminAuth, createTenant);
+router.get("/api/tenants",                superAdminAuth, listTenants);
+router.get("/api/tenants/:id",            superAdminAuth, getTenantDetails);
+router.patch("/api/tenants/:id/toggle",   superAdminAuth, toggleTenant);
+router.delete("/api/tenants/:id",         superAdminAuth, deleteTenant);
+router.get("/api/dashboard/stats",        superAdminAuth, getDashboardStats);
+router.post("/api/tenants/:id/impersonate", superAdminAuth, impersonateTenant);
+
+export default router;
