@@ -23,6 +23,7 @@ import emailRoutes from "./email.routes.js"
 import gmailRoutes from "./gmailRoutes.js"; 
 import googleAuthRoutes from "./googleAuthRoutes.js";
 import linkedinRoutes from "./linkedin.routes.js";
+import justdialRoutes from "./justdial.routes.js";
 
 const router = express.Router();
 
@@ -54,5 +55,6 @@ router.use("/settings", settingsRoutes);
 router.use("/client-ltv", clientLTVRoutes);
 router.use("/email",emailRoutes);
 router.use("/linkedin", linkedinRoutes);
+router.use("/justdial", justdialRoutes);
 
 export default router;

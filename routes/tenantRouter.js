@@ -33,6 +33,7 @@ import emailRoutes         from "./email.routes.js";
 import fileRoutes          from "./files.routes.js";
 import metaRoutes          from "./meta.routes.js";
 import linkedinRoutes      from "./linkedin.routes.js";
+import justdialRoutes      from "./justdial.routes.js";
 
 
 const router = express.Router();
@@ -64,6 +65,7 @@ router.use("/email",           emailRoutes);
 router.use("/files",           fileRoutes);
 router.use("/meta",            metaRoutes);
 router.use("/linkedin",        linkedinRoutes);
+router.use("/justdial",        justdialRoutes);
 
 
 export default router;
