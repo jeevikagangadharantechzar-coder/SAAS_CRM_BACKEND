@@ -294,7 +294,9 @@ export default {
       if (!frontendUrl)
         return res.status(500).json({ success: false, message: "FRONTEND_URL not configured" });
 
-      const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
+      const resetUrl = req.tenant
+        ? `${frontendUrl}/${req.tenant.slug}/reset-password/${resetToken}`
+        : `${frontendUrl}/reset-password/${resetToken}`;
       const message = `
         <h2>Password Reset</h2>
         <p>You requested password reset</p>
