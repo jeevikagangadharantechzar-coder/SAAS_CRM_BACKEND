@@ -23,6 +23,8 @@ import aiChatSchema        from "../schemas/aiChatSchema.js";
 import botHistorySchema         from "../schemas/botHistorySchema.js";
 import metaIntegrationSchema    from "../schemas/metaIntegrationSchema.js";
 import linkedinIntegrationSchema from "../schemas/linkedinIntegrationSchema.js";
+import indiaMartIntegrationSchema from "../schemas/indiaMartIntegrationSchema.js";
+import auditLogSchema from "../schemas/auditLogSchema.js";
 
 
 const MODEL_MAP = [
@@ -51,6 +53,8 @@ const MODEL_MAP = [
   ["BotHistory",       botHistorySchema],
   ["MetaIntegration",  metaIntegrationSchema],
   ["LinkedInIntegration", linkedinIntegrationSchema],
+  ["IndiaMartIntegration", indiaMartIntegrationSchema],
+  ["AuditLog",             auditLogSchema],
 ];
 
 /**
@@ -97,5 +101,7 @@ export function getTenantModels(conn) {
     BotHistory:       conn.model("BotHistory"),
     MetaIntegration:  conn.model("MetaIntegration"),
     LinkedInIntegration: conn.model("LinkedInIntegration"),
+    IndiaMartIntegration: conn.model("IndiaMartIntegration"),
+    AuditLog:             conn.model("AuditLog"),
   };
 }
