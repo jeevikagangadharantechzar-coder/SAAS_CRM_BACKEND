@@ -22,7 +22,7 @@ redisSub.on("error",    (err) => console.warn("Redis sub:",    err.message));
 export const connectedUsers = {};
 const offlineMessages = {};
 
-let io;
+export let io;
 
 export const initSocket = (server) => {
   io = new Server(server, { cors: { origin: "*" } });
@@ -55,6 +55,7 @@ export const initSocket = (server) => {
 const addUserSocket = async (userId, socket) => {
   const uid = String(userId);
   if (!connectedUsers[uid]) connectedUsers[uid] = [];
+  if (connectedUsers[uid].some((s) => s.id === socket.id)) return;
   connectedUsers[uid].push(socket);
   console.log("User connected:", uid);
 
