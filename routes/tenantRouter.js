@@ -36,6 +36,8 @@ import linkedinRoutes      from "./linkedin.routes.js";
 import chatRoutes          from "./chat.routes.js";
 import justdialRoutes      from "./justdial.routes.js";
 import indiamartRoutes      from "./indiamart.routes.js";
+import ninetyNineAcresRoutes from "./99acres.routes.js";
+import sulekhaRoutes       from "./sulekha.routes.js";
 
 
 const router = express.Router();
@@ -70,6 +72,8 @@ router.use("/linkedin",        linkedinRoutes);
 router.use("/chat",            chatRoutes);
 router.use("/justdial",        justdialRoutes);
 router.use("/indiamart",        indiamartRoutes);
+router.use("/99acres",         ninetyNineAcresRoutes);
+router.use("/sulekha",         sulekhaRoutes);
 
 
 export default router;

@@ -15,7 +15,7 @@ export default {
         return res.status(400).json({ success: false, message: "No data received" });
       }
 
-      console.log(`📥 Justdial lead received for tenant ${req.tenant?.slug || "unknown"}:`, data);
+      console.log(` Justdial lead received for tenant ${req.tenant?.slug || "unknown"}:`, data);
 
       const { Lead } = getTenantModels(req.tenantDB);
 
@@ -35,7 +35,7 @@ export default {
         });
 
         if (existingLead) {
-          console.log(`⚠️ Justdial Lead with phone ${mobile} already exists — skipping`);
+          console.log(` Justdial Lead with phone ${mobile} already exists — skipping`);
           return res.status(200).json({ success: true, message: "Duplicate lead ignored" });
         }
       }
@@ -53,11 +53,11 @@ export default {
         notes: `Auto-captured from Justdial integration.\nCity: ${city}\nCategory: ${category}\nRaw Data: ${JSON.stringify(data)}`,
       });
 
-      console.log(`✅ Justdial Lead created successfully: ${name} (${mobile})`);
+      console.log(`Justdial Lead created successfully: ${name} (${mobile})`);
       return res.status(200).json({ success: true, message: "Lead captured successfully", leadId: newLead._id });
     } catch (error) {
-      console.error("❌ Justdial webhook error:", error.message);
+      console.error("Justdial webhook error:", error.message);
       return res.status(500).json({ success: false, message: "Internal server error" });
     }
-  },
+  }
 };
