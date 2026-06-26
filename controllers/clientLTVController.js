@@ -325,10 +325,25 @@ export default {
 
       const sixMonthsAgo = new Date(); sixMonthsAgo.setMonth(sixMonthsAgo.getMonth()-6);
       const revenueTrends = await Deal.aggregate([
-        { $match: { stage:"Closed Won", wonAt:{ $exists:true, $ne:null, $gte:sixMonthsAgo } } },
-        { $addFields: { numericValue: { $toDouble: { $reduce: { input: { $regexFindAll: { input:"$value", regex:"\\d+" } }, initialValue:"", in: { $concat:["$$value","$$this.match"] } } } } } },
-        { $group: { _id:{ year:{$year:"$wonAt"}, month:{$month:"$wonAt"} }, revenue:{$sum:"$numericValue"}, count:{$sum:1} } },
-        { $sort: { "_id.year":1, "_id.month":1 } }, { $limit: 12 }
+        { 
+          $match: { 
+            stage: "Closed Won",
+            $or: [
+              { wonAt: { $gte: sixMonthsAgo } },
+              { wonAt: null, createdAt: { $gte: sixMonthsAgo } },
+              { wonAt: { $exists: false }, createdAt: { $gte: sixMonthsAgo } }
+            ]
+          } 
+        },
+        { 
+          $addFields: { 
+            winDate: { $ifNull: ["$wonAt", "$createdAt"] },
+            numericValue: { $toDouble: { $reduce: { input: { $regexFindAll: { input: "$value", regex: "\\d+" } }, initialValue: "", in: { $concat: ["$$value", "$$this.match"] } } } } 
+          } 
+        },
+        { $group: { _id: { year: { $year: "$winDate" }, month: { $month: "$winDate" } }, revenue: { $sum: "$numericValue" }, count: { $sum: 1 } } },
+        { $sort: { "_id.year": 1, "_id.month": 1 } }, 
+        { $limit: 12 }
       ]);
       const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
       const now = new Date();

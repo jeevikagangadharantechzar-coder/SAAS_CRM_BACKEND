@@ -166,7 +166,7 @@ export default {
         User = UserLegacy;
       }
 
-      const user = await User.findOne({ email }).populate("role").select("+password");
+      const user = await User.findOne({ email: email.toLowerCase().trim() }).populate("role").select("+password");
       if (!user)
         return res.status(401).json({ success: false, message: "Invalid email or password" });
 
@@ -284,7 +284,7 @@ export default {
       const { email } = req.body;
       if (!email) return res.status(400).json({ success: false, message: "Email is required" });
 
-      const user = await User.findOne({ email });
+      const user = await User.findOne({ email: email.toLowerCase().trim() });
       if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
       const resetToken = user.getResetPasswordToken();

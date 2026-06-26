@@ -11,8 +11,11 @@ import {
   createUpgradeRequest,
   getUpgradeRequests,
   approveUpgradeRequest,
+  rejectUpgradeRequest,
   getTenantDetails,
   getTenantBySlugPublic,
+  getUpgradeHistory,
+  updateTenant,
 } from "../controllers/tenant.controller.js";
 
 const router = express.Router();
@@ -26,11 +29,14 @@ router.get("/api/tenants/public/by-slug/:slug", getTenantBySlugPublic);
 
 // Upgrade request management for Superadmin
 router.get("/api/tenants/upgrade-requests", superAdminAuth, getUpgradeRequests);
+router.get("/api/tenants/upgrade-history", superAdminAuth, getUpgradeHistory);
 router.post("/api/tenants/upgrade-approve/:id", superAdminAuth, approveUpgradeRequest);
+router.post("/api/tenants/upgrade-reject/:id", superAdminAuth, rejectUpgradeRequest);
 
 router.post("/api/tenants/create",        superAdminAuth, createTenant);
 router.get("/api/tenants",                superAdminAuth, listTenants);
 router.get("/api/tenants/:id",            superAdminAuth, getTenantDetails);
+router.put("/api/tenants/:id",             superAdminAuth, updateTenant);
 router.patch("/api/tenants/:id/toggle",   superAdminAuth, toggleTenant);
 router.delete("/api/tenants/:id",         superAdminAuth, deleteTenant);
 router.get("/api/dashboard/stats",        superAdminAuth, getDashboardStats);
