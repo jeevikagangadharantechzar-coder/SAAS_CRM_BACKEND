@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { sendNotification } from "../services/notificationService.js";
+import { notifyUser } from "../realtime/socket.js";
 import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import Tenant from "../models/master/Tenant.js";
@@ -121,6 +122,147 @@ const runForModels = async ({ Deal, Lead, Proposal, Notification, User, Role }, 
   } catch (e) { console.error(`[${label}] Error in proposals section:`, e.message); }
 };
 
+// ── Target deadline reminder + auto-expire ────────────────────────────────────
+const runTargetDeadlineCron = async () => {
+  let tenants = [];
+  try { tenants = await Tenant.find({ isActive: true }).lean(); } catch (_) {}
+
+  const processTargets = async (models, tenantDB, label) => {
+    if (!models.Target || !models.Lead || !models.Deal || !models.Notification || !models.User || !models.Role) return;
+    const { Target, Lead, Deal, Notification, User, Role } = models;
+    const now   = new Date();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+    const tomorrowEnd = new Date(tomorrow); tomorrowEnd.setHours(23, 59, 59, 999);
+
+    const adminRole = await Role.findOne({ name: "Admin" }).lean();
+    const adminIds  = adminRole ? (await User.find({ role: adminRole._id, status: "Active" }).select("_id").lean()).map(u => String(u._id)) : [];
+
+    // 1. Reminder: endDate = tomorrow
+    const tomorrowTargets = await Target.find({
+      endDate: { $gte: tomorrow, $lte: tomorrowEnd },
+      reminderSentAt: null,
+    }).populate("salesPerson", "firstName lastName _id").populate("linkedLeads", "leadName").populate("linkedDeals", "dealName dealTitle").lean();
+
+    for (const t of tomorrowTargets) {
+      if (!t.salesPerson) continue;
+      const leadNames = (t.linkedLeads || []).map(l => l.leadName).filter(Boolean).join(", ");
+      const dealNames = (t.linkedDeals || []).map(d => d.dealName || d.dealTitle).filter(Boolean).join(", ");
+      const itemsSuffix = [leadNames && `Leads: ${leadNames}`, dealNames && `Deals: ${dealNames}`].filter(Boolean).join(" | ");
+      const salesName = `${t.salesPerson.firstName} ${t.salesPerson.lastName}`;
+
+      // Notify sales person
+      await sendNotification(t.salesPerson._id,
+        `⏰ Reminder: Tomorrow is the last day for your target! ${itemsSuffix ? `(${itemsSuffix})` : ""} Complete them before the deadline!`,
+        "target_reminder", { targetId: String(t._id), salesName }, {}, tenantDB);
+      notifyUser(String(t.salesPerson._id), "target_reminder", { targetId: String(t._id), message: `Tomorrow is the last day for your target! Hurry up and complete: ${itemsSuffix}` });
+
+      // Notify admins
+      for (const adminId of adminIds) {
+        await sendNotification(adminId,
+          `⏰ Reminder: Tomorrow is the last day for ${salesName}'s target. ${itemsSuffix ? `(${itemsSuffix})` : ""}`,
+          "target_reminder", { targetId: String(t._id), salesName }, {}, tenantDB);
+      }
+
+      await Target.findByIdAndUpdate(t._id, { reminderSentAt: new Date() });
+    }
+
+    // 2. Due today notification
+    const todayEnd = new Date(today); todayEnd.setHours(23, 59, 59, 999);
+    const dueTodayTargets = await Target.find({
+      endDate: { $gte: today, $lte: todayEnd },
+      dueTodaySentAt: null,
+    }).populate("salesPerson", "firstName lastName _id").populate("linkedLeads", "leadName").populate("linkedDeals", "dealName dealTitle").lean();
+
+    for (const t of dueTodayTargets) {
+      if (!t.salesPerson) continue;
+      const leadNames = (t.linkedLeads || []).map(l => l.leadName).filter(Boolean).join(", ");
+      const dealNames = (t.linkedDeals || []).map(d => d.dealName || d.dealTitle).filter(Boolean).join(", ");
+      const itemsSuffix = [leadNames && `Leads: ${leadNames}`, dealNames && `Deals: ${dealNames}`].filter(Boolean).join(" | ");
+      const salesName = `${t.salesPerson.firstName} ${t.salesPerson.lastName}`;
+
+      // Notify sales person
+      await sendNotification(t.salesPerson._id,
+        `🚨 Today is the LAST day for your target! ${itemsSuffix ? `(${itemsSuffix})` : ""} You must complete them today or they will be expired!`,
+        "target_due_today", { targetId: String(t._id), salesName }, {}, tenantDB);
+      notifyUser(String(t.salesPerson._id), "target_due_today", { targetId: String(t._id), message: `Today is the LAST day! Complete: ${itemsSuffix}` });
+
+      // Notify admins
+      for (const adminId of adminIds) {
+        await sendNotification(adminId,
+          `🚨 Today is the last day for ${salesName}'s target. ${itemsSuffix ? `(${itemsSuffix})` : ""}`,
+          "target_due_today", { targetId: String(t._id), salesName }, {}, tenantDB);
+      }
+
+      await Target.findByIdAndUpdate(t._id, { dueTodaySentAt: new Date() });
+    }
+
+    // 3. Auto-expire: endDate < today (past deadline) — delete incomplete leads/deals
+    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+    const expiredTargets = await Target.find({
+      endDate: { $lt: today },
+      expiredAt: null,
+    }).populate("salesPerson", "firstName lastName _id").lean();
+
+    for (const t of expiredTargets) {
+      if (!t.salesPerson) continue;
+      const rawLeadIds = (t.linkedLeads || []);
+      const rawDealIds = (t.linkedDeals || []);
+
+      // Find incomplete leads (still exist = not converted) and delete them
+      const incompleteLeads = await Lead.find({ _id: { $in: rawLeadIds } }).select("_id leadName").lean();
+      const incompleteDealDocs = await Deal.find({ _id: { $in: rawDealIds }, stage: { $nin: ["Closed Won"] } }).select("_id dealName").lean();
+
+      const deletedLeadNames = incompleteLeads.map(l => l.leadName);
+      const deletedDealNames = incompleteDealDocs.map(d => d.dealName);
+
+      if (incompleteLeads.length > 0) await Lead.deleteMany({ _id: { $in: incompleteLeads.map(l => l._id) } });
+      if (incompleteDealDocs.length > 0) await Deal.deleteMany({ _id: { $in: incompleteDealDocs.map(d => d._id) } });
+
+      const allDeleted = [...deletedLeadNames, ...deletedDealNames].join(", ");
+      const salesName = `${t.salesPerson.firstName} ${t.salesPerson.lastName}`;
+
+      if (allDeleted) {
+        // Notify sales person
+        await sendNotification(t.salesPerson._id,
+          `❌ Your target has expired! The following incomplete items have been removed: ${allDeleted}. Please discuss with your admin.`,
+          "target_expired", { targetId: String(t._id) }, {}, tenantDB);
+        notifyUser(String(t.salesPerson._id), "target_expired", { targetId: String(t._id), removed: allDeleted });
+
+        // Notify admins
+        for (const adminId of adminIds) {
+          await sendNotification(adminId,
+            `❌ ${salesName}'s target expired. Removed incomplete items: ${allDeleted}.`,
+            "target_expired", { targetId: String(t._id), salesName }, {}, tenantDB);
+        }
+      }
+
+      await Target.findByIdAndUpdate(t._id, { expiredAt: new Date() });
+    }
+  };
+
+  // Legacy
+  try {
+    const legacyModels = {
+      Target: (await import("../models/schemas/targetSchema.js")).default,
+      Lead: (await import("../models/leads.model.js")).default,
+      Deal: (await import("../models/deals.model.js")).default,
+      Notification: (await import("../models/notification.model.js")).default,
+      User: (await import("../models/user.model.js")).default,
+      Role: (await import("../models/role.model.js")).default,
+    };
+    await processTargets(legacyModels, null, "legacy");
+  } catch (e) { console.error("Target cron legacy error:", e.message); }
+
+  for (const tenant of tenants) {
+    try {
+      const tenantDB = await getTenantDB(tenant.dbName);
+      const models = getTenantModels(tenantDB);
+      await processTargets(models, tenantDB, tenant.slug);
+    } catch (e) { console.error(`Target cron error for tenant ${tenant.slug}:`, e.message); }
+  }
+};
+
 const runNotificationCron = async () => {
   if (isCronRunning) { console.log("Cron already running, skipping"); return; }
   if (!checkDbConnection()) return;
@@ -156,12 +298,22 @@ const runNotificationCron = async () => {
 
 let cronTask = null;
 
+let targetCronTask = null;
+
 export const startCron = () => {
   if (cronTask) { cronTask.stop(); }
   cronTask = cron.schedule("*/1 * * * *", async () => {
     try { await runNotificationCron(); }
     catch (err) { console.error("Cron execution error:", err); }
   });
+
+  // Target deadline cron — runs daily at 8:00 AM
+  if (targetCronTask) { targetCronTask.stop(); }
+  targetCronTask = cron.schedule("0 8 * * *", async () => {
+    try { await runTargetDeadlineCron(); }
+    catch (err) { console.error("Target deadline cron error:", err); }
+  });
+
   console.log(`Notification Cron started: ${new Date().toISOString()}`);
 };
 

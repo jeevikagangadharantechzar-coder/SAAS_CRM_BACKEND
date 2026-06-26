@@ -57,6 +57,13 @@ const leadSchema = new mongoose.Schema(
         uploadedAt: { type: Date, default: Date.now },
       },
     ],
+
+    statusHistory: [
+      {
+        status:    { type: String },
+        changedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true }
 );

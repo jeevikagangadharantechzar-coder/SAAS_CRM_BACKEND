@@ -21,6 +21,9 @@ const permissionsSchema = new mongoose.Schema(
     reports:             { type: Boolean, default: false },
     settings:            { type: Boolean, default: false },
     streak_leaderboard:  { type: Boolean, default: false },
+    assigned_tasks:      { type: Boolean, default: true },
+    task_management:     { type: Boolean, default: false },
+    target_management:   { type: Boolean, default: false },
   },
   { _id: false }
 );

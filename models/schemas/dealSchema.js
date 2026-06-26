@@ -54,7 +54,16 @@ const dealSchema = new mongoose.Schema({
   stageLostAt:   { type: String, default: null },
   lostDate:      { type: Date, default: null },
   wonAt:         { type: Date },
+  stageHistory: [
+    {
+      stage:   { type: String },
+      movedAt: { type: Date, default: Date.now },
+      movedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    },
+  ],
   wonBy:         { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  leadStatusHistory: [{ status: { type: String }, changedAt: { type: Date } }],
+  leadCreatedAt: { type: Date, default: null },
   clientReviewId:{ type: mongoose.Schema.Types.ObjectId, ref: "ClientReview" },
   followUpDate:  { type: Date, default: null },
   followUpComment: { type: String, default: "" },
