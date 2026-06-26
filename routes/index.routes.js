@@ -23,6 +23,9 @@ import emailRoutes from "./email.routes.js"
 import gmailRoutes from "./gmailRoutes.js"; 
 import googleAuthRoutes from "./googleAuthRoutes.js";
 import linkedinRoutes from "./linkedin.routes.js";
+import justdialRoutes from "./justdial.routes.js";
+import ninetyNineAcresRoutes from "./99acres.routes.js";
+import sulekhaRoutes from "./sulekha.routes.js";
 
 const router = express.Router();
 
@@ -54,5 +57,8 @@ router.use("/settings", settingsRoutes);
 router.use("/client-ltv", clientLTVRoutes);
 router.use("/email",emailRoutes);
 router.use("/linkedin", linkedinRoutes);
+router.use("/justdial", justdialRoutes);
+router.use("/99acres", ninetyNineAcresRoutes);
+router.use("/sulekha", sulekhaRoutes);
 
 export default router;

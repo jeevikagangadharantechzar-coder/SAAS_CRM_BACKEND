@@ -35,6 +35,11 @@ import metaRoutes          from "./meta.routes.js";
 import linkedinRoutes      from "./linkedin.routes.js";
 import taskRoutes          from "./task.routes.js";
 import targetRoutes        from "./target.routes.js";
+import chatRoutes          from "./chat.routes.js";
+import justdialRoutes      from "./justdial.routes.js";
+import indiamartRoutes      from "./indiamart.routes.js";
+import ninetyNineAcresRoutes from "./99acres.routes.js";
+import sulekhaRoutes       from "./sulekha.routes.js";
 
 
 const router = express.Router();
@@ -68,6 +73,11 @@ router.use("/meta",            metaRoutes);
 router.use("/linkedin",        linkedinRoutes);
 router.use("/tasks",           taskRoutes);
 router.use("/targets",         targetRoutes);
+router.use("/chat",            chatRoutes);
+router.use("/justdial",        justdialRoutes);
+router.use("/indiamart",        indiamartRoutes);
+router.use("/99acres",         ninetyNineAcresRoutes);
+router.use("/sulekha",         sulekhaRoutes);
 
 
 export default router;

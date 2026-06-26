@@ -46,6 +46,7 @@ import "./cron/notificationCron.js";
 
 // Socket
 import { initSocket } from "./realtime/socket.js";
+import { initChatSocket } from "./realtime/chatSocket.js";
 
 // Background jobs
 import "./cron/emailCron.js";
@@ -259,6 +260,7 @@ app.use((err, _req, res, _next) => {
 // ─────────────────────────────────────────────
 const server = http.createServer(app);
 initSocket(server);
+initChatSocket();
 
 // ─────────────────────────────────────────────
 // Start Cron Jobs

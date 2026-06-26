@@ -25,6 +25,8 @@ import metaIntegrationSchema    from "../schemas/metaIntegrationSchema.js";
 import linkedinIntegrationSchema from "../schemas/linkedinIntegrationSchema.js";
 import taskSchema               from "../schemas/taskSchema.js";
 import targetSchema             from "../schemas/targetSchema.js";
+import indiaMartIntegrationSchema from "../schemas/indiaMartIntegrationSchema.js";
+import auditLogSchema from "../schemas/auditLogSchema.js";
 
 
 const MODEL_MAP = [
@@ -55,6 +57,8 @@ const MODEL_MAP = [
   ["LinkedInIntegration", linkedinIntegrationSchema],
   ["Task",               taskSchema],
   ["Target",             targetSchema],
+  ["IndiaMartIntegration", indiaMartIntegrationSchema],
+  ["AuditLog",             auditLogSchema],
 ];
 
 /**
@@ -103,5 +107,7 @@ export function getTenantModels(conn) {
     LinkedInIntegration: conn.model("LinkedInIntegration"),
     Task:                conn.model("Task"),
     Target:              conn.model("Target"),
+    IndiaMartIntegration: conn.model("IndiaMartIntegration"),
+    AuditLog:             conn.model("AuditLog"),
   };
 }
