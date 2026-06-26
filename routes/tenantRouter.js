@@ -40,6 +40,8 @@ import justdialRoutes      from "./justdial.routes.js";
 import indiamartRoutes      from "./indiamart.routes.js";
 import ninetyNineAcresRoutes from "./99acres.routes.js";
 import sulekhaRoutes       from "./sulekha.routes.js";
+import meetingRoutes            from "./meeting.routes.js";
+import googleIntegrationRoutes  from "./googleIntegration.routes.js";
 
 
 const router = express.Router();
@@ -78,6 +80,8 @@ router.use("/justdial",        justdialRoutes);
 router.use("/indiamart",        indiamartRoutes);
 router.use("/99acres",         ninetyNineAcresRoutes);
 router.use("/sulekha",         sulekhaRoutes);
+router.use("/meetings",           meetingRoutes);
+router.use("/google-integration", googleIntegrationRoutes);
 
 
 export default router;
