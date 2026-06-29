@@ -40,12 +40,13 @@ const createUser = async (req, res) => {
       if (req.tenant) {
         const tenant = await Tenant.findById(req.tenant._id).populate("plan_id");
         if (tenant && tenant.plan_id) {
+          const maxUsers = tenant.plan_id.max_users_per_tenant;
           const activeUsersCount = await User.countDocuments();
-          if (activeUsersCount >= tenant.plan_id.max_users_per_tenant) {
+          if (maxUsers > 0 && activeUsersCount >= maxUsers) {
             return res.status(403).json({
               success: false,
               limitExceeded: true,
-              message: `User limit reached (${tenant.plan_id.max_users_per_tenant} max). Please upgrade your plan.`
+              message: `User limit reached (${maxUsers} max). Please upgrade your plan.`
             });
           }
         }

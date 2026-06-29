@@ -42,13 +42,15 @@ export const protect = async (req, res, next) => {
     }
 
     // Check subscription plan expiration
-    let tenant = req.tenant;
-    if (!tenant && decoded.tenantId) {
-      tenant = await Tenant.findById(decoded.tenantId);
-    } else if (!tenant && decoded.dbName) {
-      tenant = await Tenant.findOne({ dbName: decoded.dbName });
+    if (!req.tenant) {
+      if (decoded.tenantId) {
+        req.tenant = await Tenant.findById(decoded.tenantId);
+      } else if (decoded.dbName) {
+        req.tenant = await Tenant.findOne({ dbName: decoded.dbName });
+      }
     }
 
+    const tenant = req.tenant;
     if (tenant && tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)) {
       return res.status(401).json({ message: "Subscription expired. Access restricted." });
     }
