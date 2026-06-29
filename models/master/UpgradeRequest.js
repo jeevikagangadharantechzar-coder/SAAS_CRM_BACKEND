@@ -9,6 +9,7 @@ const upgradeRequestSchema = new mongoose.Schema(
     login_days: { type: Number, required: true },
     description: { type: String, default: "" },
     status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+    rejection_reason: { type: String, default: "" },
     type: { type: String, enum: ["limit_over", "mid_cycle"], required: true },
     prorated_discount: { type: Number, default: 0 },
     final_price: { type: Number, default: 0 },

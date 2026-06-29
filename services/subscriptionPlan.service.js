@@ -10,8 +10,8 @@ const appError = (message, statusCode) => {
 
 export const getAllPlans = async ({ status, plan_type, page = 1, limit = 10 }) => {
   const filter = { is_deleted: false };
-  if (status) filter.status = status;
-  if (plan_type) filter.plan_type = plan_type;
+  if (status) filter.status = status.toLowerCase();
+  if (plan_type) filter.plan_type = plan_type.toLowerCase();
 
   const skip = (Number(page) - 1) * Number(limit);
 
