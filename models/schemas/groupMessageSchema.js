@@ -1,30 +1,28 @@
 import mongoose from "mongoose";
 
-const chatMessageSchema = new mongoose.Schema(
+const groupMessageSchema = new mongoose.Schema(
   {
+    groupId:    { type: mongoose.Schema.Types.ObjectId, required: true },
+    type:       { type: String, default: "message", enum: ["message", "system"] },
     senderId:   { type: mongoose.Schema.Types.ObjectId, required: true },
-    receiverId: { type: mongoose.Schema.Types.ObjectId, required: true },
     senderName: { type: String, default: "" },
     senderRole: { type: String, default: "user" },
     message:    { type: String, default: "" },
     fileUrl:    { type: String, default: null },
     fileName:   { type: String, default: null },
-    fileType:   { type: String, default: null }, // 'image' | 'document'
-    isRead:     { type: Boolean, default: false },
-    readAt:     { type: Date, default: null },
-    isPinned:   { type: Boolean, default: false },
-    isDeleted:  { type: Boolean, default: false },
+    fileType:   { type: String, default: null },
     reactions:  [{ userId: { type: mongoose.Schema.Types.ObjectId }, emoji: String }],
     replyTo: {
       messageId:  { type: mongoose.Schema.Types.ObjectId, default: null },
       message:    { type: String, default: "" },
       senderName: { type: String, default: "" },
     },
+    isDeleted:  { type: Boolean, default: false },
+    readBy:     [{ userId: { type: mongoose.Schema.Types.ObjectId }, readAt: Date }],
   },
   { timestamps: true }
 );
 
-chatMessageSchema.index({ senderId: 1, receiverId: 1, createdAt: -1 });
-chatMessageSchema.index({ receiverId: 1, isRead: 1 });
+groupMessageSchema.index({ groupId: 1, createdAt: -1 });
 
-export default chatMessageSchema;
+export default groupMessageSchema;

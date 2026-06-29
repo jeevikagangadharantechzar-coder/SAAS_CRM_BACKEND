@@ -11,6 +11,9 @@ import {
   getPinnedMessages,
   pinMessage,
   uploadChatFile,
+  deleteMessage,
+  addReaction,
+  clearChat,
 } from "../controllers/chat.controller.js";
 
 // Chat-specific file upload (stores in uploads/chat/)
@@ -41,5 +44,8 @@ router.get("/unread-count",            getUnreadCount);
 router.get("/pinned/:userId",          getPinnedMessages);
 router.patch("/pin/:messageId",        pinMessage);
 router.post("/upload", chatUpload.single("file"), uploadChatFile);
+router.delete("/messages/:messageId",        deleteMessage);
+router.post("/messages/:messageId/reaction", addReaction);
+router.delete("/clear/:userId",              clearChat);
 
 export default router;

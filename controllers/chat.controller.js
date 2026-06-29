@@ -160,6 +160,61 @@ export const pinMessage = async (req, res) => {
   }
 };
 
+export const deleteMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const ChatMessage = getChatModel(req.tenantDB);
+
+    const msg = await ChatMessage.findById(messageId);
+    if (!msg) return res.status(404).json({ message: "Message not found" });
+    if (String(msg.senderId) !== String(req.user._id))
+      return res.status(403).json({ message: "Cannot delete others' messages" });
+
+    await ChatMessage.findByIdAndUpdate(messageId, { isDeleted: true, message: "" });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const clearChat = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const ChatMessage = getChatModel(req.tenantDB);
+
+    await ChatMessage.deleteMany({
+      $or: [
+        { senderId: req.user._id, receiverId: userId },
+        { senderId: userId, receiverId: req.user._id },
+      ],
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const addReaction = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { emoji } = req.body;
+    const ChatMessage = getChatModel(req.tenantDB);
+
+    const msg = await ChatMessage.findById(messageId);
+    if (!msg) return res.status(404).json({ message: "Message not found" });
+
+    const userId = req.user._id;
+    // Remove existing reaction from this user, then add new one
+    msg.reactions = msg.reactions.filter((r) => String(r.userId) !== String(userId));
+    if (emoji) msg.reactions.push({ userId, emoji });
+    await msg.save();
+
+    res.json({ reactions: msg.reactions });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 export const uploadChatFile = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
