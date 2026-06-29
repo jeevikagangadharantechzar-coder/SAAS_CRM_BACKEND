@@ -215,10 +215,15 @@ export default {
       const followUpChanged = !oldFollowUpDate || !newFollowUpDate ||
         oldFollowUpDate.toISOString() !== newFollowUpDate.toISOString();
 
-      if (patch.status && patch.status !== before.status) patch.lastReminderAt = null;
+      if (patch.status && patch.status !== before.status) {
+        patch.lastReminderAt = null;
+        patch.$push = { statusHistory: { status: patch.status, changedAt: new Date() } };
+      }
       if (patch.followUpDate) patch.lastReminderAt = null;
 
-      const updated = await Lead.findByIdAndUpdate(req.params.id, patch, { new: true })
+      const { $push, ...patchWithoutPush } = patch;
+      const updateOp = $push ? { ...patchWithoutPush, $push } : patchWithoutPush;
+      const updated = await Lead.findByIdAndUpdate(req.params.id, updateOp, { new: true })
         .populate("assignTo", "firstName lastName email profileImage");
 
       if (followUpChanged) {
@@ -299,11 +304,13 @@ export default {
 
   convertLeadToDeal: async (req, res) => {
     try {
-      const { Lead, Deal, Notification } = getModels(req);
+      const { Lead, Deal, Notification, User, Role } = getModels(req);
       const tDB  = req.tenantDB || null;
       const lead = await Lead.findById(req.params.id).populate("assignTo");
       if (!lead) return res.status(404).json({ message: "Lead not found" });
       if (lead.status === "Converted") return res.status(400).json({ message: "Lead already converted" });
+      // Capture full status history before deletion
+      const leadStatusHistory = lead.statusHistory || [];
 
       const { value, notes, currency, stage } = req.body;
       const numericValue    = Number(value || 0);
@@ -311,27 +318,29 @@ export default {
       const formattedValue  = `${formattedNumber} ${currency || "INR"}`;
 
       const deal = new Deal({
-        leadId:        lead._id,
-        dealName:      lead.leadName,
-        assignedTo:    lead.assignTo?._id ?? null,
-        value:         formattedValue,
-        currency:      currency || "INR",
-        notes:         notes || "",
-        stage:         stage || "Qualification",
-        email:         lead.email || "",
-        phoneNumber:   lead.phoneNumber || "",
-        source:        lead.source || "",
-        companyName:   lead.companyName || "",
-        industry:      lead.industry || "",
-        requirement:   lead.requirement || "",
-        country:       lead.country || "",
-        address:       lead.address || "",
+        leadId:           lead._id,
+        dealName:         lead.leadName,
+        assignedTo:       lead.assignTo?._id ?? null,
+        value:            formattedValue,
+        currency:         currency || "INR",
+        notes:            notes || "",
+        stage:            stage || "Qualification",
+        email:            lead.email || "",
+        phoneNumber:      lead.phoneNumber || "",
+        source:           lead.source || "",
+        companyName:      lead.companyName || "",
+        industry:         lead.industry || "",
+        requirement:      lead.requirement || "",
+        country:          lead.country || "",
+        address:          lead.address || "",
         ...(lead.clientType && { clientType: lead.clientType }),
-        attachments:   lead.attachments || [],
-        followUpDate:  lead.followUpDate ?? null,
-        lastReminderAt: lead.lastReminderAt ?? null,
-        companyId:     lead.companyId || null,
-        companySize:   lead.companySize || "Medium",
+        attachments:      lead.attachments || [],
+        followUpDate:     lead.followUpDate ?? null,
+        lastReminderAt:   lead.lastReminderAt ?? null,
+        companyId:        lead.companyId || null,
+        companySize:      lead.companySize || "Medium",
+        leadStatusHistory: leadStatusHistory,
+        leadCreatedAt:    lead.createdAt,
       });
 
       await deal.save();
@@ -347,13 +356,19 @@ export default {
 
       // Notify the assigned user about the conversion
       const userId = lead.assignTo?._id?.toString();
+      const convPayload = { dealId: deal._id, dealName: deal.dealName, leadName: lead.leadName };
       if (userId) {
-        notifyUser(userId, "deal:created", {
-          dealId:   deal._id,
-          dealName: deal.dealName,
-          leadName: lead.leadName,
-        });
+        notifyUser(userId, "deal:created", convPayload);
+        notifyUser(userId, "lead_converted", convPayload);
       }
+      // Also notify all admins so Target Management live-updates
+      try {
+        const adminRole = await Role.findOne({ name: "Admin" });
+        if (adminRole) {
+          const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id");
+          admins.forEach(a => notifyUser(String(a._id), "lead_converted", convPayload));
+        }
+      } catch (_) {}
 
       // Send email notification if assignee has email
       if (lead.assignTo?.email) {

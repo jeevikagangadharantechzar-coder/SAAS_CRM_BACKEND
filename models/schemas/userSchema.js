@@ -59,6 +59,15 @@ const userSchema = new mongoose.Schema(
     resetPasswordToken:  String,
     resetPasswordExpire: Date,
     tokenVersion:        { type: Number, default: 0 },
+
+    googleAuth: {
+      accessToken:  { type: String },
+      refreshToken: { type: String },
+      expiryDate:   { type: Number },
+      scope:        { type: String },
+      connected:    { type: Boolean, default: false },
+      connectedAt:  { type: Date },
+    },
   },
   { timestamps: true }
 );

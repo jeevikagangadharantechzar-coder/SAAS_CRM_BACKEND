@@ -30,12 +30,19 @@ import lostDealRoutes from "./lostDealRoutes.js";
 import settingsRoutes from "./settingsRoutes.js";
 import emailRoutes from "./email.routes.js";
 
-import fileRoutes from "./files.routes.js";
-import metaRoutes from "./meta.routes.js";
-import linkedinRoutes from "./linkedin.routes.js";
-import justdialRoutes from "./justdial.routes.js";
+import fileRoutes          from "./files.routes.js";
+import metaRoutes          from "./meta.routes.js";
+import linkedinRoutes      from "./linkedin.routes.js";
+import taskRoutes          from "./task.routes.js";
+import targetRoutes        from "./target.routes.js";
+import chatRoutes          from "./chat.routes.js";
+import groupRoutes         from "./group.routes.js";
+import justdialRoutes      from "./justdial.routes.js";
+import indiamartRoutes      from "./indiamart.routes.js";
 import ninetyNineAcresRoutes from "./99acres.routes.js";
-import sulekhaRoutes from "./sulekha.routes.js";
+import sulekhaRoutes       from "./sulekha.routes.js";
+import meetingRoutes            from "./meeting.routes.js";
+import googleIntegrationRoutes  from "./googleIntegration.routes.js";
 
 
 import publicRoutes from "./public.routes.js";
@@ -67,12 +74,19 @@ router.use("/deals", lostDealRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/email", emailRoutes);
 
-router.use("/files", fileRoutes);
-router.use("/meta", metaRoutes);
-router.use("/linkedin", linkedinRoutes);
-router.use("/justdial", justdialRoutes);
-router.use("/99acres", ninetyNineAcresRoutes);
-router.use("/sulekha", sulekhaRoutes);
+router.use("/files",           fileRoutes);
+router.use("/meta",            metaRoutes);
+router.use("/linkedin",        linkedinRoutes);
+router.use("/tasks",           taskRoutes);
+router.use("/targets",         targetRoutes);
+router.use("/chat",            chatRoutes);
+router.use("/groups",          groupRoutes);
+router.use("/justdial",        justdialRoutes);
+router.use("/indiamart",        indiamartRoutes);
+router.use("/99acres",         ninetyNineAcresRoutes);
+router.use("/sulekha",         sulekhaRoutes);
+router.use("/meetings",           meetingRoutes);
+router.use("/google-integration", googleIntegrationRoutes);
 
 
 export default router;

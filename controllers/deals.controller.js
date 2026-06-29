@@ -181,10 +181,33 @@ export default {
 
       const previousStage = deal.stage;
       deal.stage = stage;
+      if (!deal.stageHistory) deal.stageHistory = [];
+      deal.stageHistory.push({ stage, movedAt: new Date(), movedBy: req.user._id });
       await deal.save();
 
       if (stage === "Closed Won" && previousStage !== "Closed Won" && deal.companyName?.trim())
         clientLTVController.calculateClientCLV(deal.companyName).catch(err => console.error("Background CLV recalculation error:", err));
+
+      // Notify admins + the assigned sales person so targets refresh live
+      try {
+        const { User, Role } = getModels(req);
+        const adminRole = await Role.findOne({ name: "Admin" });
+        const payload = {
+          dealId: String(deal._id),
+          dealName: deal.dealName,
+          stage,
+          previousStage,
+          updatedBy: `${req.user.firstName} ${req.user.lastName}`,
+        };
+        if (adminRole) {
+          const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id");
+          admins.forEach(a => notifyUser(String(a._id), "deal_stage_updated", payload));
+        }
+        // Also notify the sales person assigned to this deal
+        if (deal.assignedTo) {
+          notifyUser(String(deal.assignedTo), "deal_stage_updated", payload);
+        }
+      } catch (_) {}
 
       res.status(200).json(deal);
     } catch (err) { res.status(500).json({ message: err.message }); }
@@ -234,6 +257,9 @@ export default {
 
       if (stage === "Closed Lost" && deal.stage !== "Closed Lost") { updateFields.stageLostAt = deal.stage; updateFields.lostDate = new Date(); }
       if (deal.stage === "Closed Lost" && stage && stage !== "Closed Lost") { updateFields.stageLostAt = null; updateFields.lostDate = null; }
+      if (stage && stage !== deal.stage) {
+        updateFields.$push = { stageHistory: { stage, movedAt: new Date(), movedBy: req.user._id } };
+      }
       if (dealValue !== undefined && dealValue !== null && String(dealValue).trim() !== "") {
         updateFields.value = formatDealValue(dealValue, currency || deal.currency || "INR");
         updateFields.currency = currency || deal.currency || "INR";
@@ -288,6 +314,28 @@ export default {
 
       if (stage === "Closed Won" && deal.stage !== "Closed Won" && updatedDeal.companyName?.trim())
         clientLTVController.calculateClientCLV(updatedDeal.companyName).catch(err => console.error("Background CLV recalculation error:", err));
+
+      // Notify admins + assigned sales person so targets refresh live
+      if (stage && stage !== deal.stage) {
+        try {
+          const { User, Role } = getModels(req);
+          const adminRole = await Role.findOne({ name: "Admin" });
+          const payload2 = {
+            dealId: String(updatedDeal._id),
+            dealName: updatedDeal.dealName,
+            stage,
+            previousStage: deal.stage,
+            updatedBy: `${req.user.firstName} ${req.user.lastName}`,
+          };
+          if (adminRole) {
+            const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id");
+            admins.forEach(a => notifyUser(String(a._id), "deal_stage_updated", payload2));
+          }
+          if (updatedDeal.assignedTo) {
+            notifyUser(String(updatedDeal.assignedTo._id || updatedDeal.assignedTo), "deal_stage_updated", payload2);
+          }
+        } catch (_) {}
+      }
 
       res.status(200).json({ message: "Deal updated successfully", deal: updatedDeal });
     } catch (err) { console.error("Update deal error:", err); res.status(500).json({ message: err.message }); }

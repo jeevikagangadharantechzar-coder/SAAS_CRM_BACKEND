@@ -177,7 +177,7 @@ const loginUser = async (req, res) => {
         User = UserLegacy;
       }
 
-      const user = await User.findOne({ email }).populate("role").select("+password");
+      const user = await User.findOne({ email: email.toLowerCase().trim() }).populate("role").select("+password");
       if (!user)
         return res.status(401).json({ success: false, message: "Invalid email or password" });
 
@@ -295,7 +295,7 @@ const forgotPassword = async (req, res) => {
       const { email } = req.body;
       if (!email) return res.status(400).json({ success: false, message: "Email is required" });
 
-      const user = await User.findOne({ email });
+      const user = await User.findOne({ email: email.toLowerCase().trim() });
       if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
       const { resetToken, hashedToken, expireDate } = userService.generateResetPasswordToken();
@@ -307,7 +307,9 @@ const forgotPassword = async (req, res) => {
       if (!frontendUrl)
         return res.status(500).json({ success: false, message: "FRONTEND_URL not configured" });
 
-      const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
+      const resetUrl = req.tenant
+        ? `${frontendUrl}/${req.tenant.slug}/reset-password/${resetToken}`
+        : `${frontendUrl}/reset-password/${resetToken}`;
       const message = `
         <h2>Password Reset</h2>
         <p>You requested password reset</p>

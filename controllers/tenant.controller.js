@@ -285,16 +285,56 @@ export const deleteTenant = async (req, res) => {
 
 export const getDashboardStats = async (req, res) => {
   try {
-    const [totalTenants, activeTenants, recentTenants] = await Promise.all([
+    const [totalTenants, activeTenantsCount, recentTenants, tenantsList] = await Promise.all([
       Tenant.countDocuments(),
       Tenant.countDocuments({ isActive: true }),
       Tenant.find().sort({ createdAt: -1 }).limit(5),
+      Tenant.find({ isActive: true }).populate("plan_id"),
     ]);
 
+    // 1. Calculate total users across all active tenants
+    let totalUsers = 0;
+    for (const tenant of tenantsList) {
+      try {
+        const tenantDB = await getTenantDB(tenant.dbName);
+        const { User } = getTenantModels(tenantDB);
+        const userCount = await User.countDocuments();
+        totalUsers += userCount;
+      } catch (dbErr) {
+        console.error(`Failed to get user count for tenant ${tenant.slug}:`, dbErr.message);
+      }
+    }
+
+    // 2. Calculate total revenue (active plan subscriptions + approved upgrades)
+    let totalRevenue = 0;
+
+    // Add active subscription plan prices
+    for (const tenant of tenantsList) {
+      if (tenant.plan_id && tenant.plan_status === "active") {
+        if (tenant.plan_id.billing_cycle === "yearly") {
+          totalRevenue += tenant.plan_id.price_yearly || 0;
+        } else {
+          totalRevenue += tenant.plan_id.price_monthly || 0;
+        }
+      }
+    }
+
+    // Add approved upgrade requests final price
+    try {
+      const approvedUpgrades = await UpgradeRequest.find({ status: "approved" });
+      const upgradeRevenue = approvedUpgrades.reduce((sum, req) => sum + (req.final_price || 0), 0);
+      totalRevenue += upgradeRevenue;
+    } catch (upgradeErr) {
+      console.error("Failed to calculate upgrade request revenue:", upgradeErr.message);
+    }
+
     res.json({
+      success: true,
       totalTenants,
-      activeTenants,
-      inactiveTenants: totalTenants - activeTenants,
+      activeTenants: activeTenantsCount,
+      inactiveTenants: totalTenants - activeTenantsCount,
+      totalUsers,
+      totalRevenue,
       recentTenants,
     });
   } catch (err) {
@@ -569,6 +609,79 @@ export const approveUpgradeRequest = async (req, res) => {
   }
 };
 
+function rejectEmailHtml({ adminName, planName, wantedUsers, loginDays, reason }) {
+  return `
+<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; background-color: #f4f6fb; padding: 20px;">
+  <div style="background-color: #ffffff; padding: 30px; border-radius: 12px; max-width: 550px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+    <h2 style="color: #d93025; text-align: center;">Upgrade Request Declined</h2>
+    <p>Dear <strong>${adminName}</strong>,</p>
+    <p>Your request to upgrade your workspace to the <strong>${planName}</strong> plan has been declined.</p>
+    
+    <div style="background-color: #fce8e6; border: 1px solid #fad2cf; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <h5 style="margin: 0 0 10px 0; color: #c5221f;">Reason for Rejection:</h5>
+      <p style="margin: 0; font-size: 14px; color: #202124; line-height: 1.5; white-space: pre-wrap;">${reason || "No reason specified."}</p>
+    </div>
+
+    <h4 style="border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333;">Requested Specifications:</h4>
+    <ul>
+      <li><strong>User Seats:</strong> ${wantedUsers} Max Active Users</li>
+      <li><strong>Validity Days:</strong> ${loginDays} Days</li>
+    </ul>
+
+    <p style="font-size: 13px; color: #555; line-height: 1.5;">
+      If you have any questions or would like to submit another request with adjusted parameters, please log in to your portal or contact support.
+    </p>
+    
+    <p style="font-size: 11px; color: #888; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; text-align: center;">
+      © ${new Date().getFullYear()} TZI Support. All rights reserved.
+    </p>
+  </div>
+</body>
+</html>`;
+}
+
+export const rejectUpgradeRequest = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const request = await UpgradeRequest.findById(req.params.id)
+      .populate("tenant_id")
+      .populate("plan_id");
+
+    if (!request) return res.status(404).json({ success: false, error: "Request not found" });
+    if (request.status !== "pending") {
+      return res.status(400).json({ success: false, error: "Request has already been processed" });
+    }
+
+    const tenant = request.tenant_id;
+    const plan = request.plan_id;
+
+    // Update request status and rejection reason
+    request.status = "rejected";
+    request.rejection_reason = reason || "";
+    await request.save();
+
+    // Send Rejection email
+    sendEmail({
+      to: tenant.adminEmail,
+      subject: `CRM Workspace Upgrade Request Declined`,
+      html: rejectEmailHtml({
+        adminName: tenant.adminName,
+        planName: plan.plan_name,
+        wantedUsers: request.wanted_users,
+        loginDays: request.login_days,
+        reason: reason,
+      }),
+    }).catch((emailErr) => console.error("Upgrade rejection email failed:", emailErr.message));
+
+    res.json({ success: true, message: "Upgrade request rejected successfully." });
+  } catch (err) {
+    console.error("Reject upgrade request error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 export const getTenantDetails = async (req, res) => {
   try {
     const tenant = await Tenant.findById(req.params.id).populate("plan_id");
@@ -633,5 +746,62 @@ export const getTenantBySlugPublic = async (req, res) => {
   } catch (err) {
     console.error("Get public tenant by slug error:", err);
     res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+export const getUpgradeHistory = async (req, res) => {
+  try {
+    const history = await UpgradeRequest.find({ status: { $ne: "pending" } })
+      .populate("tenant_id")
+      .populate("plan_id")
+      .sort({ updatedAt: -1 });
+
+    res.json({ success: true, history });
+  } catch (err) {
+    console.error("Get upgrade history error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
+export const updateTenant = async (req, res) => {
+  try {
+    const { name, adminName, adminEmail } = req.body;
+    const tenant = await Tenant.findById(req.params.id);
+    if (!tenant) return res.status(404).json({ success: false, error: "Tenant not found" });
+
+    const oldAdminEmail = tenant.adminEmail.toLowerCase();
+    const newAdminEmail = adminEmail ? adminEmail.toLowerCase() : oldAdminEmail;
+
+    // 1. Update the master tenant record
+    if (name) tenant.name = name;
+    if (adminName) tenant.adminName = adminName;
+    if (adminEmail) tenant.adminEmail = newAdminEmail;
+    await tenant.save();
+
+    // 2. Update the tenant's own database admin user record
+    try {
+      const tenantDB = await getTenantDB(tenant.dbName);
+      const { User } = getTenantModels(tenantDB);
+      
+      // Find the admin user by the old admin email
+      const adminUser = await User.findOne({ email: oldAdminEmail });
+      if (adminUser) {
+        if (adminName) {
+          adminUser.firstName = adminName.split(" ")[0];
+          adminUser.lastName = adminName.split(" ").slice(1).join(" ") || adminName.split(" ")[0];
+        }
+        if (adminEmail) {
+          adminUser.email = newAdminEmail;
+        }
+        await adminUser.save();
+      }
+    } catch (dbErr) {
+      console.error(`Failed to update tenant database user for ${tenant.slug}:`, dbErr.message);
+    }
+
+    res.json({ success: true, message: "Tenant updated successfully.", tenant });
+  } catch (err) {
+    console.error("Update tenant error:", err);
+    res.status(500).json({ success: false, error: err.message || "Server error" });
   }
 };

@@ -7,6 +7,7 @@ const leadSchema = new mongoose.Schema(
     phoneNumber: { type: String, required: true },
     email:       { type: String },
     source:      { type: String },
+    sourceId:    { type: String, default: null, index: true },
     companyName: { type: String, required: true },
     clientType: {
       type: String,
@@ -55,6 +56,13 @@ const leadSchema = new mongoose.Schema(
         type:       { type: String },
         size:       { type: Number },
         uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+
+    statusHistory: [
+      {
+        status:    { type: String },
+        changedAt: { type: Date, default: Date.now },
       },
     ],
   },

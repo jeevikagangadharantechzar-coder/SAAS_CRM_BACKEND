@@ -24,6 +24,12 @@ import botHistorySchema         from "../schemas/botHistorySchema.js";
 import metaIntegrationSchema    from "../schemas/metaIntegrationSchema.js";
 import linkedinIntegrationSchema from "../schemas/linkedinIntegrationSchema.js";
 import contactFormSchema         from "../schemas/contactFormSchema.js";
+import taskSchema               from "../schemas/taskSchema.js";
+import targetSchema             from "../schemas/targetSchema.js";
+import indiaMartIntegrationSchema from "../schemas/indiaMartIntegrationSchema.js";
+import auditLogSchema from "../schemas/auditLogSchema.js";
+import meetingSchema             from "../schemas/meetingSchema.js";
+import googleIntegrationSchema   from "../schemas/googleIntegrationSchema.js";
 
 
 const MODEL_MAP = [
@@ -53,6 +59,12 @@ const MODEL_MAP = [
   ["MetaIntegration",  metaIntegrationSchema],
   ["LinkedInIntegration", linkedinIntegrationSchema],
   ["ContactForm",      contactFormSchema],
+  ["Task",               taskSchema],
+  ["Target",             targetSchema],
+  ["IndiaMartIntegration", indiaMartIntegrationSchema],
+  ["AuditLog",             auditLogSchema],
+  ["Meeting",             meetingSchema],
+  ["GoogleIntegration",  googleIntegrationSchema],
 ];
 
 /**
@@ -100,5 +112,11 @@ export function getTenantModels(conn) {
     MetaIntegration:  conn.model("MetaIntegration"),
     LinkedInIntegration: conn.model("LinkedInIntegration"),
     ContactForm:     conn.model("ContactForm"),
+    Task:                conn.model("Task"),
+    Target:              conn.model("Target"),
+    IndiaMartIntegration: conn.model("IndiaMartIntegration"),
+    AuditLog:             conn.model("AuditLog"),
+    Meeting:             conn.model("Meeting"),
+    GoogleIntegration:   conn.model("GoogleIntegration"),
   };
 }
