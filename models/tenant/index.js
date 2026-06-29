@@ -23,6 +23,7 @@ import aiChatSchema        from "../schemas/aiChatSchema.js";
 import botHistorySchema         from "../schemas/botHistorySchema.js";
 import metaIntegrationSchema    from "../schemas/metaIntegrationSchema.js";
 import linkedinIntegrationSchema from "../schemas/linkedinIntegrationSchema.js";
+import contactFormSchema         from "../schemas/contactFormSchema.js";
 
 
 const MODEL_MAP = [
@@ -51,6 +52,7 @@ const MODEL_MAP = [
   ["BotHistory",       botHistorySchema],
   ["MetaIntegration",  metaIntegrationSchema],
   ["LinkedInIntegration", linkedinIntegrationSchema],
+  ["ContactForm",      contactFormSchema],
 ];
 
 /**
@@ -97,5 +99,6 @@ export function getTenantModels(conn) {
     BotHistory:       conn.model("BotHistory"),
     MetaIntegration:  conn.model("MetaIntegration"),
     LinkedInIntegration: conn.model("LinkedInIntegration"),
+    ContactForm:     conn.model("ContactForm"),
   };
 }

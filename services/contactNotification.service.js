@@ -1,9 +1,23 @@
-import Notification from "../models/notification.model.js";
-import User from "../models/user.model.js";
-import Role from "../models/role.model.js";
+import NotificationLegacy from "../models/notification.model.js";
+import UserLegacy from "../models/user.model.js";
+import RoleLegacy from "../models/role.model.js";
 import { notifyUser } from "../realtime/socket.js";
+import { getTenantModels } from "../models/tenant/index.js";
+import { getTenantDB } from "../config/tenantDB.js";
 
-export const sendContactFormNotification = async ({ text, meta }) => {
+export const sendContactFormNotification = async ({ tenant, text, meta }) => {
+  let Notification = NotificationLegacy;
+  let User = UserLegacy;
+  let Role = RoleLegacy;
+
+  if (tenant && tenant.dbName) {
+    const conn = await getTenantDB(tenant.dbName);
+    const tenantModels = getTenantModels(conn);
+    Notification = tenantModels.Notification;
+    User = tenantModels.User;
+    Role = tenantModels.Role;
+  }
+
   const adminRole = await Role.findOne({ name: { $regex: /^admin$/i } });
   if (!adminRole) {
     console.log(" Admin role not found");

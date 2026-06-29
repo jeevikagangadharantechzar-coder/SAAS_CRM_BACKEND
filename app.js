@@ -172,7 +172,7 @@ app.use("/api/calllogs", callLogRoutes);
 app.use("/api/bot", botRoutes);
 app.use("/api/email", emailRoutes);
 app.use("/api/email-templates", templateRoutes);
-app.use("/api", publicRoutes);
+app.use("/api/public", publicRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/notification", notificationRoutes);
 

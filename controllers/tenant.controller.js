@@ -9,6 +9,7 @@ import { getTenantDB, dropTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
+import userService from "../services/user.service.js";
 
 dotenv.config();
 
@@ -196,11 +197,13 @@ export const createTenant = async (req, res) => {
 
 
 
+      const hashedPassword = await userService.hashPassword(plainPassword);
+
       await User.create({
         firstName:   adminName.split(" ")[0],
         lastName:    adminName.split(" ").slice(1).join(" ") || adminName.split(" ")[0],
         email:       adminEmail.toLowerCase(),
-        password:    plainPassword,
+        password:    hashedPassword,
         role:        adminRole._id,
         dateOfBirth: new Date("1990-01-01"),
         status:      "Active",
@@ -402,11 +405,13 @@ export const resetTenantDB = async (tenant, plainPassword) => {
     },
   });
 
+  const hashedPassword = await userService.hashPassword(plainPassword);
+  
   await User.create({
     firstName:   tenant.adminName.split(" ")[0],
     lastName:    tenant.adminName.split(" ").slice(1).join(" ") || tenant.adminName.split(" ")[0],
     email:       tenant.adminEmail.toLowerCase(),
-    password:    plainPassword,
+    password:    hashedPassword,
     role:        adminRole._id,
     dateOfBirth: new Date("1990-01-01"),
     status:      "Active",
@@ -525,7 +530,7 @@ export const approveUpgradeRequest = async (req, res) => {
     const { User } = getTenantModels(tenantDB);
     const adminUser = await User.findOne({ email: tenant.adminEmail.toLowerCase() });
     if (adminUser) {
-      adminUser.password = plainPassword;
+      adminUser.password = await userService.hashPassword(plainPassword);
       adminUser.tokenVersion = (adminUser.tokenVersion || 0) + 1;
       await adminUser.save();
     }

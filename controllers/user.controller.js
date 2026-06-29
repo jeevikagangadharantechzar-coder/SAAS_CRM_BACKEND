@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import sendEmail from "../utils/sendEmail.js";
 import crypto from "crypto";
+import userService from "../services/user.service.js";
 import { getTenantModels } from "../models/tenant/index.js";
 
 // Legacy fallback for non-tenant routes
@@ -26,8 +27,8 @@ const generateToken = (id, tenant = null, tokenVersion = 0) =>
     { expiresIn: "1d" }
   );
 
-export default {
-  createUser: async (req, res) => {
+
+const createUser = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const {
@@ -49,10 +50,15 @@ export default {
           }
         }
       }
+      
+      if (dateOfBirth && !userService.validateAge(dateOfBirth)) {
+        return res.status(400).json({ success: false, message: "Date of birth must be valid. User must be between 18 and 100 years old" });
+      }
 
+      const hashedPassword = await userService.hashPassword(password);
       const profileImage = req.file ? req.file.filename : null;
       const user = await User.create({
-        firstName, lastName, email, password, mobileNumber,
+        firstName, lastName, email, password: hashedPassword, mobileNumber,
         role, status, gender, address, dateOfBirth, profileImage,
       });
       res.status(201).json(user);
@@ -60,9 +66,9 @@ export default {
       if (req.file) fs.unlinkSync(req.file.path);
       res.status(500).json({ message: err.message });
     }
-  },
+};
 
-  getUsers: async (req, res) => {
+const getUsers = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const users = await User.find({ email: { $ne: "admin@gmail.com" } }).populate("role");
@@ -70,9 +76,9 @@ export default {
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  },
+};
 
-  getMe: async (req, res) => {
+const getMe = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const user = await User.findById(req.user.id).populate("role");
@@ -101,9 +107,9 @@ export default {
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  },
+};
 
-  updateUser: async (req, res) => {
+const updateUser = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const { id } = req.params;
@@ -116,6 +122,11 @@ export default {
       if (!user) {
         if (req.file) fs.unlinkSync(req.file.path);
         return res.status(404).json({ message: "User not found" });
+      }
+
+      if (dateOfBirth && !userService.validateAge(dateOfBirth)) {
+        if (req.file) fs.unlinkSync(req.file.path);
+        return res.status(400).json({ success: false, message: "Date of birth must be valid. User must be between 18 and 100 years old" });
       }
 
       let profileImage = user.profileImage;
@@ -138,9 +149,9 @@ export default {
       if (req.file) fs.unlinkSync(req.file.path);
       res.status(500).json({ message: err.message });
     }
-  },
+};
 
-  deleteUser: async (req, res) => {
+const deleteUser = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const { id } = req.params;
@@ -150,9 +161,9 @@ export default {
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  },
+};
 
-  loginUser: async (req, res) => {
+const loginUser = async (req, res) => {
     try {
       const { email, password } = req.body;
       let User;
@@ -170,7 +181,7 @@ export default {
       if (!user)
         return res.status(401).json({ success: false, message: "Invalid email or password" });
 
-      const isMatch = await user.matchPassword(password);
+      const isMatch = await userService.matchPassword(password, user.password);
       if (!isMatch)
         return res.status(401).json({ success: false, message: "Invalid email or password" });
 
@@ -233,9 +244,9 @@ export default {
       console.error("Login error:", error);
       res.status(500).json({ success: false, message: error.message });
     }
-  },
+};
 
-  logoutUser: async (req, res) => {
+const logoutUser = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const user = await User.findById(req.user.id);
@@ -255,9 +266,9 @@ export default {
       console.error(error);
       res.status(500).json({ message: error.message });
     }
-  },
+};
 
-  updatePassword: async (req, res) => {
+const updatePassword = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const { email, currentPassword, newPassword } = req.body;
@@ -267,18 +278,18 @@ export default {
       if (!user) return res.status(404).json({ message: "User not found" });
       if (user.email !== email)
         return res.status(400).json({ message: "Email does not match your account" });
-      if (!(await user.matchPassword(currentPassword)))
+      if (!(await userService.matchPassword(currentPassword, user.password)))
         return res.status(401).json({ message: "Current password is incorrect" });
 
-      user.password = newPassword;
+      user.password = await userService.hashPassword(newPassword);
       await user.save();
       res.json({ message: "Password updated successfully" });
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  },
+};
 
-  forgotPassword: async (req, res) => {
+const forgotPassword = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const { email } = req.body;
@@ -287,7 +298,9 @@ export default {
       const user = await User.findOne({ email });
       if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-      const resetToken = user.getResetPasswordToken();
+      const { resetToken, hashedToken, expireDate } = userService.generateResetPasswordToken();
+      user.resetPasswordToken = hashedToken;
+      user.resetPasswordExpire = expireDate;
       await user.save({ validateBeforeSave: false });
 
       const frontendUrl = process.env.FRONTEND_URL;
@@ -309,9 +322,9 @@ export default {
       console.error(error);
       return res.status(500).json({ success: false, message: "Something went wrong" });
     }
-  },
+};
 
-  resetPassword: async (req, res) => {
+const resetPassword = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const token = req.params.token;
@@ -325,7 +338,7 @@ export default {
       if (!user)
         return res.status(400).json({ success: false, message: "Invalid or expired token" });
 
-      user.password = req.body.password;
+      user.password = await userService.hashPassword(req.body.password);
       user.resetPasswordToken  = undefined;
       user.resetPasswordExpire = undefined;
       await user.save();
@@ -335,5 +348,18 @@ export default {
       console.log(error);
       res.status(500).json({ success: false, message: error.message });
     }
-  },
+};
+
+
+export default {
+  createUser,
+  getUsers,
+  getMe,
+  updateUser,
+  deleteUser,
+  loginUser,
+  logoutUser,
+  updatePassword,
+  forgotPassword,
+  resetPassword
 };

@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import connectDB from "../config/db.js";
 import Role from "../models/role.model.js";
 import User from "../models/user.model.js";
+import userService from "../services/user.service.js";
 
 dotenv.config();
 
@@ -23,21 +24,21 @@ const seedAdmin = async () => {
     let admin = await User.findOne({ email });
 
     if (admin) {
-      // Reset password to plain so pre-save re-hashes correctly
+      // Reset password to explicitly hash it since pre-save hook is removed
       admin.firstName = "Super";
       admin.lastName = "Admin";
       admin.role = adminRole._id;
       admin.dateOfBirth = new Date("2000-01-01");
-      admin.password = "Techzar@123"; // PLAIN — pre-save will hash
-            admin.status = "Active";
-      await admin.save();          // triggers pre-save hook
+      admin.password = await userService.hashPassword("Techzar@123");
+      admin.status = "Active";
+      await admin.save();
       console.log(" Admin user password reset and updated");
     } else {
       await User.create({
         firstName: "Super",
         lastName: "Admin",
         email,
-        password: "Techzar@123", // PLAIN — pre-save will hash
+        password: await userService.hashPassword("Techzar@123"),
         role: adminRole._id,
         dateOfBirth: new Date("2000-01-01"),
       });
