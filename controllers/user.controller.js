@@ -166,15 +166,24 @@ const deleteUser = async (req, res) => {
 
 const loginUser = async (req, res) => {
     try {
-      const { email, password } = req.body;
+      const { email, password, tenantSlug } = req.body;
       let User;
       let tenant = null;
 
       if (req.tenantDB) {
         User = getTenantModels(req.tenantDB).User;
         tenant = req.tenant || null;
+      } else if (tenantSlug) {
+        // Resolve tenant directly using the slug from request body (Mobile App unified endpoint)
+        tenant = await Tenant.findOne({ slug: tenantSlug.toLowerCase().trim() });
+        if (!tenant) {
+          return res.status(404).json({ success: false, message: "Workspace not found" });
+        }
+        const db = await getTenantDB(tenant.dbName);
+        req.tenantDB = db;
+        User = getTenantModels(db).User;
       } else {
-        // Global login without slug in URL — disable scanning other tenant databases to enforce tenant URL usage
+        // Global login without slug in URL or body — falls back to master/superadmin model
         User = UserLegacy;
       }
 
