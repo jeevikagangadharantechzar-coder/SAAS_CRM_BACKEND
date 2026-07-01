@@ -16,6 +16,8 @@ const meetingSchema = new mongoose.Schema(
       enum: ["scheduled", "cancelled", "completed"],
       default: "scheduled",
     },
+    creatorEmail: { type: String },
+    reminderSentAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

@@ -272,13 +272,11 @@ const logoutUser = async (req, res) => {
 const updatePassword = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
-      const { email, currentPassword, newPassword } = req.body;
+      const { currentPassword, newPassword } = req.body;
       const userId = req.user.id;
 
       const user = await User.findById(userId).select("+password");
       if (!user) return res.status(404).json({ message: "User not found" });
-      if (user.email !== email)
-        return res.status(400).json({ message: "Email does not match your account" });
       if (!(await userService.matchPassword(currentPassword, user.password)))
         return res.status(401).json({ message: "Current password is incorrect" });
 
