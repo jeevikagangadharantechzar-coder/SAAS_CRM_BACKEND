@@ -8,7 +8,7 @@ import SubscriptionPlan from "../models/master/SubscriptionPlan.model.js";
 import { getTenantDB, dropTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
-import { sendWelcomeEmail, sendUpgradeAlertEmail } from "../utils/dynamicEmail.js";
+import { sendWelcomeEmail, sendUpgradeAlertEmail, sendPlanEmail } from "../utils/dynamicEmail.js";
 import { emitToSuperAdmin } from "../realtime/superAdminSocket.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
 import userService from "../services/user.service.js";
@@ -153,23 +153,23 @@ export const createTenant = async (req, res) => {
         name: "Admin",
         description: "Full access",
         permissions: {
-          dashboard:           true,
-          leads:               true,
-          create_lead:         true,
-          deals_all:           true,
-          create_deal:         true,
-          deals_pipeline:      true,
-          proposal:            true,
-          invoices:            true,
+          dashboard: true,
+          leads: true,
+          create_lead: true,
+          deals_all: true,
+          create_deal: true,
+          deals_pipeline: true,
+          proposal: true,
+          invoices: true,
           activities_calendar: true,
-          activities_list:     true,
-          users_roles:         true,
-          email_chat:          true,
-          email_campaigns:     true,
-          reports:             true,
-          settings:            true,
-          whatsapp_chat:       true,
-          streak_leaderboard:  true,
+          activities_list: true,
+          users_roles: true,
+          email_chat: true,
+          email_campaigns: true,
+          reports: true,
+          settings: true,
+          whatsapp_chat: true,
+          streak_leaderboard: true,
         },
       });
 
@@ -177,23 +177,23 @@ export const createTenant = async (req, res) => {
         name: "Sales",
         description: "Limited access",
         permissions: {
-          dashboard:           true,
-          leads:               true,
-          create_lead:         true,
-          deals_all:           true,
-          create_deal:         true,
-          deals_pipeline:      true,
-          proposal:            true,
-          invoices:            true,
+          dashboard: true,
+          leads: true,
+          create_lead: true,
+          deals_all: true,
+          create_deal: true,
+          deals_pipeline: true,
+          proposal: true,
+          invoices: true,
           activities_calendar: true,
-          activities_list:     true,
-          users_roles:         false,
-          email_chat:          true,
-          email_campaigns:     false,
-          reports:             false,
-          settings:            false,
-          whatsapp_chat:       true,
-          streak_leaderboard:  true,
+          activities_list: true,
+          users_roles: false,
+          email_chat: true,
+          email_campaigns: false,
+          reports: false,
+          settings: false,
+          whatsapp_chat: true,
+          streak_leaderboard: true,
         },
       });
 
@@ -202,13 +202,13 @@ export const createTenant = async (req, res) => {
       const hashedPassword = await userService.hashPassword(plainPassword);
 
       await User.create({
-        firstName:   adminName.split(" ")[0],
-        lastName:    adminName.split(" ").slice(1).join(" ") || adminName.split(" ")[0],
-        email:       adminEmail.toLowerCase(),
-        password:    hashedPassword,
-        role:        adminRole._id,
+        firstName: adminName.split(" ")[0],
+        lastName: adminName.split(" ").slice(1).join(" ") || adminName.split(" ")[0],
+        email: adminEmail.toLowerCase(),
+        password: hashedPassword,
+        role: adminRole._id,
         dateOfBirth: new Date("1990-01-01"),
-        status:      "Active",
+        status: "Active",
       });
 
       await EmailTemplate.insertMany(defaultEmailTemplates);
@@ -226,6 +226,34 @@ export const createTenant = async (req, res) => {
       to: adminEmail,
       vars: { adminName, email: adminEmail, password: plainPassword, loginUrl },
     }).catch(err => console.error("Welcome email failed:", err.message));
+
+    // Send plan details or trial info email
+    if (tenant.plan_id) {
+      SubscriptionPlan.findById(tenant.plan_id).then((plan) => {
+        if (!plan) return;
+        const price = plan.billing_cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
+        sendPlanEmail({
+          to: adminEmail,
+          vars: {
+            adminName,
+            planName: plan.plan_name,
+            planType: plan.plan_type,
+            price,
+            currency: plan.currency,
+            billingCycle: plan.billing_cycle,
+            maxUsers: plan.max_users_per_tenant,
+            description: plan.description,
+            loginUrl,
+            isTrial: false,
+          },
+        }).catch(err => console.error("Plan email failed:", err.message));
+      }).catch(() => { });
+    } else {
+      sendPlanEmail({
+        to: adminEmail,
+        vars: { adminName, loginUrl, isTrial: true },
+      }).catch(err => console.error("Trial email failed:", err.message));
+    }
 
     res.status(201).json({
       success: true,
@@ -402,23 +430,23 @@ export const resetTenantDB = async (tenant, plainPassword) => {
     name: "Admin",
     description: "Full access",
     permissions: {
-      dashboard:           true,
-      leads:               true,
-      create_lead:         true,
-      deals_all:           true,
-      create_deal:         true,
-      deals_pipeline:      true,
-      proposal:            true,
-      invoices:            true,
+      dashboard: true,
+      leads: true,
+      create_lead: true,
+      deals_all: true,
+      create_deal: true,
+      deals_pipeline: true,
+      proposal: true,
+      invoices: true,
       activities_calendar: true,
-      activities_list:     true,
-      users_roles:         true,
-      email_chat:          true,
-      email_campaigns:     true,
-      reports:             true,
-      settings:            true,
-      whatsapp_chat:       true,
-      streak_leaderboard:  true,
+      activities_list: true,
+      users_roles: true,
+      email_chat: true,
+      email_campaigns: true,
+      reports: true,
+      settings: true,
+      whatsapp_chat: true,
+      streak_leaderboard: true,
     },
   });
 
@@ -426,36 +454,36 @@ export const resetTenantDB = async (tenant, plainPassword) => {
     name: "Sales",
     description: "Limited access",
     permissions: {
-      dashboard:           true,
-      leads:               true,
-      create_lead:         true,
-      deals_all:           true,
-      create_deal:         true,
-      deals_pipeline:      true,
-      proposal:            true,
-      invoices:            true,
+      dashboard: true,
+      leads: true,
+      create_lead: true,
+      deals_all: true,
+      create_deal: true,
+      deals_pipeline: true,
+      proposal: true,
+      invoices: true,
       activities_calendar: true,
-      activities_list:     true,
-      users_roles:         false,
-      email_chat:          true,
-      email_campaigns:     false,
-      reports:             false,
-      settings:            false,
-      whatsapp_chat:       true,
-      streak_leaderboard:  true,
+      activities_list: true,
+      users_roles: false,
+      email_chat: true,
+      email_campaigns: false,
+      reports: false,
+      settings: false,
+      whatsapp_chat: true,
+      streak_leaderboard: true,
     },
   });
 
   const hashedPassword = await userService.hashPassword(plainPassword);
-  
+
   await User.create({
-    firstName:   tenant.adminName.split(" ")[0],
-    lastName:    tenant.adminName.split(" ").slice(1).join(" ") || tenant.adminName.split(" ")[0],
-    email:       tenant.adminEmail.toLowerCase(),
-    password:    hashedPassword,
-    role:        adminRole._id,
+    firstName: tenant.adminName.split(" ")[0],
+    lastName: tenant.adminName.split(" ").slice(1).join(" ") || tenant.adminName.split(" ")[0],
+    email: tenant.adminEmail.toLowerCase(),
+    password: hashedPassword,
+    role: adminRole._id,
     dateOfBirth: new Date("1990-01-01"),
-    status:      "Active",
+    status: "Active",
   });
 
   await EmailTemplate.insertMany(defaultEmailTemplates);
@@ -800,7 +828,7 @@ export const updateTenant = async (req, res) => {
     try {
       const tenantDB = await getTenantDB(tenant.dbName);
       const { User } = getTenantModels(tenantDB);
-      
+
       // Find the admin user by the old admin email
       const adminUser = await User.findOne({ email: oldAdminEmail });
       if (adminUser) {
