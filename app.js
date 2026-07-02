@@ -46,6 +46,7 @@ import "./cron/notificationCron.js";
 
 // Socket
 import { initSocket } from "./realtime/socket.js";
+import { initSuperAdminSocket } from "./realtime/superAdminSocket.js";
 import { initChatSocket } from "./realtime/chatSocket.js";
 
 // Background jobs
@@ -260,6 +261,7 @@ app.use((err, _req, res, _next) => {
 // ─────────────────────────────────────────────
 const server = http.createServer(app);
 initSocket(server);
+initSuperAdminSocket();
 initChatSocket();
 
 // ─────────────────────────────────────────────

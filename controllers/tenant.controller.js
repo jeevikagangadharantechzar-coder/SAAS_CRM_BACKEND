@@ -8,6 +8,8 @@ import SubscriptionPlan from "../models/master/SubscriptionPlan.model.js";
 import { getTenantDB, dropTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
+import { sendWelcomeEmail, sendUpgradeAlertEmail } from "../utils/dynamicEmail.js";
+import { emitToSuperAdmin } from "../realtime/superAdminSocket.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
 import userService from "../services/user.service.js";
 
@@ -219,11 +221,10 @@ export const createTenant = async (req, res) => {
 
     const loginUrl = `${process.env.FRONTEND_URL}/${slug}/login`;
 
-    // Send welcome email — failure does not block the response
-    sendEmail({
+    // Send welcome email using dynamic template from SuperAdminSettings
+    sendWelcomeEmail({
       to: adminEmail,
-      subject: `Welcome to ${name} CRM — Your Login Credentials`,
-      html: welcomeEmailHtml({ adminName, adminEmail, password: plainPassword, loginUrl, tenantName: name }),
+      vars: { adminName, email: adminEmail, password: plainPassword, loginUrl },
     }).catch(err => console.error("Welcome email failed:", err.message));
 
     res.status(201).json({
@@ -492,6 +493,21 @@ export const createUpgradeRequest = async (req, res) => {
       final_price: finalPrice,
     });
 
+    // Real-time update — send full populated request so the list updates instantly
+    const populatedRequest = await UpgradeRequest.findById(request._id)
+      .populate("tenant_id")
+      .populate("plan_id");
+    emitToSuperAdmin("new_upgrade_request", populatedRequest);
+
+    // Notify super admin about the upgrade request
+    sendUpgradeAlertEmail({
+      vars: {
+        tenantName: tenant.name,
+        tenantEmail: tenant.adminEmail,
+        planName: newPlan.plan_name,
+      },
+    }).catch(err => console.error("Upgrade alert email failed:", err.message));
+
     res.status(201).json({ success: true, request });
   } catch (err) {
     console.error("Create upgrade request error:", err);
@@ -602,6 +618,7 @@ export const approveUpgradeRequest = async (req, res) => {
       }),
     }).catch((emailErr) => console.error("Upgrade activation email failed:", emailErr.message));
 
+    emitToSuperAdmin("upgrade_request_resolved", { id: req.params.id });
     res.json({ success: true, message: "Upgrade request approved successfully." });
   } catch (err) {
     console.error("Approve upgrade request error:", err);
@@ -675,6 +692,7 @@ export const rejectUpgradeRequest = async (req, res) => {
       }),
     }).catch((emailErr) => console.error("Upgrade rejection email failed:", emailErr.message));
 
+    emitToSuperAdmin("upgrade_request_resolved", { id: req.params.id });
     res.json({ success: true, message: "Upgrade request rejected successfully." });
   } catch (err) {
     console.error("Reject upgrade request error:", err);

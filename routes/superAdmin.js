@@ -17,6 +17,13 @@ import {
   getUpgradeHistory,
   updateTenant,
 } from "../controllers/tenant.controller.js";
+import {
+  getPublicBranding,
+  getSettings as getSuperAdminSettings,
+  updateSettings as updateSuperAdminSettings,
+  uploadPlatformLogo,
+} from "../controllers/superAdminSettings.controller.js";
+import uploadPlatformLogoMiddleware from "../middlewares/uploadPlatformLogo.js";
 
 const router = express.Router();
 
@@ -41,5 +48,11 @@ router.patch("/api/tenants/:id/toggle",   superAdminAuth, toggleTenant);
 router.delete("/api/tenants/:id",         superAdminAuth, deleteTenant);
 router.get("/api/dashboard/stats",        superAdminAuth, getDashboardStats);
 router.post("/api/tenants/:id/impersonate", superAdminAuth, impersonateTenant);
+
+// Super Admin Platform Settings
+router.get("/api/public/branding", getPublicBranding);
+router.get("/api/settings",  superAdminAuth, getSuperAdminSettings);
+router.put("/api/settings",  superAdminAuth, updateSuperAdminSettings);
+router.post("/api/settings/logo", superAdminAuth, uploadPlatformLogoMiddleware.single("logo"), uploadPlatformLogo);
 
 export default router;
