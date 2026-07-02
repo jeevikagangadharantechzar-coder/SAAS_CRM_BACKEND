@@ -34,6 +34,13 @@ const leadSchema = new mongoose.Schema(
 
     notes: { type: String },
 
+    followUpNotes: [
+      {
+        note:      { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+
     // Meta (Facebook / Instagram) lead capture metadata
     meta: {
       leadgenId: { type: String, default: null, index: true },  // Facebook leadgen_id (for dedup)

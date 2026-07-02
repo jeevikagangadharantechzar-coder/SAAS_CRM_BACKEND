@@ -115,23 +115,36 @@ export default {
   getLeads: async (req, res) => {
     try {
       const { Lead, User } = getModels(req);
-      const { search = "", status, source, assignee, page = 1, limit = 10 } = req.query;
+      const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus } = req.query;
       const query = {};
+      const andConditions = [];
 
       if (req.user.role.name !== "Admin") query.assignTo = req.user._id;
 
       if (search?.trim()) {
-        query.$or = [
-          { leadName:    { $regex: search, $options: "i" } },
-          { email:       { $regex: search, $options: "i" } },
-          { phoneNumber: { $regex: search, $options: "i" } },
-          { companyName: { $regex: search, $options: "i" } },
-          { source:      { $regex: search, $options: "i" } },
-        ];
+        andConditions.push({
+          $or: [
+            { leadName:    { $regex: search, $options: "i" } },
+            { email:       { $regex: search, $options: "i" } },
+            { phoneNumber: { $regex: search, $options: "i" } },
+            { companyName: { $regex: search, $options: "i" } },
+            { source:      { $regex: search, $options: "i" } },
+          ],
+        });
       }
       if (status && status !== "") query.status = status;
       if (source && source !== "") query.source = source;
       if (req.query.clientType && req.query.clientType !== "") query.clientType = req.query.clientType;
+
+      if (followUpStatus === "missed") {
+        query.followUpDate = { $lte: new Date() };
+        if (!query.status) query.status = { $nin: ["Converted", "Junk"] };
+        andConditions.push({ $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }] });
+      } else if (followUpStatus === "completed") {
+        andConditions.push({ "followUpNotes.0": { $exists: true } });
+      }
+
+      if (andConditions.length) query.$and = andConditions;
 
       if (assignee && assignee !== "") {
         if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
@@ -386,6 +399,28 @@ export default {
     }
   },
 
+  getMissedFollowUps: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const now = new Date();
+      const query = {
+        followUpDate: { $lte: now },
+        status: { $nin: ["Converted", "Junk"] },
+        $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }],
+      };
+      if (req.user.role.name !== "Admin") query.assignTo = req.user._id;
+
+      const leads = await Lead.find(query)
+        .select("leadName companyName followUpDate assignTo")
+        .populate("assignTo", "firstName lastName")
+        .sort({ followUpDate: 1 });
+
+      res.status(200).json({ leads });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
   getRecentLeads: async (req, res) => {
     try {
       const { Lead } = getModels(req);
@@ -437,6 +472,30 @@ export default {
       res.status(200).json({ message: "Lead status updated successfully", lead });
     } catch (error) {
       res.status(500).json({ message: error.message });
+    }
+  },
+
+  addFollowUpNote: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const tDB  = req.tenantDB || null;
+      const { note } = req.body;
+      if (!note || !note.trim()) return res.status(400).json({ message: "Note is required" });
+
+      const lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      lead.followUpNotes.push({ note: note.trim(), createdAt: new Date() });
+      await lead.save();
+
+      // A logged follow-up note means this lead is no longer "missed" —
+      // clear any pending missed-follow-up notifications for it.
+      await deleteAllNotificationsByEntity("lead", req.params.id, tDB);
+
+      const updated = await Lead.findById(req.params.id).populate("assignTo", "firstName lastName email role");
+      res.status(200).json({ message: "Follow-up note added", lead: updated });
+    } catch (error) {
+      res.status(400).json({ message: error.message });
     }
   },
 

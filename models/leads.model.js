@@ -34,6 +34,12 @@ const leadSchema = new mongoose.Schema(
     lastReminderAt: { type: Date, default: null },
 
     notes: { type: String },
+    followUpNotes: [
+      {
+        note:      { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
     attachments: [
       {
         name: { type: String, required: true },
