@@ -104,6 +104,7 @@ const getMe = async (req, res) => {
         profileImage: user.profileImage,
         role: user.role,
         tenantLimit,
+        currency:user.currency || null,
       });
     } catch (err) {
       res.status(500).json({ message: err.message });

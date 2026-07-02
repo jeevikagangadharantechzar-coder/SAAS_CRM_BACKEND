@@ -4,12 +4,20 @@ import ejs from "ejs";
 import fs from "fs";
 import puppeteer from "puppeteer";
 import nodemailer from "nodemailer";
+import axios from "axios";
 import { getExchangeRate } from "../services/currencyService.js";
 import { getTenantModels } from "../models/tenant/index.js";
+import { notifyUser } from "../realtime/socket.js";
 import InvoiceLegacy from "../models/invoice.model.js";
 import SettingsLegacy from "../models/Settings.js";
 
 const getInvoice = (req) => req.tenantDB ? getTenantModels(req.tenantDB).Invoice : InvoiceLegacy;
+
+// Statuses where an invoice is considered (at least partly) paid and tracks amountPaid
+const PAID_FAMILY = ["paid", "partially_paid"];
+// in_progress represents a stuck/partial payment attempt (e.g. network failure mid-payment) —
+// it still tracks a real collected amount, same as PAID_FAMILY, just without paidAt/inrAmount
+const TRACKED_FAMILY = [...PAID_FAMILY, "in_progress"];
 
 let browserInstance = null;
 const getBrowser = async () => {
@@ -29,19 +37,40 @@ export default {
         return res.status(403).json({ error: "Only Admin can create invoices" });
 
       const Invoice = getInvoice(req);
-      let { items, tax = 0, taxType = "percentage", discountValue = 0, discountType = "percentage", currency = "USD", assignTo, dueDate, ...rest } = req.body;
+      let {
+        items, tax = 0, taxType = "percentage", discountValue = 0, discountType = "percentage",
+        currency = "USD", assignTo, dueDate, status = "unpaid", paymentReceivedNow,
+        preferredCurrency, preferredCurrencyValue, ...rest
+      } = req.body;
       if (!items || items.length === 0) return res.status(400).json({ error: "Invoice must contain at least one item" });
 
       tax = Number(tax) || 0; discountValue = Number(discountValue) || 0;
-      const subtotal = items.reduce((acc, item) => acc + (Number(item.quantity)||0) * (Number(item.unitPrice)||0), 0);
+      const subtotal = items.reduce((acc, item) => acc + (Number(item.price)||0) * (Number(item.quantity)||1), 0);
       const taxAmount = taxType === "percentage" ? (subtotal * tax) / 100 : tax;
       const discount  = discountType === "percentage" ? (subtotal * discountValue) / 100 : discountValue;
       let total = subtotal + taxAmount - discount;
       if (total < 0) total = 0;
 
-      const newInvoice = new Invoice({ items, subtotal, tax, taxType, taxAmount, discountValue, discountType, discount, total, currency, assignTo, dueDate, createdBy: req.user._id, ...rest });
+      const invoiceFields = { items, subtotal, tax, taxType, taxAmount, discountValue, discountType, discount, total, currency, assignTo, dueDate, status, createdBy: req.user._id, ...rest };
+
+      if (TRACKED_FAMILY.includes(status)) {
+        const payment = Math.min(Math.max(Number(paymentReceivedNow) || 0, 0), total);
+        invoiceFields.amountPaid = Number(payment.toFixed(2));
+        if (preferredCurrency) invoiceFields.preferredCurrency = preferredCurrency;
+        if (preferredCurrencyValue != null) invoiceFields.preferredCurrencyValue = parseFloat(preferredCurrencyValue);
+
+        if (status === "paid") {
+          const exchangeRate = await getExchangeRate(currency);
+          invoiceFields.paidAt       = new Date();
+          invoiceFields.exchangeRate = exchangeRate;
+          invoiceFields.inrAmount    = invoiceFields.amountPaid * exchangeRate;
+        }
+      }
+
+      const newInvoice = new Invoice(invoiceFields);
       await newInvoice.save();
       res.status(201).json({ message: "Invoice created successfully", invoice: newInvoice });
+      notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(newInvoice._id), action: "created" });
     } catch (error) {
       console.error("Error creating invoice:", error);
       res.status(500).json({ error: error.message || "Internal server error" });
@@ -86,7 +115,7 @@ export default {
       const invoice = await Invoice.findById(req.params.id);
       if (!invoice) return res.status(404).json({ message: "Invoice not found" });
 
-      let { items, tax = 0, discount = 0, discountType = "fixed", discountValue = 0, taxType = "fixed", price, status, ...rest } = req.body;
+      let { items, tax = 0, discount = 0, discountType = "fixed", discountValue = 0, taxType = "fixed", price, status, paymentReceivedNow, previousAmountConfirmed, ...rest } = req.body;
       let subtotal = 0, finalDiscount = 0, taxAmount = 0, finalTotal = 0;
 
       if (items && items.length > 0) {
@@ -115,18 +144,58 @@ export default {
 
       const currentStatus = invoice.status;
       const newStatus = status || currentStatus;
-      if (newStatus === "paid" && currentStatus !== "paid") {
-        const exchangeRate = await getExchangeRate(invoice.currency);
-        updateData.paidAt = new Date(); updateData.inrAmount = finalTotal * exchangeRate;
-        updateData.exchangeRate = exchangeRate; updateData.status = "paid";
+
+      if (TRACKED_FAMILY.includes(newStatus)) {
+        // Cumulative amount collected so far carries over between paid/partially_paid/in_progress —
+        // in_progress is a stuck/partial attempt, so whatever was actually received still counts.
+        // Switching in from unpaid/send starts the count fresh. An in_progress invoice's amount
+        // is uncertain though — if the admin confirms it was NOT actually received, discard it.
+        const priorWasUnconfirmedAndRejected = currentStatus === "in_progress" && previousAmountConfirmed === false;
+        const previousAmountPaid = TRACKED_FAMILY.includes(currentStatus) && !priorWasUnconfirmedAndRejected
+          ? Number(invoice.amountPaid) || 0
+          : 0;
+        const payment = Number(paymentReceivedNow) || 0;
+        const maxAllowed = Math.max(finalTotal - previousAmountPaid, 0);
+
+        if (payment > maxAllowed) {
+          return res.status(400).json({
+            error: `Payment exceeds invoice total. Maximum you can add now: ${maxAllowed.toFixed(2)}`,
+          });
+        }
+
+        const newAmountPaid = Number((previousAmountPaid + payment).toFixed(2));
+        updateData.status     = newStatus;
+        updateData.amountPaid = newAmountPaid;
+
+        // Frontend sends preferredCurrency/preferredCurrencyValue computed for the cumulative amount paid
+        const { preferredCurrency, preferredCurrencyValue } = req.body;
+        if (preferredCurrency) updateData.preferredCurrency = preferredCurrency;
+        if (preferredCurrencyValue != null) updateData.preferredCurrencyValue = parseFloat(preferredCurrencyValue);
+
+        if (newStatus === "paid" && currentStatus !== "paid") {
+          const exchangeRate = await getExchangeRate(invoice.currency);
+          updateData.paidAt       = new Date();
+          updateData.inrAmount    = newAmountPaid * exchangeRate;
+          updateData.exchangeRate = exchangeRate;
+        }
       } else {
         updateData.status = newStatus;
+        // Reset payment tracking + frozen currency when moving away from paid/partially_paid/in_progress
+        if (TRACKED_FAMILY.includes(currentStatus)) {
+          updateData.amountPaid             = 0;
+          updateData.preferredCurrency      = null;
+          updateData.preferredCurrencyValue = null;
+          updateData.paidAt                 = null;
+          updateData.inrAmount              = null;
+          updateData.exchangeRate           = null;
+        }
       }
 
       const updated = await Invoice.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
         .populate("assignTo", "firstName lastName email role")
         .populate("items.deal", "dealName value stage");
       res.status(200).json(updated);
+      notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(updated._id), action: "updated", status: updateData.status });
     } catch (error) {
       console.error("Error updating invoice:", error);
       res.status(500).json({ error: "Internal server error" });

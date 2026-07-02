@@ -76,6 +76,7 @@ export default {
         dealName, assignTo, dealValue, currency, stage, notes, phoneNumber, email,
         source, companyName, companyId, industry, requirement, address, country,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
+        preferredCurrency, preferredCurrencyValue,
       } = req.body;
 
       if (!dealName || !phoneNumber || !companyName)
@@ -111,6 +112,8 @@ export default {
         address: address || "",
         country: country || "",
         clientType: clientType || null,
+        preferredCurrency: preferredCurrency || null,
+        preferredCurrencyValue: preferredCurrencyValue ? parseFloat(preferredCurrencyValue) : null,
         followUpDate: parsedFollowUpDate,
         followUpComment: followUpComment || "",
         followUpHistory,

@@ -106,6 +106,19 @@ export default {
       const lead      = new Lead(data);
       const savedLead = await lead.save();
       res.status(201).json({ message: "Lead created successfully", lead: savedLead });
+
+      // Notify all active admins so dashboard counts update live
+      try {
+        const { Role } = getModels(req);
+        const payload = { leadId: String(savedLead._id), leadName: savedLead.leadName };
+        if (Role) {
+          const adminRole = await Role.findOne({ name: "Admin" });
+          if (adminRole) {
+            const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id");
+            admins.forEach(a => notifyUser(String(a._id), "lead_created", payload));
+          }
+        }
+      } catch (_) {}
     } catch (error) {
       console.error("Create lead error:", error);
       res.status(400).json({ message: error.message });

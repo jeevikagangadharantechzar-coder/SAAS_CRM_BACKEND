@@ -5,8 +5,10 @@ const dealSchema = new mongoose.Schema({
   dealTitle:    { type: String },
   dealName:     { type: String, required: true },
   assignedTo:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  value:        { type: String, required: true },
-  currency:     { type: String, default: "INR" },
+  value:                 { type: String, required: true },
+  currency:              { type: String, default: "INR" },
+  preferredCurrency:     { type: String, default: null },
+  preferredCurrencyValue:{ type: Number, default: null },
   clientType: {
     type: String,
     enum: ["B2B", "B2C"],

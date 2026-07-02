@@ -114,7 +114,7 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail } = req.body;
+    const { name, slug, adminName, adminEmail, currency = "USD" } = req.body;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
 
@@ -140,6 +140,7 @@ export const createTenant = async (req, res) => {
       dbName,
       adminEmail: adminEmail.toLowerCase(),
       adminName,
+      currency,
       createdBy: req.superAdmin.id,
     });
 
@@ -207,6 +208,7 @@ export const createTenant = async (req, res) => {
         role:        adminRole._id,
         dateOfBirth: new Date("1990-01-01"),
         status:      "Active",
+        currency,
       });
 
       await EmailTemplate.insertMany(defaultEmailTemplates);
@@ -765,7 +767,7 @@ export const getUpgradeHistory = async (req, res) => {
 
 export const updateTenant = async (req, res) => {
   try {
-    const { name, adminName, adminEmail } = req.body;
+    const { name, adminName, adminEmail, currency } = req.body;
     const tenant = await Tenant.findById(req.params.id);
     if (!tenant) return res.status(404).json({ success: false, error: "Tenant not found" });
 
@@ -776,6 +778,7 @@ export const updateTenant = async (req, res) => {
     if (name) tenant.name = name;
     if (adminName) tenant.adminName = adminName;
     if (adminEmail) tenant.adminEmail = newAdminEmail;
+    if (currency) tenant.currency = currency;
     await tenant.save();
 
     // 2. Update the tenant's own database admin user record

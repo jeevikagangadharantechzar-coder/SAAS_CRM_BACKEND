@@ -8,6 +8,7 @@ const tenantSchema = new mongoose.Schema(
     dbName:     { type: String, required: true, unique: true, trim: true },
     adminEmail: { type: String, required: true, lowercase: true, trim: true },
     adminName:  { type: String, required: true, trim: true },
+    currency:        { type: String, default: "USD", trim: true },
     isActive:        { type: Boolean, default: true },
     createdBy:       { type: mongoose.Schema.Types.ObjectId, default: null },
 
