@@ -78,7 +78,11 @@ const runForModels = async ({ Deal, Lead, Proposal, Notification, User, Role }, 
     const dueLeads = await Lead.find({
       followUpDate: { $lte: now },
       status: { $nin: ["Converted", "Junk"] },
-      $or: [{ lastReminderAt: { $exists: false } }, { lastReminderAt: null }, { lastReminderAt: { $lt: todayStart } }],
+      $and: [
+        { $or: [{ lastReminderAt: { $exists: false } }, { lastReminderAt: null }, { lastReminderAt: { $lt: todayStart } }] },
+        // A logged follow-up note means the lead isn't "missed" — skip it
+        { $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }] },
+      ],
     }).populate("assignTo", "_id firstName lastName email profileImage");
 
     for (const lead of dueLeads) {

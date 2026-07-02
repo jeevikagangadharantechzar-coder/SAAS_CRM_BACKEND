@@ -184,6 +184,13 @@ export default {
 
       const previousStage = deal.stage;
       deal.stage = stage;
+      if (stage === "Closed Lost" && previousStage !== "Closed Lost") {
+        deal.stageLostAt = previousStage;
+        deal.lostDate = new Date();
+      } else if (stage !== "Closed Lost" && previousStage === "Closed Lost") {
+        deal.stageLostAt = null;
+        deal.lostDate = null;
+      }
       if (!deal.stageHistory) deal.stageHistory = [];
       deal.stageHistory.push({ stage, movedAt: new Date(), movedBy: req.user._id });
       await deal.save();

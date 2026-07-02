@@ -167,15 +167,24 @@ const deleteUser = async (req, res) => {
 
 const loginUser = async (req, res) => {
     try {
-      const { email, password } = req.body;
+      const { email, password, tenantSlug } = req.body;
       let User;
       let tenant = null;
 
       if (req.tenantDB) {
         User = getTenantModels(req.tenantDB).User;
         tenant = req.tenant || null;
+      } else if (tenantSlug) {
+        // Resolve tenant directly using the slug from request body (Mobile App unified endpoint)
+        tenant = await Tenant.findOne({ slug: tenantSlug.toLowerCase().trim() });
+        if (!tenant) {
+          return res.status(404).json({ success: false, message: "Workspace not found" });
+        }
+        const db = await getTenantDB(tenant.dbName);
+        req.tenantDB = db;
+        User = getTenantModels(db).User;
       } else {
-        // Global login without slug in URL — disable scanning other tenant databases to enforce tenant URL usage
+        // Global login without slug in URL or body — falls back to master/superadmin model
         User = UserLegacy;
       }
 
@@ -273,13 +282,11 @@ const logoutUser = async (req, res) => {
 const updatePassword = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
-      const { email, currentPassword, newPassword } = req.body;
+      const { currentPassword, newPassword } = req.body;
       const userId = req.user.id;
 
       const user = await User.findById(userId).select("+password");
       if (!user) return res.status(404).json({ message: "User not found" });
-      if (user.email !== email)
-        return res.status(400).json({ message: "Email does not match your account" });
       if (!(await userService.matchPassword(currentPassword, user.password)))
         return res.status(401).json({ message: "Current password is incorrect" });
 

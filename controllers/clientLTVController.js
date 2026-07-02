@@ -360,7 +360,10 @@ export default {
     try {
       const { ClientLTV, Deal, SupportTicket, Renewal, ClientReview } = getLTVModels(req);
       const decoded = decodeURIComponent(req.params.companyName);
-      let client = await ClientLTV.findOne({ companyName: decoded }).lean();
+      const { dealId } = req.query;
+      let client = dealId
+        ? await ClientLTV.findOne({ companyId: dealId }).lean()
+        : await ClientLTV.findOne({ companyName: decoded }).lean();
       if (!client) {
         const deals = await Deal.find({ companyName: decoded, stage:"Closed Won" }).populate("assignedTo","firstName lastName").sort({ wonAt:-1, createdAt:-1 }).lean();
         if (!deals.length) return res.status(404).json({ success:false, message:"Client not found" });

@@ -45,8 +45,16 @@ const formatICS = (meeting) => {
   ].filter(Boolean).join("\r\n");
 };
 
-const sendMeetingInvites = async (meeting, creatorName) => {
-  if (!meeting.attendees?.length) return;
+const sendMeetingInvites = async (meeting, creatorName, creatorEmail) => {
+  const recipients = [...new Set([
+    ...(meeting.attendees || []),
+    ...(creatorEmail ? [creatorEmail] : []),
+  ])];
+  console.log("sendMeetingInvites called, recipients:", recipients);
+  if (!recipients.length) {
+    console.log("No recipients — skipping invite emails");
+    return;
+  }
   const start = new Date(meeting.startDateTime).toLocaleString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
     hour: "numeric", minute: "2-digit",
@@ -76,7 +84,7 @@ const sendMeetingInvites = async (meeting, creatorName) => {
     </div>`;
 
   await Promise.allSettled(
-    meeting.attendees.map((email) =>
+    recipients.map((email) =>
       sendEmail({
         to: email,
         subject: `Meeting Invitation: ${meeting.title}`,
@@ -169,11 +177,12 @@ export default {
         googleEventId:   googleEvent.id,
         reminderMinutes: reminderMinutes || 10,
         createdBy:       req.user._id,
+        creatorEmail:    user.email,
       });
 
       const creatorName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email;
-      sendMeetingInvites(meeting, creatorName).catch((e) =>
-        console.warn("Invite emails failed:", e.message)
+      sendMeetingInvites(meeting, creatorName, user.email).catch((e) =>
+        console.error("Invite emails failed:", e.message, e)
       );
 
       res.status(201).json({ success: true, meeting });

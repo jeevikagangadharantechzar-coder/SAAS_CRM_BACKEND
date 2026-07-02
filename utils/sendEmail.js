@@ -13,13 +13,15 @@ const sendEmail = async ({ to, subject, html, attachments = [] }) => {
     },
   });
 
+  console.log(`Sending email to: ${to}, subject: ${subject}`);
   await transporter.sendMail({
     from: `"TZI Support" <${process.env.EMAIL_USER}>`,
     to,
     subject,
     html,
-    attachments,  
+    attachments,
   });
+  console.log(`Email sent successfully to: ${to}`);
 };
 
 export default sendEmail;
