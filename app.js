@@ -44,6 +44,9 @@ import notificationRoutes from "./routes/notification.routes.js";
 // Unified notification cron
 import "./cron/notificationCron.js";
 
+// Target management cron (separate from the generic notification cron)
+import "./cron/targetCron.js";
+
 // Socket
 import { initSocket } from "./realtime/socket.js";
 import { initChatSocket } from "./realtime/chatSocket.js";

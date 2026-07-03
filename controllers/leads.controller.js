@@ -151,10 +151,18 @@ export default {
         }
       }
 
+      // Rejected leads always live on the dedicated Rejected Leads page instead
+      // — never in the main list, for anyone (including Admin). Converted
+      // leads stay visible here for Admin only (read-only record-keeping copy).
+      const hiddenStatuses = req.user.role.name !== "Admin" ? ["Rejected", "Converted"] : ["Rejected"];
+      query.status = query.status && !hiddenStatuses.includes(query.status) ? query.status : { $nin: hiddenStatuses };
+
       const skip       = (page - 1) * limit;
       const totalLeads = await Lead.countDocuments(query);
       const leads      = await Lead.find(query)
         .populate("assignTo", "firstName lastName email role")
+        .populate("rejectedBy", "firstName lastName")
+        .populate({ path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit));
@@ -162,6 +170,92 @@ export default {
       res.status(200).json({ leads, totalLeads, totalPages: Math.ceil(totalLeads / limit), currentPage: Number(page) });
     } catch (error) {
       console.error("Get leads error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: dedicated list of rejected leads, with reason/who/when — search,
+  // filter, and paginate independently of the main Leads list.
+  getRejectedLeads: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead, User } = getModels(req);
+      const { search = "", source, clientType, assignee, startDate, endDate, page = 1, limit = 10 } = req.query;
+      const query = { status: "Rejected" };
+
+      if (search?.trim()) {
+        query.$or = [
+          { leadName:        { $regex: search, $options: "i" } },
+          { email:           { $regex: search, $options: "i" } },
+          { phoneNumber:     { $regex: search, $options: "i" } },
+          { companyName:     { $regex: search, $options: "i" } },
+          { rejectionReason: { $regex: search, $options: "i" } },
+        ];
+      }
+      if (source && source !== "") query.source = source;
+      if (clientType && clientType !== "") query.clientType = clientType;
+
+      if (assignee && assignee !== "") {
+        if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
+          query.assignTo = assignee;
+        } else {
+          const nameParts = assignee.split(" ");
+          const firstName = nameParts[0];
+          const lastName  = nameParts.slice(1).join(" ");
+          const userQuery = lastName
+            ? { firstName: { $regex: firstName, $options: "i" }, lastName: { $regex: lastName, $options: "i" } }
+            : { $or: [{ firstName: { $regex: firstName, $options: "i" } }, { lastName: { $regex: firstName, $options: "i" } }] };
+          const users   = await User.find(userQuery).select("_id");
+          const userIds = users.map((u) => u._id);
+          if (!userIds.length)
+            return res.status(200).json({ leads: [], totalLeads: 0, totalPages: 0, currentPage: Number(page) });
+          query.assignTo = { $in: userIds };
+        }
+      }
+
+      if (startDate || endDate) {
+        query.rejectedAt = {};
+        if (startDate) query.rejectedAt.$gte = new Date(startDate);
+        if (endDate) query.rejectedAt.$lte = new Date(`${endDate}T23:59:59.999Z`);
+      }
+
+      const skip        = (page - 1) * limit;
+      const totalLeads  = await Lead.countDocuments(query);
+      const leads       = await Lead.find(query)
+        .populate("assignTo", "firstName lastName email")
+        .populate("rejectedBy", "firstName lastName")
+        .sort({ rejectedAt: -1 })
+        .skip(skip)
+        .limit(Number(limit));
+
+      res.status(200).json({ leads, totalLeads, totalPages: Math.ceil(totalLeads / limit), currentPage: Number(page) });
+    } catch (error) {
+      console.error("Get rejected leads error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: permanently delete multiple rejected leads at once
+  bulkDeleteRejectedLeads: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead, Notification } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const rejectedIds = await Lead.find({ _id: { $in: ids }, status: "Rejected" }).distinct("_id");
+      await Notification.deleteMany({ "meta.leadId": { $in: rejectedIds.map(String) } });
+      await Lead.deleteMany({ _id: { $in: rejectedIds } });
+
+      res.status(200).json({ message: "Rejected leads deleted", deletedCount: rejectedIds.length });
+    } catch (error) {
+      console.error("Bulk delete rejected leads error:", error);
       res.status(500).json({ message: error.message });
     }
   },
@@ -179,7 +273,7 @@ export default {
 
   updateLead: async (req, res) => {
     try {
-      const { Lead } = getModels(req);
+      const { Lead, Notification } = getModels(req);
       const tDB     = req.tenantDB || null;
       const before  = await Lead.findById(req.params.id).populate("assignTo");
       if (!before) return res.status(404).json({ message: "Lead not found" });
@@ -215,8 +309,10 @@ export default {
       const followUpChanged = !oldFollowUpDate || !newFollowUpDate ||
         oldFollowUpDate.toISOString() !== newFollowUpDate.toISOString();
 
+      const isAdminLead = req.user.role?.name === "Admin";
       if (patch.status && patch.status !== before.status) {
         patch.lastReminderAt = null;
+        // Always record status moves for full journey tracking (admin + salesperson)
         patch.$push = { statusHistory: { status: patch.status, changedAt: new Date() } };
       }
       if (patch.followUpDate) patch.lastReminderAt = null;
@@ -244,6 +340,33 @@ export default {
         if (userId) notifyUser(userId, "deal:converted", { leadId: updated._id, leadName: updated.leadName, when: new Date() });
         if (updated.assignTo?.email)
           await sendEmail({ to: updated.assignTo.email, subject: ` Deal Converted: ${updated.leadName}`, text: `Deal converted for lead ${updated.leadName}. Congrats, ${fullName}!` });
+      }
+
+      // If admin changed the status, send a persistent notification to the salesperson
+      if (patch.status && patch.status !== before.status && isAdminLead) {
+        const spId = updated.assignTo ? String(updated.assignTo._id || updated.assignTo) : null;
+        if (spId && spId !== String(req.user._id)) {
+          const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          await Notification.create({
+            userId: updated.assignTo._id || updated.assignTo,
+            createdBy: req.user._id,
+            type: "target",
+            title: `Lead Status Updated by Admin ${adminName}`,
+            message: `Your assigned lead "${updated.leadName}" was moved to "${updated.status}" status by Admin ${adminName}.`,
+            text: `Your assigned lead "${updated.leadName}" was moved to "${updated.status}" status by Admin ${adminName}.`,
+            referenceId: String(updated._id),
+            meta: { leadId: updated._id, leadName: updated.leadName, status: updated.status, adminName },
+            expiresAt,
+            read: false,
+            isRead: false,
+          });
+          notifyUser(spId, "new_notification", {
+            title: `Lead Status Updated by Admin ${adminName}`,
+            text: `Your assigned lead "${updated.leadName}" was moved to "${updated.status}" status by Admin ${adminName}.`,
+            type: "target",
+          });
+        }
       }
 
       res.status(200).json({ message: "Lead updated successfully", lead: updated });
@@ -276,6 +399,12 @@ export default {
 
       const lead = await Lead.findById(req.params.id).populate("assignTo");
       if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (lead.status === "Rejected" || lead.status === "Converted") {
+        return res.status(403).json({ message: `This lead is ${lead.status.toLowerCase()} and can no longer be edited.` });
+      }
+      if (lead.isActive === false && req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "This lead is disabled pending admin reassignment." });
+      }
 
       const oldDate   = lead.followUpDate;
       const newDate   = new Date(followUpDate);
@@ -321,6 +450,7 @@ export default {
         leadId:           lead._id,
         dealName:         lead.leadName,
         assignedTo:       lead.assignTo?._id ?? null,
+        convertedBy:      req.user._id,
         value:            formattedValue,
         currency:         currency || "INR",
         notes:            notes || "",
@@ -345,41 +475,79 @@ export default {
 
       await deal.save();
 
-      // Delete all notifications for this lead
-      if (lead.assignTo) {
-        await deleteNotificationsByEntity("lead", req.params.id, lead.assignTo._id, tDB);
-      }
-      await Notification.deleteMany({ "meta.leadId": req.params.id });
+      // The lead always keeps a read-only "Converted" copy — regardless of who
+      // performed the conversion — for Admin's record-keeping. It's never deleted.
+      // getLeads() hides Rejected/Converted leads from the sales person's own
+      // account, so the sales person never sees a copy of their own conversions
+      // either, while Admin always sees who converted what.
+      const isAdmin = req.user.role?.name === "Admin";
+      lead.status = "Converted";
+      lead.convertedBy = req.user._id;
+      lead.statusHistory = [...(lead.statusHistory || []), { status: "Converted", changedAt: new Date() }];
+      await lead.save();
 
-      // Delete the lead
-      await Lead.findByIdAndDelete(req.params.id);
+      // The conversion itself (deal + lead) is done — respond right away instead
+      // of making the user wait on notification cleanup, admin lookups, socket
+      // pushes, and an outbound email, none of which affect what they see next.
+      res.status(200).json({ message: "Lead converted to deal successfully", deal, leadDeleted: false });
 
-      // Notify the assigned user about the conversion
-      const userId = lead.assignTo?._id?.toString();
-      const convPayload = { dealId: deal._id, dealName: deal.dealName, leadName: lead.leadName };
-      if (userId) {
-        notifyUser(userId, "deal:created", convPayload);
-        notifyUser(userId, "lead_converted", convPayload);
-      }
-      // Also notify all admins so Target Management live-updates
-      try {
-        const adminRole = await Role.findOne({ name: "Admin" });
-        if (adminRole) {
-          const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id");
-          admins.forEach(a => notifyUser(String(a._id), "lead_converted", convPayload));
+      (async () => {
+        try {
+          // Clean up any stale notifications tied to the lead's pre-conversion
+          // state (e.g. follow-up reminders) — no longer relevant once converted.
+          if (lead.assignTo) {
+            await deleteNotificationsByEntity("lead", req.params.id, lead.assignTo._id, tDB);
+          }
+          await Notification.deleteMany({ "meta.leadId": req.params.id });
+
+          const userId = lead.assignTo?._id?.toString();
+          const convPayload = { dealId: deal._id, dealName: deal.dealName, leadName: lead.leadName, leadId: lead._id };
+          if (userId) {
+            notifyUser(userId, "deal:created", convPayload);
+            notifyUser(userId, "lead_converted", convPayload);
+          }
+          // If admin performed the conversion, send a persistent notification to the salesperson
+          if (isAdmin && userId && String(req.user._id) !== userId) {
+            const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+            await Notification.create({
+              userId: lead.assignTo._id,
+              createdBy: req.user._id,
+              type: "target",
+              title: `Lead Converted to Deal by Admin ${adminName}`,
+              message: `Your assigned lead "${lead.leadName}" was converted to a deal by Admin ${adminName}. The deal has been created and is now in the Qualification stage.`,
+              text: `Your assigned lead "${lead.leadName}" was converted to a deal by Admin ${adminName}. The deal has been created and is now in the Qualification stage.`,
+              referenceId: String(deal._id),
+              meta: { dealId: deal._id, leadName: lead.leadName, adminName },
+              expiresAt,
+              read: false,
+              isRead: false,
+            });
+            notifyUser(userId, "new_notification", {
+              title: `Lead Converted to Deal by Admin ${adminName}`,
+              text: `Your assigned lead "${lead.leadName}" was converted to a deal by Admin ${adminName}.`,
+              type: "target",
+            });
+          }
+          // Also notify all admins so Target Management live-updates
+          const adminRole = await Role.findOne({ name: "Admin" });
+          if (adminRole) {
+            const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id");
+            admins.forEach(a => notifyUser(String(a._id), "lead_converted", convPayload));
+          }
+
+          // Send email notification if assignee has email
+          if (lead.assignTo?.email) {
+            await sendEmail({
+              to:      lead.assignTo.email,
+              subject: ` Lead Converted: ${lead.leadName}`,
+              text:    `Lead "${lead.leadName}" has been successfully converted to a deal. Deal Name: ${deal.dealName}, Value: ${formattedValue}`,
+            });
+          }
+        } catch (bgErr) {
+          console.error("convertLeadToDeal background tasks error:", bgErr);
         }
-      } catch (_) {}
-
-      // Send email notification if assignee has email
-      if (lead.assignTo?.email) {
-        await sendEmail({
-          to:      lead.assignTo.email,
-          subject: ` Lead Converted: ${lead.leadName}`,
-          text:    `Lead "${lead.leadName}" has been successfully converted to a deal. Deal Name: ${deal.dealName}, Value: ${formattedValue}`,
-        });
-      }
-
-      res.status(200).json({ message: "Lead converted to deal successfully", deal, leadDeleted: true });
+      })();
     } catch (error) {
       console.error("Error converting lead to deal:", error);
       res.status(500).json({ message: error.message, details: error.errors });
@@ -436,6 +604,41 @@ export default {
       }
       res.status(200).json({ message: "Lead status updated successfully", lead });
     } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: reject a lead with a reason instead of deleting it — the lead stays
+  // in the list, status flips to Rejected, and it shows disabled/blurred to everyone.
+  rejectLead: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead } = getModels(req);
+      const { reason } = req.body;
+      if (!reason?.trim()) return res.status(400).json({ message: "Rejection reason is required" });
+
+      const lead = await Lead.findById(req.params.id).populate("assignTo");
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      lead.status = "Rejected";
+      lead.rejectionReason = reason.trim();
+      lead.rejectedBy = req.user._id;
+      lead.rejectedAt = new Date();
+      lead.statusHistory = [...(lead.statusHistory || []), { status: "Rejected", changedAt: new Date() }];
+      await lead.save();
+
+      if (lead.assignTo) {
+        const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+        notifyUser(String(lead.assignTo._id), "lead_rejected", { leadId: lead._id, leadName: lead.leadName, reason: reason.trim() });
+        await sendNotification(lead.assignTo._id, `Lead "${lead.leadName}" was rejected by ${adminName}. Reason: ${reason.trim()}`, "lead",
+          { leadId: lead._id, leadName: lead.leadName }, { title: "Lead Rejected" }, req.tenantDB || null);
+      }
+
+      res.status(200).json({ message: "Lead rejected", lead });
+    } catch (error) {
+      console.error("Error rejecting lead:", error);
       res.status(500).json({ message: error.message });
     }
   },

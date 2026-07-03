@@ -5,6 +5,10 @@ const dealSchema = new mongoose.Schema({
   dealTitle:    { type: String },
   dealName:     { type: String, required: true },
   assignedTo:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  // False while the item is overdue on an expired Target and awaiting admin
+  // reassignment — the owning sales person keeps seeing it (read-only) until
+  // it's reassigned back to them or someone else.
+  isActive:     { type: Boolean, default: true },
   value:        { type: String, required: true },
   currency:     { type: String, default: "INR" },
   clientType: {
@@ -21,9 +25,13 @@ const dealSchema = new mongoose.Schema({
       "Invoice Sent",
       "Closed Won",
       "Closed Lost",
+      "Rejected",
     ],
     default: "Qualification",
   },
+  rejectionReason: { type: String, default: "" },
+  rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  rejectedAt:       { type: Date, default: null },
   convertedAt:      { type: Date, default: null },
   notes:            { type: String },
   phoneNumber:      { type: String },
@@ -62,6 +70,7 @@ const dealSchema = new mongoose.Schema({
     },
   ],
   wonBy:         { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  convertedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   leadStatusHistory: [{ status: { type: String }, changedAt: { type: Date } }],
   leadCreatedAt: { type: Date, default: null },
   clientReviewId:{ type: mongoose.Schema.Types.ObjectId, ref: "ClientReview" },

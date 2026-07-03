@@ -19,14 +19,26 @@ const leadSchema = new mongoose.Schema(
 
     assignTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
+    // False while the item is overdue on an expired Target and awaiting admin
+    // reassignment — the owning sales person keeps seeing it (read-only) until
+    // it's reassigned back to them or someone else.
+    isActive: { type: Boolean, default: true },
+
     address: { type: String },
     country: { type: String },
 
     status: {
       type: String,
-      enum: ["Hot", "Warm", "Cold", "Junk", "Converted"],
+      enum: ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"],
       default: "Cold",
     },
+    rejectionReason: { type: String, default: "" },
+    rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    rejectedAt:       { type: Date, default: null },
+
+    // Who actually performed the lead→deal conversion — only set when the
+    // converted lead keeps a read-only copy here (currently: admin conversions).
+    convertedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 
     followUpDate:    { type: Date, default: Date.now },
     emailSentAt:     { type: Date, default: null },
