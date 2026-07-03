@@ -150,7 +150,9 @@ export default {
       if (req.query.clientType && req.query.clientType !== "") query.clientType = req.query.clientType;
 
       if (followUpStatus === "missed") {
-        query.followUpDate = { $lte: new Date() };
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        query.followUpDate = { $lt: startOfToday };
         if (!query.status) query.status = { $nin: ["Converted", "Junk"] };
         andConditions.push({ $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }] });
       } else if (followUpStatus === "completed") {
@@ -416,8 +418,9 @@ export default {
     try {
       const { Lead } = getModels(req);
       const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const query = {
-        followUpDate: { $lte: now },
+        followUpDate: { $lt: startOfToday },
         status: { $nin: ["Converted", "Junk"] },
         $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }],
       };

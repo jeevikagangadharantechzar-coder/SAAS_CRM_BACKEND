@@ -54,4 +54,54 @@ router.post(
   updateInvoiceLogo
 );
 
+/**
+ * UPDATE business details (address/phone/email/tax ID) shown on invoices
+ */
+router.put(
+  "/business-details",
+  protect,
+  adminCreateOnly,
+  indexControllers.settingsController.updateBusinessDetails
+);
+
+/**
+ * UPDATE bank details shown on invoices
+ */
+router.put(
+  "/bank-details",
+  protect,
+  adminCreateOnly,
+  indexControllers.settingsController.updateBankDetails
+);
+
+/**
+ * UPDATE invoice terms & conditions
+ */
+router.put(
+  "/terms",
+  protect,
+  adminCreateOnly,
+  indexControllers.settingsController.updateTerms
+);
+
+/**
+ * GET the "Connect Gmail" URL for invoice sending (OAuth — no password)
+ */
+router.get(
+  "/invoice-email/connect-url",
+  protect,
+  adminCreateOnly,
+  indexControllers.settingsController.getInvoiceGmailConnectUrl
+);
+
+/**
+ * DISCONNECT the Gmail account used for sending invoices
+ */
+router.delete(
+  "/invoice-email",
+  protect,
+  adminCreateOnly,
+  indexControllers.settingsController.disconnectInvoiceGmail
+);
+
 export default router;

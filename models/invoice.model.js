@@ -10,7 +10,7 @@ const invoiceSchema = new mongoose.Schema({
   assignTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   issueDate: { type: Date, required: true },
   dueDate: { type: Date, required: true },
-  status: { type: String, enum: ["paid", "unpaid", "send", "partially_paid", "in_progress"], required: true },
+  status: { type: String, enum: ["paid", "unpaid", "partially_paid"], required: true },
   // Cumulative amount actually collected so far (grows as partial payments come in)
   amountPaid: { type: Number, default: 0 },
 
@@ -50,11 +50,24 @@ const invoiceSchema = new mongoose.Schema({
     type: Number, 
     default: null 
   },
-  exchangeRate: { 
-    type: Number, 
-    default: null 
+  exchangeRate: {
+    type: Number,
+    default: null
   },
-  
+  preferredCurrency:      { type: String, default: null },
+  preferredCurrencyValue: { type: Number, default: null },
+
+  billingAddress: { type: String, default: "" },
+  clientTaxId:    { type: String, default: "" },
+  poNumber:       { type: String, default: "" },
+  customFields: [
+    {
+      label: { type: String, required: true },
+      type:  { type: String, enum: ["text", "number", "date"], default: "text" },
+      value: { type: String, default: "" },
+    },
+  ],
+
 }, { timestamps: true });
 
 //  index for better query performance

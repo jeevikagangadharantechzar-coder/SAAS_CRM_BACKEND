@@ -108,7 +108,7 @@ function invalidateClientCache(email) {
 }
 
 // ─── AUTH URL ─────────────────────────────────────────────────────────────────
-export function generateAuthUrl(redirectUri) {
+export function generateAuthUrl(redirectUri, state) {
   requireGmailConfig();
   const scopes = [
     "https://mail.google.com/",
@@ -117,7 +117,9 @@ export function generateAuthUrl(redirectUri) {
     "https://www.googleapis.com/auth/gmail.readonly",
   ];
   const client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
-  return client.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: scopes });
+  const opts = { access_type: "offline", prompt: "consent", scope: scopes };
+  if (state) opts.state = state;
+  return client.generateAuthUrl(opts);
 }
 
 // ─── SAVE TOKENS ─────────────────────────────────────────────────────────────
