@@ -10,12 +10,14 @@ router.get("/sales-summary/:userId", protect, targetController.getSalesPersonSum
 router.get("/", protect, targetController.getTargets);
 router.post("/", protect, targetController.createTarget);
 router.put("/:id", protect, targetController.updateTarget);
+router.post("/:id/unlink-item", protect, targetController.unlinkItem);
 router.delete("/:id", protect, targetController.deleteTarget);
 router.post("/:id/notes", protect, targetController.addNote);
 router.post("/:id/reason-note", protect, targetController.addReasonNote);
 router.get("/reason-notes/all", protect, targetController.getAllReasonNotes);
 router.post("/reason-notes/bulk-delete", protect, targetController.bulkDeleteReasonNotes);
 router.post("/:id/reason-notes/:noteIdx/reassign", protect, targetController.reassignItem);
+router.post("/:id/reassign", protect, targetController.reassignTargetItems);
 router.delete("/:id/reason-notes/:noteIdx", protect, targetController.deleteReasonNote);
 
 export default router;

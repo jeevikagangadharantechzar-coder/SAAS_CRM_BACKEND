@@ -1,5 +1,8 @@
 import { getTenantModels } from "../models/tenant/index.js";
 import { notifyUser } from "../realtime/socket.js";
+import { notifyTargetUser } from "../realtime/targetSocket.js";
+import { validateTargetDates } from "../utils/targetDateValidation.js";
+import { checkTargetDeadlineNow } from "../cron/targetCron.js";
 
 const getModels = (req) => getTenantModels(req.tenantDB);
 
@@ -34,6 +37,27 @@ async function findAdmins(User, Role) {
   return User.find({ role: adminRole._id, status: "Active" }).select("_id");
 }
 
+// A deal an Admin has actually pushed a stage move on — i.e. the admin is
+// doing the hands-on work on it, whether or not it was ever lead-converted.
+// Requires stageHistory.movedBy to be populated with { firstName, lastName, role: { name } }.
+// Excludes moves made by the deal's own owner, in case an Admin is the assignee themselves.
+function getTakenByAdminName(stageHistory, ownerIdStr) {
+  const adminMoves = (stageHistory || []).filter((h) => {
+    if (!h.movedBy || typeof h.movedBy !== "object") return false;
+    if (String(h.movedBy._id) === ownerIdStr) return false;
+    return h.movedBy.role?.name === "Admin";
+  });
+  if (!adminMoves.length) return null;
+  const latest = adminMoves[adminMoves.length - 1].movedBy;
+  return `${latest.firstName || ""} ${latest.lastName || ""}`.trim();
+}
+
+const STAGE_HISTORY_MOVER_POPULATE = {
+  path: "stageHistory.movedBy",
+  select: "firstName lastName role",
+  populate: { path: "role", select: "name" },
+};
+
 // Compute actual counts for a user within a date range, scoped to linked leads/deals if provided
 async function computeActuals(models, userId, startDate, endDate, linkedLeadIds = null, linkedDealIds = null) {
   const { Lead, Deal, CallLog, Activity } = models;
@@ -42,7 +66,7 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   const end = new Date(endDate);
   end.setHours(23, 59, 59, 999);
 
-  // Leads converted: leads become deals on conversion (lead is deleted), so count deals created from linked leads
+  // Leads converted: count all linked leads that got converted (regardless of who converted them)
   const leadsConvertedQuery = linkedLeadIds && linkedLeadIds.length > 0
     ? Deal.countDocuments({ leadId: { $in: linkedLeadIds } })
     : Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: start, $lte: end } });
@@ -93,15 +117,48 @@ export default {
           .select("leadName companyName phoneNumber email status createdAt statusHistory")
           .lean();
 
+        const spIdStr = String(t.salesPerson._id || t.salesPerson);
+
         // Deals created from converted linked leads (carry status history)
         const convertedLeadDeals = await Deal.find({ leadId: { $in: rawLeadIds } })
-          .select("dealName leadId convertedAt createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email")
-          .lean();
+          .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email")
+          .populate("convertedBy", "firstName lastName")
+          .populate(STAGE_HISTORY_MOVER_POPULATE)
+          .lean()
+          .then(deals => deals.map(d => {
+            const isSPConverted = d.convertedBy
+              ? String(d.convertedBy._id || d.convertedBy) === spIdStr
+              : String(d.assignedTo || "") === spIdStr;
+            // Always carry the converter's name — the frontend picks the wording
+            // ("Admin X converted..." vs "X converted...") based on salesPersonConverted.
+            const convertedByName = d.convertedBy
+              ? `${d.convertedBy.firstName || ""} ${d.convertedBy.lastName || ""}`.trim()
+              : null;
+            return {
+              ...d,
+              salesPersonConverted: isSPConverted,
+              convertedByName,
+              takenByAdminName: getTakenByAdminName(d.stageHistory, String(d.assignedTo || spIdStr)),
+            };
+          }));
 
-        // Populate linked deals
+        // Populate linked deals (full stageHistory — all stage moves shown in journey)
         const existingDeals = await Deal.find({ _id: { $in: rawDealIds } })
-          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt convertedAt createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
-          .lean();
+          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
+          .populate("convertedBy", "firstName lastName")
+          .populate(STAGE_HISTORY_MOVER_POPULATE)
+          .lean()
+          .then(deals => deals.map(d => {
+            const takenByAdminName = getTakenByAdminName(d.stageHistory, String(d.assignedTo || spIdStr));
+            if (!d.convertedBy) return { ...d, salesPersonConverted: null, convertedByName: null, takenByAdminName };
+            const isSPConverted = String(d.convertedBy._id || d.convertedBy) === spIdStr;
+            return {
+              ...d,
+              salesPersonConverted: isSPConverted,
+              convertedByName: `${d.convertedBy.firstName || ""} ${d.convertedBy.lastName || ""}`.trim(),
+              takenByAdminName,
+            };
+          }));
 
         // Count leads that converted to a deal AND that deal is Closed Won
         const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won").length;
@@ -117,7 +174,13 @@ export default {
         const dealsPercent = t.targetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / t.targetDeals) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
-        const overall = Math.round((leadsPercent + dealsPercent + callsPercent + meetingsPercent) / 4);
+        const activePercentages = [
+          t.targetLeads > 0 ? leadsPercent : null,
+          t.targetDeals > 0 ? dealsPercent : null,
+        ].filter(v => v !== null);
+        const overall = activePercentages.length > 0
+          ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
+          : 0;
 
         return {
           ...t,
@@ -162,13 +225,44 @@ export default {
           .select("leadName companyName phoneNumber email status createdAt statusHistory")
           .lean();
 
+        const myIdStr = String(req.user._id);
+
         const convertedLeadDeals = await Deal.find({ leadId: { $in: rawLeadIds } })
-          .select("dealName leadId convertedAt createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email")
-          .lean();
+          .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email")
+          .populate("convertedBy", "firstName lastName")
+          .populate(STAGE_HISTORY_MOVER_POPULATE)
+          .lean()
+          .then(deals => deals.map(d => {
+            const isSPConverted = d.convertedBy
+              ? String(d.convertedBy._id || d.convertedBy) === myIdStr
+              : String(d.assignedTo || "") === myIdStr;
+            const convertedByName = d.convertedBy
+              ? `${d.convertedBy.firstName || ""} ${d.convertedBy.lastName || ""}`.trim()
+              : null;
+            return {
+              ...d,
+              salesPersonConverted: isSPConverted,
+              convertedByName,
+              takenByAdminName: getTakenByAdminName(d.stageHistory, String(d.assignedTo || myIdStr)),
+            };
+          }));
 
         const existingDeals = await Deal.find({ _id: { $in: rawDealIds } })
-          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt convertedAt createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
-          .lean();
+          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
+          .populate("convertedBy", "firstName lastName")
+          .populate(STAGE_HISTORY_MOVER_POPULATE)
+          .lean()
+          .then(deals => deals.map(d => {
+            const takenByAdminName = getTakenByAdminName(d.stageHistory, String(d.assignedTo || myIdStr));
+            if (!d.convertedBy) return { ...d, salesPersonConverted: null, convertedByName: null, takenByAdminName };
+            const isSPConverted = String(d.convertedBy._id || d.convertedBy) === myIdStr;
+            return {
+              ...d,
+              salesPersonConverted: isSPConverted,
+              convertedByName: `${d.convertedBy.firstName || ""} ${d.convertedBy.lastName || ""}`.trim(),
+              takenByAdminName,
+            };
+          }));
 
         // Count leads that converted to a deal AND that deal is Closed Won
         const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won").length;
@@ -184,7 +278,13 @@ export default {
         const dealsPercent = t.targetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / t.targetDeals) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
-        const overall = Math.round((leadsPercent + dealsPercent + callsPercent + meetingsPercent) / 4);
+        const activePercentages = [
+          t.targetLeads > 0 ? leadsPercent : null,
+          t.targetDeals > 0 ? dealsPercent : null,
+        ].filter(v => v !== null);
+        const overall = activePercentages.length > 0
+          ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
+          : 0;
 
         return {
           ...t,
@@ -214,11 +314,16 @@ export default {
       const { userId } = req.params;
 
       const [leads, deals] = await Promise.all([
-        Lead.find({ assignTo: userId })
+        // Rejected leads are dead ends and Converted leads have already become
+        // a Deal (shown below via the Deals query instead) — neither belongs
+        // in this "pick leads to link" list.
+        Lead.find({ assignTo: userId, status: { $nin: ["Rejected", "Converted"] } })
           .select("leadName companyName phoneNumber email status createdAt updatedAt")
           .sort({ createdAt: -1 }),
         Deal.find({ assignedTo: userId })
-          .select("dealName dealTitle stage value currency companyName phoneNumber email createdAt updatedAt wonAt convertedAt")
+          .select("dealName dealTitle stage value currency companyName phoneNumber email createdAt updatedAt wonAt convertedAt convertedBy stageHistory lossReason lossNotes stageLostAt")
+          .populate("convertedBy", "firstName lastName")
+          .populate(STAGE_HISTORY_MOVER_POPULATE)
           .sort({ createdAt: -1 }),
       ]);
 
@@ -234,7 +339,7 @@ export default {
         return acc;
       }, {});
 
-      // Enrich won deals with days taken
+      // Enrich won deals with days taken + admin-conversion attribution
       const enrichedDeals = deals.map((d) => {
         const obj = d.toObject();
         if (d.stage === "Closed Won" && d.wonAt) {
@@ -245,6 +350,14 @@ export default {
           obj.daysTaken = days;
           obj.wonAtFormatted = end.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
         }
+        if (obj.convertedBy) {
+          obj.salesPersonConverted = String(obj.convertedBy._id || obj.convertedBy) === String(userId);
+          obj.convertedByName = `${obj.convertedBy.firstName || ""} ${obj.convertedBy.lastName || ""}`.trim();
+        } else {
+          obj.salesPersonConverted = null;
+          obj.convertedByName = null;
+        }
+        obj.takenByAdminName = getTakenByAdminName(obj.stageHistory, String(userId));
         return obj;
       });
 
@@ -278,6 +391,13 @@ export default {
             wonAt: d.wonAt,
             wonAtFormatted: d.wonAtFormatted,
             daysTaken: d.daysTaken,
+            stageHistory: d.stageHistory,
+            lossReason: d.lossReason,
+            lossNotes: d.lossNotes,
+            stageLostAt: d.stageLostAt,
+            salesPersonConverted: d.salesPersonConverted,
+            convertedByName: d.convertedByName,
+            takenByAdminName: d.takenByAdminName,
           })),
         },
       });
@@ -295,6 +415,9 @@ export default {
       }
       const { Target, Notification } = getModels(req);
       const { salesPerson, period, startDate, endDate, targetLeads, targetDeals, targetCalls, targetMeetings, linkedLeads, linkedDeals, description } = req.body;
+
+      const dateError = validateTargetDates(startDate, endDate, { isCreate: true });
+      if (dateError) return res.status(400).json({ message: dateError });
 
       const target = await Target.create({
         salesPerson,
@@ -331,12 +454,16 @@ export default {
       });
 
       // Real-time: notify sales person + all admins to refresh immediately
-      notifyUser(String(salesPerson), "targets_refresh", {});
+      notifyTargetUser(String(salesPerson), "targets_refresh", {});
       try {
         const { User, Role } = getModels(req);
         const admins = await findAdmins(User, Role);
-        admins.forEach(a => notifyUser(String(a._id), "targets_refresh", {}));
+        admins.forEach(a => notifyTargetUser(String(a._id), "targets_refresh", {}));
       } catch (_) {}
+
+      // Check immediately in case the deadline is already tomorrow/today — don't
+      // make the admin/sales person wait for the next periodic cron tick.
+      checkTargetDeadlineNow(target._id, req.tenantDB).catch(() => {});
 
       res.status(201).json({ message: "Target created successfully", data: populated });
     } catch (err) {
@@ -352,6 +479,28 @@ export default {
         return res.status(403).json({ message: "Access denied: Admins only" });
       }
       const { Target, Notification } = getModels(req);
+      const { startDate, endDate } = req.body;
+      let endDateChanged = false;
+      if (startDate || endDate) {
+        const existing = await Target.findById(req.params.id).select("startDate endDate").lean();
+        if (!existing) return res.status(404).json({ message: "Target not found" });
+        const dateError = validateTargetDates(
+          startDate || existing.startDate,
+          endDate || existing.endDate,
+          { isCreate: false }
+        );
+        if (dateError) return res.status(400).json({ message: dateError });
+
+        // A changed End Date invalidates any reminder/due-today/expiry already sent
+        // for the old deadline — reset so the cron re-evaluates the new one.
+        if (endDate && new Date(endDate).getTime() !== new Date(existing.endDate).getTime()) {
+          endDateChanged = true;
+          req.body.reminderSentAt = null;
+          req.body.dueTodaySentAt = null;
+          req.body.expiredAt = null;
+        }
+      }
+
       const updated = await Target.findByIdAndUpdate(req.params.id, req.body, {
         new: true,
         runValidators: true,
@@ -379,9 +528,71 @@ export default {
         meta: { targetId: String(updated._id), targetUpdated: true },
       });
 
+      if (endDateChanged) {
+        checkTargetDeadlineNow(updated._id, req.tenantDB).catch(() => {});
+      }
+
       res.status(200).json({ message: "Target updated", data: updated });
     } catch (err) {
       console.error("Error updating target:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: unlink any lead/deal from a target. Sales: unlink only their own
+  // already-completed items (Closed Won/Lost deals, Converted leads) — a
+  // self-service way to clear finished cards, not to hide active work.
+  unlinkItem: async (req, res) => {
+    try {
+      const { Target, Lead, Deal } = getModels(req);
+      const { id } = req.params;
+      const { type, itemId } = req.body; // type: "lead" | "deal"
+      if (!type || !itemId) return res.status(400).json({ message: "type and itemId are required" });
+
+      const isAdmin = req.user.role?.name === "Admin";
+      if (!isAdmin) {
+        const target = await Target.findById(id).select("salesPerson");
+        if (!target) return res.status(404).json({ message: "Target not found" });
+        if (String(target.salesPerson) !== String(req.user._id)) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+
+        if (type === "deal") {
+          const deal = await Deal.findById(itemId).select("stage");
+          const completed = deal && (deal.stage === "Closed Won" || deal.stage === "Closed Lost");
+          if (!completed) return res.status(403).json({ message: "You can only remove completed deals" });
+        } else {
+          const lead = await Lead.findById(itemId).select("status");
+          // A missing Lead document means it was already converted to a deal (completed)
+          const completed = !lead || lead.status === "Converted";
+          if (!completed) return res.status(403).json({ message: "You can only remove completed leads" });
+        }
+      }
+
+      const field = type === "lead" ? "linkedLeads" : "linkedDeals";
+      const countField = type === "lead" ? "targetLeads" : "targetDeals";
+
+      // Removing a tracked item also shrinks the goal count it counted toward —
+      // otherwise unlinking a completed (Closed Won/Converted) item drags the
+      // percentage down instead of leaving it correctly at 100%.
+      const before = await Target.findById(id).select(countField);
+      if (!before) return res.status(404).json({ message: "Target not found" });
+      const updateOp = { $pull: { [field]: itemId } };
+      if ((before[countField] || 0) > 0) updateOp.$inc = { [countField]: -1 };
+
+      const updated = await Target.findByIdAndUpdate(id, updateOp, { new: true });
+      if (!updated) return res.status(404).json({ message: "Target not found" });
+
+      notifyTargetUser(String(updated.salesPerson), "targets_refresh", {});
+      const { User, Role } = getModels(req);
+      try {
+        const admins = await findAdmins(User, Role);
+        admins.forEach(a => notifyTargetUser(String(a._id), "targets_refresh", {}));
+      } catch (_) {}
+
+      res.status(200).json({ message: "Item unlinked successfully" });
+    } catch (err) {
+      console.error("Error unlinking item:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },
@@ -397,11 +608,11 @@ export default {
       if (!deleted) return res.status(404).json({ message: "Target not found" });
 
       // Real-time: tell the sales person to instantly remove this card
-      notifyUser(String(deleted.salesPerson), "target_deleted", { targetId: String(deleted._id) });
-      notifyUser(String(deleted.salesPerson), "targets_refresh", {});
+      notifyTargetUser(String(deleted.salesPerson), "target_deleted", { targetId: String(deleted._id) });
+      notifyTargetUser(String(deleted.salesPerson), "targets_refresh", {});
       try {
         const admins = await findAdmins(User, Role);
-        admins.forEach(a => notifyUser(String(a._id), "targets_refresh", {}));
+        admins.forEach(a => notifyTargetUser(String(a._id), "targets_refresh", {}));
       } catch (_) {}
 
       res.status(200).json({ message: "Target deleted successfully" });
@@ -557,7 +768,7 @@ export default {
           )
         );
         // Socket notify admins immediately
-        admins.forEach(a => notifyUser(String(a._id), "reason_note_received", {
+        admins.forEach(a => notifyTargetUser(String(a._id), "reason_note_received", {
           targetId: String(target._id), salesName, itemType, itemName, note: note.trim(),
         }));
       }
@@ -631,6 +842,31 @@ export default {
         target.reasonNotes[Number(noteIdx)].resolvedAt = new Date();
         target.reasonNotes[Number(noteIdx)].reassignedTo = reassignToUserId;
         target.reasonNotes[Number(noteIdx)].reassignNote = adminNote || "";
+
+        // Auto-expired items are unlinked from the target before their reason note
+        // is created — re-link here so "kept with same person" actually restores tracking.
+        if (rn.itemType === "lead") {
+          if (!target.linkedLeads.some(id => String(id) === String(rn.itemId))) {
+            target.linkedLeads.push(rn.itemId);
+          }
+        } else if (!target.linkedDeals.some(id => String(id) === String(rn.itemId))) {
+          target.linkedDeals.push(rn.itemId);
+        }
+
+        // Re-enable the item itself — it was disabled (read-only) while pending reassignment
+        if (rn.itemType === "lead") await Lead.findByIdAndUpdate(rn.itemId, { isActive: true });
+        else await Deal.findByIdAndUpdate(rn.itemId, { isActive: true });
+
+        // Extending the due date for the same person must also restart the
+        // reminder cycle, otherwise the cron thinks it already notified for
+        // this target and stays silent until the (now stale) old deadline.
+        if (extendEndDate) {
+          target.endDate = new Date(extendEndDate);
+          target.reminderSentAt = null;
+          target.dueTodaySentAt = null;
+          target.expiredAt = null;
+        }
+
         await target.save();
 
         await createNotification(Notification, {
@@ -640,7 +876,7 @@ export default {
           type: "target_reassign",
           meta: { targetId: String(target._id), itemType: rn.itemType, itemId: String(rn.itemId), itemName: rn.itemName, reactivated: true },
         });
-        notifyUser(String(target.salesPerson._id), "item_reactivated", {
+        notifyTargetUser(String(target.salesPerson._id), "item_reactivated", {
           itemType: rn.itemType, itemName: rn.itemName, itemId: String(rn.itemId), quote,
         });
       } else {
@@ -651,10 +887,12 @@ export default {
         // 1. Re-assign lead/deal ownership + remove from original target
         let sourceLeadId = null; // populated when deal is a converted-lead-deal
         if (rn.itemType === "lead") {
-          await Lead.findByIdAndUpdate(rn.itemId, { assignTo: reassignToUserId });
+          // Re-assigning to a different person also re-enables the item for
+          // its new owner — it was disabled (read-only) on the old owner's view.
+          await Lead.findByIdAndUpdate(rn.itemId, { assignTo: reassignToUserId, isActive: true });
           target.linkedLeads = target.linkedLeads.filter(id => String(id) !== String(rn.itemId));
         } else {
-          await Deal.findByIdAndUpdate(rn.itemId, { assignedTo: reassignToUserId });
+          await Deal.findByIdAndUpdate(rn.itemId, { assignedTo: reassignToUserId, isActive: true });
           target.linkedDeals = target.linkedDeals.filter(id => String(id) !== String(rn.itemId));
           // Also handle converted-lead-deals: the source lead sits in linkedLeads, not linkedDeals
           const dealDoc = await Deal.findById(rn.itemId).select("leadId").lean();
@@ -692,7 +930,9 @@ export default {
           const updateOp = { $addToSet: {} };
           if (rn.itemType === "lead") updateOp.$addToSet.linkedLeads = rn.itemId;
           else updateOp.$addToSet.linkedDeals = rn.itemId;
-          if (resolvedEndDate) updateOp.$set = { endDate: resolvedEndDate };
+          // Reset the reminder guards whenever the deadline moves, so the cron
+          // treats this as a fresh deadline instead of one it already handled.
+          if (resolvedEndDate) updateOp.$set = { endDate: resolvedEndDate, reminderSentAt: null, dueTodaySentAt: null, expiredAt: null };
           await Target.findByIdAndUpdate(receiverTarget._id, updateOp);
           console.log("[reassignItem] Item added to existing target via $addToSet.", resolvedEndDate ? `EndDate extended to ${resolvedEndDate}` : "");
         } else {
@@ -733,22 +973,154 @@ export default {
         });
 
         // 4. Real-time events
-        notifyUser(String(reassignToUserId),      "item_reassigned",  { itemType: rn.itemType, itemName: rn.itemName, quote });
-        notifyUser(String(reassignToUserId),      "targets_refresh",  {});
-        notifyUser(String(target.salesPerson._id), "item_removed",    { itemType: rn.itemType, itemName: rn.itemName, itemId: String(rn.itemId), sourceLeadId, targetId: String(target._id) });
-        notifyUser(String(target.salesPerson._id), "targets_refresh", {});
+        notifyTargetUser(String(reassignToUserId),      "item_reassigned",  { itemType: rn.itemType, itemName: rn.itemName, quote });
+        notifyTargetUser(String(reassignToUserId),      "targets_refresh",  {});
+        notifyTargetUser(String(target.salesPerson._id), "item_removed",    { itemType: rn.itemType, itemName: rn.itemName, itemId: String(rn.itemId), sourceLeadId, targetId: String(target._id) });
+        notifyTargetUser(String(target.salesPerson._id), "targets_refresh", {});
 
         // Notify all admins to refresh their view
         try {
           const { Role } = getModels(req);
           const admins = await findAdmins(User, Role);
-          admins.forEach(a => notifyUser(String(a._id), "targets_refresh", {}));
+          admins.forEach(a => notifyTargetUser(String(a._id), "targets_refresh", {}));
         } catch (_) { /* non-critical */ }
       }
 
       res.status(200).json({ message: isSamePerson ? "Item reactivated for same sales person" : "Item reassigned successfully" });
     } catch (err) {
       console.error("Error reassigning item:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: proactively reassign ALL still-incomplete leads/deals linked to a
+  // target — used from the "Tomorrow"/"Today" due-date notifications, before
+  // anything has expired (so there's no reasonNotes entry yet to key off of).
+  reassignTargetItems: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied" });
+      const { Target, Lead, Deal, Notification, User, Role } = getModels(req);
+      const { reassignToUserId, adminNote, extendEndDate } = req.body;
+
+      const targetLean = await Target.findById(req.params.id)
+        .populate("salesPerson", "firstName lastName")
+        .populate("linkedLeads", "leadName status")
+        .populate("linkedDeals", "dealName dealTitle stage")
+        .lean();
+      if (!targetLean) return res.status(404).json({ message: "Target not found" });
+
+      const newUser = await User.findById(reassignToUserId).select("firstName lastName");
+      if (!newUser) return res.status(404).json({ message: "User not found" });
+
+      const incompleteLeads = (targetLean.linkedLeads || []).filter((l) => l.status !== "Converted");
+      const incompleteDeals = (targetLean.linkedDeals || []).filter((d) => d.stage !== "Closed Won");
+      if (!incompleteLeads.length && !incompleteDeals.length) {
+        return res.status(400).json({ message: "Nothing left to reassign — all linked items are already complete" });
+      }
+
+      const isSamePerson = String(targetLean.salesPerson._id) === String(reassignToUserId);
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+      const oldSalesName = `${targetLean.salesPerson.firstName} ${targetLean.salesPerson.lastName}`;
+      const resolvedEndDate = extendEndDate ? new Date(extendEndDate) : null;
+      const leadIds = incompleteLeads.map((l) => l._id);
+      const dealIds = incompleteDeals.map((d) => d._id);
+
+      // Mark the Tomorrow/Today due-date notifications for this target as
+      // resolved everywhere they appear, so the "Reassign" button on them
+      // turns into a completed indicator instead of staying clickable.
+      await Notification.updateMany(
+        { type: { $in: ["target_reminder", "target_due_today"] }, "meta.targetId": String(targetLean._id) },
+        { $set: { "meta.resolved": true, "meta.resolvedToName": `${newUser.firstName} ${newUser.lastName}`, "meta.resolvedAt": new Date() } }
+      );
+
+      if (isSamePerson) {
+        // Extending the due date must also restart the reminder cycle, otherwise
+        // the cron thinks it already notified for this target and stays silent.
+        if (resolvedEndDate) {
+          await Target.findByIdAndUpdate(targetLean._id, {
+            endDate: resolvedEndDate, reminderSentAt: null, dueTodaySentAt: null, expiredAt: null,
+          });
+        }
+        if (leadIds.length) await Lead.updateMany({ _id: { $in: leadIds } }, { isActive: true });
+        if (dealIds.length) await Deal.updateMany({ _id: { $in: dealIds } }, { isActive: true });
+
+        await createNotification(Notification, {
+          userId: targetLean.salesPerson._id,
+          title: "Deadline Extended",
+          message: `Admin ${adminName} gave you more time on your current leads/deals.${resolvedEndDate ? ` New due date: ${resolvedEndDate.toDateString()}.` : ""}${adminNote ? ` Note: ${adminNote}` : ""}`,
+          type: "target_reassign",
+          meta: { targetId: String(targetLean._id) },
+        });
+        notifyTargetUser(String(targetLean.salesPerson._id), "targets_refresh", {});
+        try {
+          const admins = await findAdmins(User, Role);
+          admins.forEach((a) => notifyTargetUser(String(a._id), "target_due_today", {}));
+        } catch (_) { /* non-critical */ }
+      } else {
+        // Move ownership of every still-incomplete item, re-enable them for the
+        // new owner, and unlink them from the old target.
+        if (leadIds.length) await Lead.updateMany({ _id: { $in: leadIds } }, { assignTo: reassignToUserId, isActive: true });
+        if (dealIds.length) await Deal.updateMany({ _id: { $in: dealIds } }, { assignedTo: reassignToUserId, isActive: true });
+        await Target.findByIdAndUpdate(targetLean._id, { $pullAll: { linkedLeads: leadIds, linkedDeals: dealIds } });
+
+        const today = new Date();
+        let receiverTarget = await Target.findOne({
+          salesPerson: reassignToUserId,
+          startDate:   { $lte: today },
+          endDate:     { $gte: today },
+        }).sort({ createdAt: -1 }).lean();
+        if (!receiverTarget) {
+          receiverTarget = await Target.findOne({ salesPerson: reassignToUserId }).sort({ createdAt: -1 }).lean();
+        }
+
+        if (receiverTarget) {
+          const updateOp = { $addToSet: {} };
+          if (leadIds.length) updateOp.$addToSet.linkedLeads = { $each: leadIds };
+          if (dealIds.length) updateOp.$addToSet.linkedDeals = { $each: dealIds };
+          if (resolvedEndDate) updateOp.$set = { endDate: resolvedEndDate, reminderSentAt: null, dueTodaySentAt: null, expiredAt: null };
+          await Target.findByIdAndUpdate(receiverTarget._id, updateOp);
+        } else {
+          receiverTarget = await Target.create({
+            salesPerson:    reassignToUserId,
+            period:         targetLean.period,
+            startDate:      targetLean.startDate,
+            endDate:        resolvedEndDate || targetLean.endDate,
+            targetLeads: 0, targetDeals: 0, targetCalls: 0, targetMeetings: 0,
+            description:    `Assigned by admin — reassigned from ${oldSalesName}'s target`,
+            createdBy:      req.user._id,
+            linkedLeads:    leadIds,
+            linkedDeals:    dealIds,
+          });
+        }
+
+        const itemSummary = [...incompleteLeads.map((l) => l.leadName), ...incompleteDeals.map((d) => d.dealName || d.dealTitle)].join(", ");
+
+        await createNotification(Notification, {
+          userId: reassignToUserId,
+          title:  "New Leads/Deals Assigned to You",
+          message: `Admin ${adminName} assigned these to you: ${itemSummary}.${adminNote ? ` Note: ${adminNote}` : ""}`,
+          type:   "target_reassign",
+          meta:   { targetId: String(receiverTarget._id) },
+        });
+        await createNotification(Notification, {
+          userId: targetLean.salesPerson._id,
+          title:  "Leads/Deals Reassigned",
+          message: `Admin ${adminName} reassigned these to ${newUser.firstName} ${newUser.lastName}: ${itemSummary}.${adminNote ? ` Note: ${adminNote}` : ""}`,
+          type:   "target_reassign",
+          meta:   { targetId: String(targetLean._id), removed: true },
+        });
+
+        notifyTargetUser(String(reassignToUserId), "targets_refresh", {});
+        notifyTargetUser(String(targetLean.salesPerson._id), "targets_refresh", {});
+        try {
+          const admins = await findAdmins(User, Role);
+          admins.forEach((a) => { notifyTargetUser(String(a._id), "targets_refresh", {}); notifyTargetUser(String(a._id), "target_due_today", {}); });
+        } catch (_) { /* non-critical */ }
+      }
+
+      res.status(200).json({ message: isSamePerson ? "Deadline extended" : "Items reassigned successfully" });
+    } catch (err) {
+      console.error("Error reassigning target items:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },

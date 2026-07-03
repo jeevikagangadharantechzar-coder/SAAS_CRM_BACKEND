@@ -120,6 +120,11 @@ export default {
         lossReason: lossReason || "",
         lossNotes: lossNotes || "",
         attachments,
+        // Record the starting stage so the journey view isn't missing steps
+        // when a deal is created directly at a later stage (e.g. Closed Won).
+        stageHistory: [{ stage: dealStage, movedAt: new Date(), movedBy: req.user._id }],
+        ...(dealStage === "Closed Won" && { wonAt: new Date(), wonBy: req.user._id }),
+        ...(dealStage === "Closed Lost" && { stageLostAt: "Qualification", lostDate: new Date() }),
       });
       await deal.save();
 
@@ -141,7 +146,20 @@ export default {
       if (req.user.role.name !== "Admin") query.assignedTo = req.user._id;
       const { start, end } = req.query;
       if (start && end) query.createdAt = { $gte: new Date(start), $lte: new Date(end + "T23:59:59.999Z") };
-      const deals = await Deal.find(query).populate("assignedTo", "firstName lastName email").sort({ createdAt: -1 });
+
+      // Rejected deals always live on the dedicated Reject Deals page instead —
+      // never in the main list, for anyone (including Admin). Closed Won deals
+      // stay visible here for Admin only (read-only record-keeping copy) —
+      // the sales person's own list never shows a copy, same as Converted leads.
+      const hiddenStages = req.user.role.name !== "Admin" ? ["Rejected", "Closed Won"] : ["Rejected"];
+      query.stage = query.stage && !hiddenStages.includes(query.stage) ? query.stage : { $nin: hiddenStages };
+
+      const deals = await Deal.find(query)
+        .populate("assignedTo", "firstName lastName email")
+        .populate("rejectedBy", "firstName lastName")
+        .populate({ path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
+        .populate({ path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
+        .sort({ createdAt: -1 });
       res.status(200).json(deals);
     } catch (err) { console.error(err); res.status(500).json({ message: err.message }); }
   },
@@ -192,15 +210,27 @@ export default {
         deal.lostDate = null;
       }
       if (!deal.stageHistory) deal.stageHistory = [];
+      // Always record stage moves for full journey tracking (admin + salesperson)
       deal.stageHistory.push({ stage, movedAt: new Date(), movedBy: req.user._id });
+
+      if (stage === "Closed Won" && previousStage !== "Closed Won") {
+        deal.wonAt = new Date();
+        deal.wonBy = req.user._id;
+      } else if (previousStage === "Closed Won" && stage !== "Closed Won") {
+        deal.wonAt = null;
+        deal.wonBy = null;
+      }
+
       await deal.save();
+
+      const isAdmin = req.user.role.name === "Admin";
 
       if (stage === "Closed Won" && previousStage !== "Closed Won" && deal.companyName?.trim())
         clientLTVController.calculateClientCLV(deal.companyName).catch(err => console.error("Background CLV recalculation error:", err));
 
       // Notify admins + the assigned sales person so targets refresh live
       try {
-        const { User, Role } = getModels(req);
+        const { User, Role, Notification } = getModels(req);
         const adminRole = await Role.findOne({ name: "Admin" });
         const payload = {
           dealId: String(deal._id),
@@ -214,8 +244,32 @@ export default {
           admins.forEach(a => notifyUser(String(a._id), "deal_stage_updated", payload));
         }
         // Also notify the sales person assigned to this deal
-        if (deal.assignedTo) {
-          notifyUser(String(deal.assignedTo), "deal_stage_updated", payload);
+        const spId = deal.assignedTo ? String(deal.assignedTo._id || deal.assignedTo) : null;
+        if (spId) {
+          notifyUser(spId, "deal_stage_updated", payload);
+        }
+        // If admin moved the stage, send a persistent notification to salesperson
+        if (isAdmin && spId && String(req.user._id) !== spId) {
+          const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          await Notification.create({
+            userId: deal.assignedTo._id || deal.assignedTo,
+            createdBy: req.user._id,
+            type: "target",
+            title: `Deal Stage Updated by Admin ${adminName}`,
+            message: `Your assigned deal "${deal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
+            text: `Your assigned deal "${deal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
+            referenceId: String(deal._id),
+            meta: { dealId: deal._id, dealName: deal.dealName, stage, adminName },
+            expiresAt,
+            read: false,
+            isRead: false,
+          });
+          notifyUser(spId, "new_notification", {
+            title: `Deal Stage Updated by Admin ${adminName}`,
+            text: `Your assigned deal "${deal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
+            type: "target",
+          });
         }
       } catch (_) {}
 
@@ -225,7 +279,7 @@ export default {
 
   updateDeal: async (req, res) => {
     try {
-      const { Deal } = getModels(req);
+      const { Deal, Notification } = getModels(req);
       const tDB = req.tenantDB || null;
       const {
         dealName, dealValue, currency, stage, assignTo, notes, phoneNumber, email, source,
@@ -267,7 +321,10 @@ export default {
 
       if (stage === "Closed Lost" && deal.stage !== "Closed Lost") { updateFields.stageLostAt = deal.stage; updateFields.lostDate = new Date(); }
       if (deal.stage === "Closed Lost" && stage && stage !== "Closed Lost") { updateFields.stageLostAt = null; updateFields.lostDate = null; }
+      if (stage === "Closed Won" && deal.stage !== "Closed Won") { updateFields.wonAt = new Date(); updateFields.wonBy = req.user._id; }
+      if (deal.stage === "Closed Won" && stage && stage !== "Closed Won") { updateFields.wonAt = null; updateFields.wonBy = null; }
       if (stage && stage !== deal.stage) {
+        // Always record stage moves for full journey tracking (admin + salesperson)
         updateFields.$push = { stageHistory: { stage, movedAt: new Date(), movedBy: req.user._id } };
       }
       if (dealValue !== undefined && dealValue !== null && String(dealValue).trim() !== "") {
@@ -343,6 +400,32 @@ export default {
           }
           if (updatedDeal.assignedTo) {
             notifyUser(String(updatedDeal.assignedTo._id || updatedDeal.assignedTo), "deal_stage_updated", payload2);
+          }
+
+          // If admin moved the stage, send a persistent notification to the salesperson
+          const spId = updatedDeal.assignedTo ? String(updatedDeal.assignedTo._id || updatedDeal.assignedTo) : null;
+          const isAdmin = req.user.role.name === "Admin";
+          if (isAdmin && spId && String(req.user._id) !== spId) {
+            const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+            await Notification.create({
+              userId: updatedDeal.assignedTo._id || updatedDeal.assignedTo,
+              createdBy: req.user._id,
+              type: "target",
+              title: `Deal Stage Updated by Admin ${adminName}`,
+              message: `Your assigned deal "${updatedDeal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
+              text: `Your assigned deal "${updatedDeal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
+              referenceId: String(updatedDeal._id),
+              meta: { dealId: updatedDeal._id, dealName: updatedDeal.dealName, stage, adminName },
+              expiresAt,
+              read: false,
+              isRead: false,
+            });
+            notifyUser(spId, "new_notification", {
+              title: `Deal Stage Updated by Admin ${adminName}`,
+              text: `Your assigned deal "${updatedDeal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
+              type: "target",
+            });
           }
         } catch (_) {}
       }
@@ -454,6 +537,131 @@ export default {
       const result = await Deal.deleteMany(query);
       res.status(200).json({ message: `${result.deletedCount} deal(s) and their notifications deleted successfully`, deletedCount: result.deletedCount });
     } catch (error) { console.error("Bulk delete error:", error); res.status(500).json({ message: "Server error", error: error.message }); }
+  },
+
+  // Admin: reject a deal with a reason instead of deleting it — the deal moves
+  // to the dedicated Reject Deals page, stage flips to Rejected, and it
+  // disappears from the sales person's own account entirely.
+  rejectDeal: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal } = getModels(req);
+      const { reason } = req.body;
+      if (!reason?.trim()) return res.status(400).json({ message: "Rejection reason is required" });
+
+      const deal = await Deal.findById(req.params.id).populate("assignedTo");
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+
+      const previousStage = deal.stage;
+      deal.stage = "Rejected";
+      deal.rejectionReason = reason.trim();
+      deal.rejectedBy = req.user._id;
+      deal.rejectedAt = new Date();
+      if (!deal.stageHistory) deal.stageHistory = [];
+      deal.stageHistory.push({ stage: "Rejected", movedAt: new Date(), movedBy: req.user._id });
+      if (previousStage === "Closed Won") { deal.wonAt = null; deal.wonBy = null; }
+      await deal.save();
+
+      if (deal.assignedTo) {
+        const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+        const spId = String(deal.assignedTo._id || deal.assignedTo);
+        notifyUser(spId, "deal_rejected", { dealId: deal._id, dealName: deal.dealName, reason: reason.trim() });
+        await sendNotification(spId, `Deal "${deal.dealName}" was rejected by ${adminName}. Reason: ${reason.trim()}`, "deal",
+          { dealId: deal._id, dealName: deal.dealName }, { title: "Deal Rejected" }, req.tenantDB || null);
+      }
+
+      res.status(200).json({ message: "Deal rejected", deal });
+    } catch (error) {
+      console.error("Error rejecting deal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: dedicated list of rejected deals, with reason/who/when — search,
+  // filter, and paginate independently of the main Deals list.
+  getRejectedDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal, User } = getModels(req);
+      const { search = "", clientType, assignee, startDate, endDate, page = 1, limit = 10 } = req.query;
+      const query = { stage: "Rejected" };
+
+      if (search?.trim()) {
+        query.$or = [
+          { dealName:        { $regex: search, $options: "i" } },
+          { email:           { $regex: search, $options: "i" } },
+          { phoneNumber:     { $regex: search, $options: "i" } },
+          { companyName:     { $regex: search, $options: "i" } },
+          { rejectionReason: { $regex: search, $options: "i" } },
+        ];
+      }
+      if (clientType && clientType !== "") query.clientType = clientType;
+
+      if (assignee && assignee !== "") {
+        if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
+          query.assignedTo = assignee;
+        } else {
+          const nameParts = assignee.split(" ");
+          const firstName = nameParts[0];
+          const lastName  = nameParts.slice(1).join(" ");
+          const userQuery = lastName
+            ? { firstName: { $regex: firstName, $options: "i" }, lastName: { $regex: lastName, $options: "i" } }
+            : { $or: [{ firstName: { $regex: firstName, $options: "i" } }, { lastName: { $regex: firstName, $options: "i" } }] };
+          const users   = await User.find(userQuery).select("_id");
+          const userIds = users.map((u) => u._id);
+          if (!userIds.length)
+            return res.status(200).json({ deals: [], totalDeals: 0, totalPages: 0, currentPage: Number(page) });
+          query.assignedTo = { $in: userIds };
+        }
+      }
+
+      if (startDate || endDate) {
+        query.rejectedAt = {};
+        if (startDate) query.rejectedAt.$gte = new Date(startDate);
+        if (endDate) query.rejectedAt.$lte = new Date(`${endDate}T23:59:59.999Z`);
+      }
+
+      const skip       = (page - 1) * limit;
+      const totalDeals = await Deal.countDocuments(query);
+      const deals      = await Deal.find(query)
+        .populate("assignedTo", "firstName lastName email")
+        .populate("rejectedBy", "firstName lastName")
+        .sort({ rejectedAt: -1 })
+        .skip(skip)
+        .limit(Number(limit));
+
+      res.status(200).json({ deals, totalDeals, totalPages: Math.ceil(totalDeals / limit), currentPage: Number(page) });
+    } catch (error) {
+      console.error("Get rejected deals error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: permanently delete multiple rejected deals at once
+  bulkDeleteRejectedDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal, Notification } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const rejectedIds = await Deal.find({ _id: { $in: ids }, stage: "Rejected" }).distinct("_id");
+      await Notification.deleteMany({ "meta.dealId": { $in: rejectedIds.map(String) } });
+      await Deal.deleteMany({ _id: { $in: rejectedIds } });
+
+      res.status(200).json({ message: "Rejected deals deleted", deletedCount: rejectedIds.length });
+    } catch (error) {
+      console.error("Bulk delete rejected deals error:", error);
+      res.status(500).json({ message: error.message });
+    }
   },
 
   pendingDeals: async (req, res) => {
