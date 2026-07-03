@@ -26,6 +26,7 @@ import { resolveTenant } from "./middlewares/resolveTenant.js";
 import { startFollowUpCron } from "./controllers/followups.cron.js";
 import gmailRoutes from "./routes/gmailRoutes.js";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
+import zoomAuthRoutes from "./routes/zoomAuthRoutes.js";
 
 import salesRoutes from "./routes/salesReports.routes.js";
 import connectDB from "./config/db.js";
@@ -167,6 +168,7 @@ app.use("/api/files", fileRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/gmail", gmailRoutes);
 app.use("/api/google-auth", googleAuthRoutes);
+app.use("/api/zoom-auth", zoomAuthRoutes);
 app.use("/api/deals", lostDealRoutes);
 app.use("/api/cltv", clientLTVRoutes);
 app.use("/api/calllogs", callLogRoutes);

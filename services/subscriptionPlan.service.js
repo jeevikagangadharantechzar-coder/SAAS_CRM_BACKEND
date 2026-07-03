@@ -111,7 +111,7 @@ export const getTenantSubscriptions = async ({ plan_status, plan_id, page = 1, l
 
   const [tenants, total] = await Promise.all([
     Tenant.find(filter)
-      .populate("plan_id", "plan_name plan_code plan_type price_monthly price_yearly currency billing_cycle status")
+      .populate("plan_id", "plan_name plan_code plan_type price_monthly price_yearly currency billing_cycle status features")
       .select("name slug adminEmail adminName isActive plan_id plan_status plan_start_date plan_end_date createdAt")
       .skip(skip)
       .limit(Number(limit))

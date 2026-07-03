@@ -19,6 +19,7 @@ import adminDashboard from "./adminDashboard.routes.js";
 import notificationRoutes from "./notification.routes.js";
 import gmailRoutes from "./gmailRoutes.js";
 import googleAuthRoutes from "./googleAuthRoutes.js";
+import zoomAuthRoutes from "./zoomAuthRoutes.js";
 import salesRoutes from "./salesReports.routes.js";
 import aiRoutes from "./ai.routes.js";
 import streakRoutes from "./streak.routes.js";
@@ -43,6 +44,7 @@ import ninetyNineAcresRoutes from "./99acres.routes.js";
 import sulekhaRoutes       from "./sulekha.routes.js";
 import meetingRoutes            from "./meeting.routes.js";
 import googleIntegrationRoutes  from "./googleIntegration.routes.js";
+import zoomIntegrationRoutes    from "./zoomIntegration.routes.js";
 
 
 import publicRoutes from "./public.routes.js";
@@ -61,6 +63,7 @@ router.use("/dashboard", adminDashboard);
 router.use("/notifications", notificationRoutes);
 router.use("/gmail", gmailRoutes);
 router.use("/google-auth", googleAuthRoutes);
+router.use("/zoom-auth", zoomAuthRoutes);
 router.use("/sales", salesRoutes);
 router.use("/ai", aiRoutes);
 router.use("/streak", streakRoutes);
@@ -87,6 +90,7 @@ router.use("/99acres",         ninetyNineAcresRoutes);
 router.use("/sulekha",         sulekhaRoutes);
 router.use("/meetings",           meetingRoutes);
 router.use("/google-integration", googleIntegrationRoutes);
+router.use("/zoom-integration",   zoomIntegrationRoutes);
 
 
 export default router;
