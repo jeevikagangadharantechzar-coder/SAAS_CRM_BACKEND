@@ -248,25 +248,77 @@ export async function sendUpgradeAlertEmail({ vars }) {
   await transporter.sendMail({ from, to, subject, html });
 }
 
-/**
- * Send plan details or trial info email to a new tenant admin.
- * vars (plan):  { adminName, planName, planType, price, currency, billingCycle, maxUsers, description, loginUrl }
- * vars (trial): { adminName, loginUrl, isTrial: true }
- */
-export async function sendPlanEmail({ to, vars }) {
-  let settings = null;
-  try {
-    settings = await SuperAdminSettings.findOne();
-  } catch (_) {}
+// Default plan email template — uses {{priceLabel}} and {{description}} as pre-built vars
+const BEAUTIFUL_PLAN_BODY = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:40px 0;">
+    <tr><td align="center">
+      <table width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#059669 0%,#047857 100%);padding:36px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Plan Activated</h1>
+            <p style="margin:8px 0 0;color:#a7f3d0;font-size:14px;">Your subscription is now live on {{platformName}}</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:36px 40px;">
+            <p style="margin:0 0 20px;color:#333;font-size:16px;">Hi <strong>{{adminName}}</strong>,</p>
+            <p style="margin:0 0 28px;color:#555;font-size:15px;line-height:1.6;">Your workspace has been set up with the plan details below. Here is a summary of your subscription.</p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;margin-bottom:32px;">
+              <tr><td style="padding:24px 28px;">
+                <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:#059669;text-transform:uppercase;letter-spacing:0.8px;">Subscription Details</p>
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;width:130px;">Plan Name</td>
+                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{planName}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;">Plan Type</td>
+                    <td style="padding:7px 0;"><span style="background:#d1fae5;color:#065f46;font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;text-transform:uppercase;">{{planType}}</span></td>
+                  </tr>
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;">Price</td>
+                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{priceLabel}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;">Max Users</td>
+                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{maxUsers}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;">Start Date</td>
+                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{startDate}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;">End Date</td>
+                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{endDate}}</td>
+                  </tr>
+                </table>
+                {{description}}
+              </td></tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td align="center" style="padding-bottom:28px;">
+                <a href="{{loginUrl}}" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#059669 0%,#047857 100%);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 44px;border-radius:8px;letter-spacing:0.3px;box-shadow:0 4px 12px rgba(5,150,105,0.35);">Go to Dashboard →</a>
+              </td></tr>
+            </table>
+            <p style="margin:0;color:#888;font-size:13px;line-height:1.6;border-top:1px solid #eee;padding-top:20px;">If you have any questions about your plan, contact your platform administrator.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f9fafc;padding:20px 40px;text-align:center;border-top:1px solid #eee;">
+            <p style="margin:0;color:#aaa;font-size:12px;">© {{year}} {{platformName}}. All rights reserved.</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 
-  const platformName = settings?.platformName || "TZI CRM SaaS Platform";
-  const allVars = { ...vars, platformName, year: new Date().getFullYear() };
-
-  let subject, html;
-
-  if (vars.isTrial) {
-    subject = `Your Free Trial on ${platformName} has started`;
-    html = interpolate(`<!DOCTYPE html>
+// Hardcoded trial email — not editable via settings (no plan info to show)
+const BEAUTIFUL_TRIAL_BODY = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
 <body style="margin:0;padding:0;background:#f4f6fb;font-family:'Segoe UI',Arial,sans-serif;">
@@ -319,73 +371,48 @@ export async function sendPlanEmail({ to, vars }) {
     </td></tr>
   </table>
 </body>
-</html>`, allVars);
+</html>`;
 
+/**
+ * Send plan details or trial info email to a new tenant admin.
+ * vars (plan):  { adminName, planName, planType, price, currency, billingCycle, maxUsers, description, loginUrl }
+ * vars (trial): { adminName, loginUrl, isTrial: true }
+ */
+export async function sendPlanEmail({ to, vars }) {
+  let settings = null;
+  try {
+    settings = await SuperAdminSettings.findOne();
+  } catch (_) {}
+
+  const platformName = settings?.platformName || "TZI CRM SaaS Platform";
+
+  let subject, html;
+
+  if (vars.isTrial) {
+    subject = `Your Free Trial on ${platformName} has started`;
+    const allVars = { ...vars, platformName, year: new Date().getFullYear() };
+    html = interpolate(BEAUTIFUL_TRIAL_BODY, allVars);
   } else {
     const priceLabel = Number(vars.price) === 0
       ? "Free"
       : `${vars.currency || "USD"} ${vars.price} / ${vars.billingCycle || "month"}`;
+    const descriptionHtml = vars.description
+      ? `<p style="margin:16px 0 0;color:#555;font-size:13px;line-height:1.6;border-top:1px solid #a7f3d0;padding-top:14px;">${vars.description}</p>`
+      : "";
 
-    subject = `Your ${vars.planName} Plan on ${platformName}`;
-    html = interpolate(`<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
-<body style="margin:0;padding:0;background:#f4f6fb;font-family:'Segoe UI',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:40px 0;">
-    <tr><td align="center">
-      <table width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-        <tr>
-          <td style="background:linear-gradient(135deg,#059669 0%,#047857 100%);padding:36px 40px;text-align:center;">
-            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Plan Activated</h1>
-            <p style="margin:8px 0 0;color:#a7f3d0;font-size:14px;">Your subscription is now live on {{platformName}}</p>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:36px 40px;">
-            <p style="margin:0 0 20px;color:#333;font-size:16px;">Hi <strong>{{adminName}}</strong>,</p>
-            <p style="margin:0 0 28px;color:#555;font-size:15px;line-height:1.6;">Your workspace has been set up with the plan details below. Here is a summary of your subscription.</p>
-            <table width="100%" cellpadding="0" cellspacing="0" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;margin-bottom:32px;">
-              <tr><td style="padding:24px 28px;">
-                <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:#059669;text-transform:uppercase;letter-spacing:0.8px;">Subscription Details</p>
-                <table width="100%" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td style="padding:7px 0;color:#666;font-size:14px;width:130px;">Plan Name</td>
-                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{planName}}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding:7px 0;color:#666;font-size:14px;">Plan Type</td>
-                    <td style="padding:7px 0;"><span style="background:#d1fae5;color:#065f46;font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;text-transform:uppercase;">{{planType}}</span></td>
-                  </tr>
-                  <tr>
-                    <td style="padding:7px 0;color:#666;font-size:14px;">Price</td>
-                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">${priceLabel}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding:7px 0;color:#666;font-size:14px;">Max Users</td>
-                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{maxUsers}}</td>
-                  </tr>
-                </table>
-                ${vars.description ? `<p style="margin:16px 0 0;color:#555;font-size:13px;line-height:1.6;border-top:1px solid #a7f3d0;padding-top:14px;">{{description}}</p>` : ""}
-              </td></tr>
-            </table>
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr><td align="center" style="padding-bottom:28px;">
-                <a href="{{loginUrl}}" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#059669 0%,#047857 100%);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 44px;border-radius:8px;letter-spacing:0.3px;box-shadow:0 4px 12px rgba(5,150,105,0.35);">Go to Dashboard →</a>
-              </td></tr>
-            </table>
-            <p style="margin:0;color:#888;font-size:13px;line-height:1.6;border-top:1px solid #eee;padding-top:20px;">If you have any questions about your plan, contact your platform administrator.</p>
-          </td>
-        </tr>
-        <tr>
-          <td style="background:#f9fafc;padding:20px 40px;text-align:center;border-top:1px solid #eee;">
-            <p style="margin:0;color:#aaa;font-size:12px;">© {{year}} {{platformName}}. All rights reserved.</p>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`, allVars);
+    const allVars = {
+      ...vars,
+      platformName,
+      year: new Date().getFullYear(),
+      priceLabel,
+      description: descriptionHtml,
+    };
+
+    const subjectTemplate = settings?.planSubject || "Your {{planName}} Plan on {{platformName}}";
+    subject = interpolate(subjectTemplate, allVars);
+
+    const bodyTemplate = settings?.planBody?.trim() ? settings.planBody : BEAUTIFUL_PLAN_BODY;
+    html = interpolate(bodyTemplate, allVars);
   }
 
   const transporter = await getTransporter();
@@ -393,4 +420,4 @@ export async function sendPlanEmail({ to, vars }) {
   await transporter.sendMail({ from, to, subject, html });
 }
 
-export { BEAUTIFUL_WELCOME_BODY };
+export { BEAUTIFUL_WELCOME_BODY, BEAUTIFUL_PLAN_BODY };

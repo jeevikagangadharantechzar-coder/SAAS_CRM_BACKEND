@@ -143,15 +143,15 @@ export const assignPlanToTenant = async (tenantId, planId, billing_cycle) => {
   const plan_start_date = new Date();
   let plan_end_date = null;
 
-  if (plan.trial_days && plan.trial_days > 0) {
-    plan_end_date = new Date();
-    plan_end_date.setDate(plan_end_date.getDate() + plan.trial_days);
-  } else if (billing_cycle === "monthly") {
-    plan_end_date = new Date();
-    plan_end_date.setDate(plan_end_date.getDate() + 30);
+  if (billing_cycle === "monthly") {
+    plan_end_date = new Date(plan_start_date);
+    plan_end_date.setMonth(plan_end_date.getMonth() + 1);
   } else if (billing_cycle === "yearly") {
-    plan_end_date = new Date();
-    plan_end_date.setDate(plan_end_date.getDate() + 365);
+    plan_end_date = new Date(plan_start_date);
+    plan_end_date.setFullYear(plan_end_date.getFullYear() + 1);
+  } else if (plan.trial_days && plan.trial_days > 0) {
+    plan_end_date = new Date(plan_start_date);
+    plan_end_date.setDate(plan_end_date.getDate() + plan.trial_days);
   }
 
   tenant.plan_id = planId;

@@ -116,7 +116,8 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail } = req.body;
+    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date } = req.body;
+    const actualPlanId = plan_id || planId || plan || null;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
 
@@ -143,6 +144,10 @@ export const createTenant = async (req, res) => {
       adminEmail: adminEmail.toLowerCase(),
       adminName,
       createdBy: req.superAdmin.id,
+      plan_id: actualPlanId,
+      plan_status: plan_status || "trial",
+      plan_start_date: plan_start_date || null,
+      plan_end_date: plan_end_date || null,
     });
 
     try {
@@ -232,6 +237,7 @@ export const createTenant = async (req, res) => {
       SubscriptionPlan.findById(tenant.plan_id).then((plan) => {
         if (!plan) return;
         const price = plan.billing_cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
+        const fmt = (d) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
         sendPlanEmail({
           to: adminEmail,
           vars: {
@@ -243,6 +249,8 @@ export const createTenant = async (req, res) => {
             billingCycle: plan.billing_cycle,
             maxUsers: plan.max_users_per_tenant,
             description: plan.description,
+            startDate: fmt(tenant.plan_start_date),
+            endDate: fmt(tenant.plan_end_date),
             loginUrl,
             isTrial: false,
           },

@@ -59,6 +59,8 @@ export const updateSettings = async (req, res) => {
       "smtpFromName",
       "welcomeSubject",
       "welcomeBody",
+      "planSubject",
+      "planBody",
       "upgradeAlertEnabled",
       "upgradeAlertEmail",
     ];

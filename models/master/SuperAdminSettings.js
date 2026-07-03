@@ -20,6 +20,10 @@ const superAdminSettingsSchema = new mongoose.Schema(
     welcomeSubject: { type: String, default: "Welcome to {{platformName}} — Your Login Credentials" },
     welcomeBody: { type: String, default: "" },
 
+    // Plan email template (default body is set at runtime from dynamicEmail.js BEAUTIFUL_PLAN_BODY)
+    planSubject: { type: String, default: "Your {{planName}} Plan on {{platformName}}" },
+    planBody: { type: String, default: "" },
+
     // Upgrade alert
     upgradeAlertEnabled:  { type: Boolean, default: true },
     upgradeAlertEmail:    { type: String, default: "" },
