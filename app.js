@@ -74,7 +74,8 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
   "https://uenjoytours.cloud",
   "https://crm.stagingzar.com",
-  "https://sales.stagingzar.com"
+  "https://sales.stagingzar.com",
+  "https://crm.techzarinfo.cloud"
 ];
 
 if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
