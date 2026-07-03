@@ -86,6 +86,7 @@ const getMe = async (req, res) => {
       if (!user) return res.status(404).json({ message: "User not found" });
 
       let tenantLimit = null;
+      let planFeatures = null;
       if (req.tenant) {
         const tenant = await Tenant.findById(req.tenant._id).populate("plan_id");
         if (tenant && tenant.plan_id) {
@@ -94,6 +95,7 @@ const getMe = async (req, res) => {
             max_users: tenant.plan_id.max_users_per_tenant,
             plan_end_date: tenant.plan_end_date,
           };
+          planFeatures = tenant.plan_id.features;
         }
       }
 
@@ -105,6 +107,7 @@ const getMe = async (req, res) => {
         role: user.role,
         tenantLimit,
         currency:user.currency || null,
+        planFeatures,
       });
     } catch (err) {
       res.status(500).json({ message: err.message });

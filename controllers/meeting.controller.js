@@ -2,8 +2,24 @@ import { google } from "googleapis";
 import { v4 as uuidv4 } from "uuid";
 import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
+import * as zoomService from "../services/zoom.service.js";
+import { decrypt } from "../utils/crypto.js";
 
 const getModels = (req) => getTenantModels(req.tenantDB);
+
+// Loads this tenant's own Zoom credentials (connected via Settings), decrypting
+// the secret. Returns null if the tenant hasn't connected Zoom yet.
+const getZoomConfig = async (req) => {
+  const { ZoomIntegration } = getModels(req);
+  const integration = await ZoomIntegration.findOne({});
+  if (!integration) return null;
+  return {
+    clientId: integration.clientId,
+    clientSecret: decrypt(integration.clientSecret),
+    accountId: integration.accountId,
+    hostUserId: integration.hostUserId,
+  };
+};
 
 const buildOAuthClient = (user) => {
   const client = new google.auth.OAuth2(
@@ -124,57 +140,90 @@ export default {
 
   createMeeting: async (req, res) => {
     try {
-      const { title, description, startDateTime, endDateTime, attendees, reminderMinutes } = req.body;
+      const { title, description, startDateTime, endDateTime, attendees, reminderMinutes, provider } = req.body;
       const { Meeting, User } = getModels(req);
+      const meetingProvider = provider === "zoom" ? "zoom" : "google_meet";
 
       if (!title || !startDateTime || !endDateTime) {
         return res.status(400).json({ success: false, message: "title, startDateTime, endDateTime are required" });
       }
 
       const user = await User.findById(req.user._id);
-      if (!user?.googleAuth?.accessToken) {
-        return res.status(403).json({
-          success: false,
-          message: "Connect your Google account first.",
-          requiresGoogleAuth: true,
+
+      let meetLink = null;
+      let googleEventId = null;
+      let zoomMeetingId = null;
+      let zoomStartUrl = null;
+      let zoomPassword = null;
+
+      if (meetingProvider === "zoom") {
+        const zoomConfig = await getZoomConfig(req);
+        if (!zoomService.isZoomConfigured(zoomConfig)) {
+          return res.status(403).json({
+            success: false,
+            message: "Connect your Zoom account in Settings first.",
+            requiresZoomSetup: true,
+          });
+        }
+
+        const zoomMeeting = await zoomService.createZoomMeeting(zoomConfig, {
+          title, description, startDateTime, endDateTime,
         });
-      }
 
-      const oauth2Client = buildOAuthClient(user);
-      refreshAndSave(oauth2Client, user._id, User);
-      const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+        meetLink      = zoomMeeting.join_url;
+        zoomMeetingId = String(zoomMeeting.id);
+        zoomStartUrl  = zoomMeeting.start_url;
+        zoomPassword  = zoomMeeting.password || null;
+      } else {
+        if (!user?.googleAuth?.accessToken) {
+          return res.status(403).json({
+            success: false,
+            message: "Connect your Google account first.",
+            requiresGoogleAuth: true,
+          });
+        }
 
-      const calendarRes = await calendar.events.insert({
-        calendarId: "primary",
-        conferenceDataVersion: 1,
-        sendUpdates: "all",
-        resource: {
-          summary:     title,
-          description: description || "",
-          start: { dateTime: new Date(startDateTime).toISOString() },
-          end:   { dateTime: new Date(endDateTime).toISOString() },
-          attendees: (attendees || []).map((email) => ({ email })),
-          conferenceData: {
-            createRequest: {
-              requestId: uuidv4(),
-              conferenceSolutionKey: { type: "hangoutsMeet" },
+        const oauth2Client = buildOAuthClient(user);
+        refreshAndSave(oauth2Client, user._id, User);
+        const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+        const calendarRes = await calendar.events.insert({
+          calendarId: "primary",
+          conferenceDataVersion: 1,
+          sendUpdates: "all",
+          resource: {
+            summary:     title,
+            description: description || "",
+            start: { dateTime: new Date(startDateTime).toISOString() },
+            end:   { dateTime: new Date(endDateTime).toISOString() },
+            attendees: (attendees || []).map((email) => ({ email })),
+            conferenceData: {
+              createRequest: {
+                requestId: uuidv4(),
+                conferenceSolutionKey: { type: "hangoutsMeet" },
+              },
             },
           },
-        },
-      });
+        });
 
-      const googleEvent = calendarRes.data;
-      const meetLink =
-        googleEvent.conferenceData?.entryPoints?.find((ep) => ep.entryPointType === "video")?.uri ||
-        googleEvent.hangoutLink || null;
+        const googleEvent = calendarRes.data;
+        meetLink =
+          googleEvent.conferenceData?.entryPoints?.find((ep) => ep.entryPointType === "video")?.uri ||
+          googleEvent.hangoutLink || null;
+        googleEventId = googleEvent.id;
+      }
 
       const meeting = await Meeting.create({
         title, description,
         startDateTime:   new Date(startDateTime),
         endDateTime:     new Date(endDateTime),
         attendees:       attendees || [],
+        provider:        meetingProvider,
         meetLink,
-        googleEventId:   googleEvent.id,
+        googleEventId,
+        zoomMeetingId,
+        zoomStartUrl,
+        zoomPassword,
         reminderMinutes: reminderMinutes || 10,
         createdBy:       req.user._id,
         creatorEmail:    user.email,
@@ -187,7 +236,7 @@ export default {
 
       res.status(201).json({ success: true, meeting });
     } catch (err) {
-      console.error("createMeeting error:", err);
+      console.error("createMeeting error:", err.zoomData || err);
       res.status(500).json({ success: false, message: err.message || "Failed to create meeting" });
     }
   },
@@ -200,7 +249,26 @@ export default {
       const meeting = await Meeting.findById(req.params.id);
       if (!meeting) return res.status(404).json({ success: false, message: "Meeting not found" });
 
-      if (meeting.googleEventId) {
+      if (meeting.provider === "zoom" && meeting.zoomMeetingId) {
+        try {
+          const zoomConfig = await getZoomConfig(req);
+          if (zoomService.isZoomConfigured(zoomConfig)) {
+            const patch = {};
+            if (title)                     patch.topic  = title;
+            if (description !== undefined) patch.agenda = description;
+            if (startDateTime)             patch.start_time = new Date(startDateTime).toISOString();
+            if (startDateTime && endDateTime) {
+              patch.duration = Math.max(
+                1,
+                Math.round((new Date(endDateTime) - new Date(startDateTime)) / 60000)
+              );
+            }
+            await zoomService.updateZoomMeeting(zoomConfig, meeting.zoomMeetingId, patch);
+          }
+        } catch (zoomErr) {
+          console.warn("Zoom meeting update skipped:", zoomErr.zoomData || zoomErr.message);
+        }
+      } else if (meeting.googleEventId) {
         try {
           const user = await User.findById(req.user._id);
           if (user?.googleAuth?.accessToken) {
@@ -244,7 +312,17 @@ export default {
       if (!meeting) return res.status(404).json({ success: false, message: "Meeting not found" });
 
       const user = await User.findById(req.user._id);
-      if (user?.googleAuth?.accessToken && meeting.googleEventId) {
+
+      if (meeting.provider === "zoom" && meeting.zoomMeetingId) {
+        try {
+          const zoomConfig = await getZoomConfig(req);
+          if (zoomService.isZoomConfigured(zoomConfig)) {
+            await zoomService.deleteZoomMeeting(zoomConfig, meeting.zoomMeetingId);
+          }
+        } catch (zoomErr) {
+          console.warn("Could not delete Zoom meeting:", zoomErr.zoomData || zoomErr.message);
+        }
+      } else if (user?.googleAuth?.accessToken && meeting.googleEventId) {
         try {
           const oauth2Client = buildOAuthClient(user);
           const calendar = google.calendar({ version: "v3", auth: oauth2Client });
