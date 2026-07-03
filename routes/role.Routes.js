@@ -11,7 +11,7 @@ router.post(
   indexControllers.roleController.createRole
 );
 //get all roles
-router.get("/",  indexControllers.roleController.getRoles);
+router.get("/", protect, indexControllers.roleController.getRoles);
 // update role by ID
 router.put("/update-role/:id", protect, adminCreateOnly, indexControllers.roleController.updateRole);
 //delete role by ID
