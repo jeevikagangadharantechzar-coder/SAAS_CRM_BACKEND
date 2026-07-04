@@ -19,7 +19,7 @@ const PAID_FAMILY = ["paid", "partially_paid"];
 
 let browserInstance = null;
 const getBrowser = async () => {
-  if (!browserInstance) {
+  if (!browserInstance || !browserInstance.isConnected()) {
     browserInstance = await puppeteer.launch({
       headless: true,
       args: ["--no-sandbox","--disable-setuid-sandbox","--disable-gpu","--disable-dev-shm-usage"],
