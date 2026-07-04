@@ -199,8 +199,10 @@ export default {
       const totalDeals = await Deal.countDocuments(searchQuery);
       if (totalDeals === 0) return res.json({ success: true, data: [], pagination: { total:0, page:pageNum, pages:0, unreviewedCount:0 } });
 
+      // Fetch every matching deal (not just the current page) so classification/unreviewed
+      // filters run against the full result set instead of whatever happened to land on this page.
       const deals = await Deal.find(searchQuery).select("_id dealName companyName value assignedTo wonAt createdAt followUpDate followUpHistory")
-        .populate("assignedTo","firstName lastName").sort({ createdAt: -1 }).skip(skip).limit(limitNum).lean();
+        .populate("assignedTo","firstName lastName").lean();
       const dealIds = deals.map(d => d._id.toString());
       const [reviews, clvData] = await Promise.all([
         ClientReview.find({ companyId: { $in: dealIds } }).select("companyId").lean(),
@@ -224,14 +226,19 @@ export default {
           reviewProgress: clvEntry?.progress||null, classification: clvEntry?.classification||"At Risk", clientHealthScore: clvEntry?.clientHealthScore||50,
           reviewStatus: hasReview?"Submitted":"Pending", hasReview, createdAt: deal.createdAt, followUpDate: deal.followUpDate };
       });
-      if (classification !== "all") formatted = formatted.filter(d => d.classification === classification);
-      if (showUnreviewedFirst === "true") formatted.sort((a,b) => a.hasReview!==b.hasReview ? (a.hasReview?1:-1) : new Date(b.createdAt||0)-new Date(a.createdAt||0));
-      else formatted.sort((a,b) => new Date(b.createdAt||0)-new Date(a.createdAt||0));
 
-      const allIds = (await Deal.find(searchQuery).select("_id").lean()).map(d => d._id.toString());
-      const allReviewed = new Set((await ClientReview.find({ companyId: { $in: allIds } }).select("companyId").lean()).map(r => r.companyId.toString()));
-      const unreviewedCount = allIds.filter(id => !allReviewed.has(id)).length;
-      res.json({ success: true, data: formatted, pagination: { total: totalDeals, page: pageNum, pages: Math.ceil(totalDeals/limitNum), unreviewedCount, limit: limitNum } });
+      const unreviewedCount = formatted.filter(d => !d.hasReview).length;
+
+      if (classification !== "all") formatted = formatted.filter(d => d.classification === classification);
+      // The toggle means "show unreviewed only", not "sort unreviewed first" — it must remove
+      // reviewed records, otherwise selecting it leaves the displayed set unchanged.
+      if (showUnreviewedFirst === "true") formatted = formatted.filter(d => !d.hasReview);
+      formatted.sort((a,b) => new Date(b.createdAt||0)-new Date(a.createdAt||0));
+
+      const filteredTotal = formatted.length;
+      const pageSlice = formatted.slice(skip, skip + limitNum);
+
+      res.json({ success: true, data: pageSlice, pagination: { total: filteredTotal, page: pageNum, pages: Math.ceil(filteredTotal/limitNum) || 1, unreviewedCount, limit: limitNum } });
     } catch (error) {
       console.error("Error in getWonDeals:", error);
       res.status(500).json({ success: false, message: error.message });
