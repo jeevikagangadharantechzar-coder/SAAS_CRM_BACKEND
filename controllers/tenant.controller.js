@@ -133,6 +133,11 @@ export const createTenant = async (req, res) => {
       return res.status(409).json({ error: "Slug already taken" });
     }
 
+    const emailExists = await Tenant.findOne({ adminEmail: adminEmail.toLowerCase() });
+    if (emailExists) {
+      return res.status(409).json({ error: "Administrator email already exists" });
+    }
+
     const dbName = `crm_${slug}`;
     const tenant = await Tenant.create({
       name,
@@ -236,6 +241,9 @@ export const createTenant = async (req, res) => {
   } catch (err) {
     console.error("Create tenant error:", err);
     if (err.code === 11000) {
+      if (err.keyPattern?.adminEmail) {
+        return res.status(409).json({ error: "Administrator email already exists" });
+      }
       return res.status(409).json({ error: "Slug or dbName already exists" });
     }
     res.status(500).json({ error: err.message || "Server error" });

@@ -293,17 +293,17 @@
             let discountAmount = 0;
             let finalTotal = Number(invoice.subtotal);
 
-            // Apply Tax only if currency = INR
-            if(invoice.currency === "INR" && invoice.taxValue > 0) {
+            // Apply Tax
+            if(invoice.tax > 0) {
               if(invoice.taxType === "percentage") {
-                taxAmount = (invoice.subtotal * invoice.taxValue) / 100;
+                taxAmount = (invoice.subtotal * invoice.tax) / 100;
               } else {
-                taxAmount = invoice.taxValue;
+                taxAmount = invoice.tax;
               }
               finalTotal += taxAmount;
           %>
           <tr>
-            <td>Tax (<%= invoice.taxType === "percentage" ? invoice.taxValue + "%" : invoice.taxValue %>)</td>
+            <td>Tax (<%= invoice.taxType === "percentage" ? invoice.tax + "%" : invoice.tax %>)</td>
             <td><%= invoice.currency %> <%= taxAmount.toFixed(2) %></td>
           </tr>
           <% } %>
