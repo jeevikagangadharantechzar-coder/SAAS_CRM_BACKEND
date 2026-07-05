@@ -42,9 +42,13 @@ const invoiceSchema = new mongoose.Schema({
 
   currency: { type: String, default: "USD" },
   // INR CONVERSION
-  paidAt: { 
-    type: Date, 
-    default: null 
+  paidAt: {
+    type: Date,
+    default: null
+  },
+  emailSentAt: {
+    type: Date,
+    default: null
   },
   inrAmount: { 
     type: Number, 
