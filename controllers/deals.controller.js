@@ -8,6 +8,12 @@ import {
   sendNotification,
   sendNotificationToAdmins,
 } from "../services/notificationService.js";
+import {
+  notifyLeadConvertedByAdmin,
+  notifyLeadOrDealEdited,
+  notifyDealClosedWonAndArchiveTask,
+  notifyDealStageChangedByAdmin,
+} from "../services/taskNotificationService.js";
 
 // Legacy fallbacks
 import DealLegacy         from "../models/deals.model.js";
@@ -45,7 +51,8 @@ const formatDealValue = (dealValue, currency = "INR") => {
 export default {
   createDealFromLead: async (req, res) => {
     try {
-      const { Lead, Deal } = getModels(req);
+      const models = getModels(req);
+      const { Lead, Deal } = models;
       const lead = await Lead.findById(req.params.leadId).populate("assignTo");
       if (!lead) return res.status(404).json({ message: "Lead not found" });
       if (lead.status === "Converted") return res.status(400).json({ message: "Lead already converted" });
@@ -64,13 +71,19 @@ export default {
         clientType: lead.clientType || null,
       });
       await deal.save();
+
+      if (req.user.role?.name === "Admin") {
+        notifyLeadConvertedByAdmin(models, { lead, deal, actorId: req.user._id }).catch((err) => console.error("notifyLeadConvertedByAdmin error:", err));
+      }
+
       res.status(200).json({ message: "Lead converted to deal", deal });
     } catch (err) { res.status(500).json({ message: err.message }); }
   },
 
   createManualDeal: async (req, res) => {
     try {
-      const { Deal } = getModels(req);
+      const models = getModels(req);
+      const { Deal, Notification } = models;
       const tDB = req.tenantDB || null;
       const {
         dealName, assignTo, dealValue, currency, stage, notes, phoneNumber, email,
@@ -124,6 +137,23 @@ export default {
         ...(dealStage === "Closed Lost" && { stageLostAt: "Qualification", lostDate: new Date() }),
       });
       await deal.save();
+
+      if (assignTo && req.user.role?.name === "Admin" && String(assignTo) !== String(req.user._id)) {
+        const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+        Notification.create({
+          userId: assignTo,
+          createdBy: req.user._id,
+          type: "task",
+          title: `New Deal Assigned by Admin ${adminName}`,
+          message: `Admin ${adminName} assigned you a new deal: "${deal.dealName}"`,
+          text: `Admin ${adminName} assigned you a new deal: "${deal.dealName}"`,
+          referenceId: String(deal._id),
+          meta: { dealAssigned: true, dealId: String(deal._id), dealName: deal.dealName, adminName },
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          read: false,
+          isRead: false,
+        }).catch((err) => console.error("New deal assigned notification error:", err));
+      }
 
       if (parsedFollowUpDate) {
         if (assignTo) await sendNotification(assignTo, `Deal follow-up scheduled: ${deal.dealName}`, "followup",
@@ -218,9 +248,17 @@ export default {
       if (stage === "Closed Won" && previousStage !== "Closed Won" && deal.companyName?.trim())
         clientLTVController.calculateClientCLV(deal.companyName).catch(err => console.error("Background CLV recalculation error:", err));
 
+      if (stage === "Closed Won" && previousStage !== "Closed Won") {
+        notifyDealClosedWonAndArchiveTask(getModels(req), { deal, actorId: req.user._id, isAdminActor: isAdmin })
+          .catch(err => console.error("notifyDealClosedWonAndArchiveTask error:", err));
+      }
+
       // Notify admins + the assigned sales person so targets refresh live
+      // (transient socket signal only — the persistent notification for an
+      // admin-driven stage move is created once, below, via
+      // notifyDealStageChangedByAdmin, so it's not duplicated here).
       try {
-        const { User, Role, Notification } = getModels(req);
+        const { User, Role } = getModels(req);
         const adminRole = await Role.findOne({ name: "Admin" });
         const payload = {
           dealId: String(deal._id),
@@ -238,30 +276,12 @@ export default {
         if (spId) {
           notifyUser(spId, "deal_stage_updated", payload);
         }
-        // If admin moved the stage, send a persistent notification to salesperson
-        if (isAdmin && spId && String(req.user._id) !== spId) {
-          const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
-          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-          await Notification.create({
-            userId: deal.assignedTo._id || deal.assignedTo,
-            createdBy: req.user._id,
-            type: "target",
-            title: `Deal Stage Updated by Admin ${adminName}`,
-            message: `Your assigned deal "${deal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
-            text: `Your assigned deal "${deal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
-            referenceId: String(deal._id),
-            meta: { dealId: deal._id, dealName: deal.dealName, stage, adminName },
-            expiresAt,
-            read: false,
-            isRead: false,
-          });
-          notifyUser(spId, "new_notification", {
-            title: `Deal Stage Updated by Admin ${adminName}`,
-            text: `Your assigned deal "${deal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
-            type: "target",
-          });
-        }
       } catch (_) {}
+
+      if (stage !== "Closed Won" && stage !== previousStage) {
+        notifyDealStageChangedByAdmin(getModels(req), { deal, stage, previousStage, actorId: req.user._id })
+          .catch(err => console.error("notifyDealStageChangedByAdmin error:", err));
+      }
 
       res.status(200).json(deal);
     } catch (err) { res.status(500).json({ message: err.message }); }
@@ -269,7 +289,7 @@ export default {
 
   updateDeal: async (req, res) => {
     try {
-      const { Deal, Notification } = getModels(req);
+      const { Deal } = getModels(req);
       const tDB = req.tenantDB || null;
       const {
         dealName, dealValue, currency, stage, assignTo, notes, phoneNumber, email, source,
@@ -372,7 +392,29 @@ export default {
       if (stage === "Closed Won" && deal.stage !== "Closed Won" && updatedDeal.companyName?.trim())
         clientLTVController.calculateClientCLV(updatedDeal.companyName).catch(err => console.error("Background CLV recalculation error:", err));
 
+      if (stage === "Closed Won" && deal.stage !== "Closed Won") {
+        notifyDealClosedWonAndArchiveTask(getModels(req), { deal: updatedDeal, actorId: req.user._id, isAdminActor: req.user.role.name === "Admin" })
+          .catch(err => console.error("notifyDealClosedWonAndArchiveTask error:", err));
+      }
+
+      // Admin edited general details (not just stage/follow-up) — notify the assignee
+      if (req.user.role.name === "Admin") {
+        const coreEditPairs = [
+          [dealName, deal.dealName], [phoneNumber, deal.phoneNumber], [email, deal.email],
+          [companyName, deal.companyName], [industry, deal.industry], [requirement, deal.requirement],
+          [address, deal.address], [country, deal.country],
+        ];
+        const hasCoreEdit = coreEditPairs.some(([next, prev]) => next !== undefined && String(next) !== String(prev || ""));
+        if (hasCoreEdit) {
+          const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+          notifyLeadOrDealEdited(getModels(req), { itemType: "deal", item: updatedDeal, actorId: req.user._id, adminName })
+            .catch(err => console.error("notifyLeadOrDealEdited error:", err));
+        }
+      }
+
       // Notify admins + assigned sales person so targets refresh live
+      // (transient socket signal only — the persistent notification for an
+      // admin-driven stage move is created once, below).
       if (stage && stage !== deal.stage) {
         try {
           const { User, Role } = getModels(req);
@@ -391,33 +433,12 @@ export default {
           if (updatedDeal.assignedTo) {
             notifyUser(String(updatedDeal.assignedTo._id || updatedDeal.assignedTo), "deal_stage_updated", payload2);
           }
-
-          // If admin moved the stage, send a persistent notification to the salesperson
-          const spId = updatedDeal.assignedTo ? String(updatedDeal.assignedTo._id || updatedDeal.assignedTo) : null;
-          const isAdmin = req.user.role.name === "Admin";
-          if (isAdmin && spId && String(req.user._id) !== spId) {
-            const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
-            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-            await Notification.create({
-              userId: updatedDeal.assignedTo._id || updatedDeal.assignedTo,
-              createdBy: req.user._id,
-              type: "target",
-              title: `Deal Stage Updated by Admin ${adminName}`,
-              message: `Your assigned deal "${updatedDeal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
-              text: `Your assigned deal "${updatedDeal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
-              referenceId: String(updatedDeal._id),
-              meta: { dealId: updatedDeal._id, dealName: updatedDeal.dealName, stage, adminName },
-              expiresAt,
-              read: false,
-              isRead: false,
-            });
-            notifyUser(spId, "new_notification", {
-              title: `Deal Stage Updated by Admin ${adminName}`,
-              text: `Your assigned deal "${updatedDeal.dealName}" was moved to "${stage}" stage by Admin ${adminName}.`,
-              type: "target",
-            });
-          }
         } catch (_) {}
+
+        if (stage !== "Closed Won") {
+          notifyDealStageChangedByAdmin(getModels(req), { deal: updatedDeal, stage, previousStage: deal.stage, actorId: req.user._id })
+            .catch(err => console.error("notifyDealStageChangedByAdmin error:", err));
+        }
       }
 
       res.status(200).json({ message: "Deal updated successfully", deal: updatedDeal });

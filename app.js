@@ -19,6 +19,7 @@ import linkedinWebhookRoutes    from "./routes/linkedinWebhook.routes.js";
 // Multi-tenant SaaS imports
 import superAdminRoutes from "./routes/superAdmin.js";
 import subscriptionPlanRoutes from "./routes/superadmin/subscriptionPlan.routes.js";
+import freeTrialRoutes from "./routes/freeTrial.routes.js";
 import tenantApiRouter from "./routes/tenantRouter.js";
 import { resolveTenant } from "./middlewares/resolveTenant.js";
 
@@ -46,6 +47,9 @@ import "./cron/notificationCron.js";
 
 // Target management cron (separate from the generic notification cron)
 import "./cron/targetCron.js";
+
+// Task management due-date reminder cron
+import "./cron/taskCron.js";
 
 // Socket
 import { initSocket } from "./realtime/socket.js";
@@ -160,6 +164,7 @@ app.use("/webhooks/linkedin", linkedinWebhookRoutes);
 // ─────────────────────────────────────────────
 app.use("/superadmin", superAdminRoutes);
 app.use("/api/superadmin/subscription-plans", subscriptionPlanRoutes);
+app.use("/api/free-trial", freeTrialRoutes);
 app.use("/:tenantSlug/api", resolveTenant, tenantApiRouter);
 
 // ─────────────────────────────────────────────

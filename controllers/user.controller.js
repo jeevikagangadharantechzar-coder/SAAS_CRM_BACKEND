@@ -175,10 +175,14 @@ export default {
         return res.status(401).json({ success: false, message: "Invalid email or password" });
 
       if (tenant && (tenant.plan_status === "expired" || (tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)))) {
+        const isTrial = tenant.plan_status === "trial";
         return res.status(403).json({
           success: false,
           planExpired: true,
-          message: "Your subscription validity has expired. Please contact superadmin to renew."
+          trialExpired: isTrial,
+          message: isTrial
+            ? "Your 14 days free trial has ended. Please upgrade your plan to continue using the CRM."
+            : "Your subscription validity has expired. Please contact superadmin to renew."
         });
       }
 

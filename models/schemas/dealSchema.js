@@ -71,6 +71,13 @@ const dealSchema = new mongoose.Schema({
   ],
   wonBy:         { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   convertedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  // Hides this deal from the Task Management / Target Management "Admin
+  // Completed" activity feeds once Admin dismisses it there — purely a
+  // feed-declutter flag, the deal record itself is untouched. Two independent
+  // flags so dismissing from one feed never hides the item from the other —
+  // a deal can legitimately be linked to both a Task and a Target at once.
+  taskAdminActivityDismissed: { type: Boolean, default: false },
+  targetAdminActivityDismissed: { type: Boolean, default: false },
   leadStatusHistory: [{ status: { type: String }, changedAt: { type: Date } }],
   leadCreatedAt: { type: Date, default: null },
   clientReviewId:{ type: mongoose.Schema.Types.ObjectId, ref: "ClientReview" },
