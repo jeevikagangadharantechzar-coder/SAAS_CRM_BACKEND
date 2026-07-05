@@ -258,7 +258,11 @@ export default {
       const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox","--disable-setuid-sandbox","--disable-gpu","--disable-dev-shm-usage"] });
       const page = await browser.newPage();
       await page.setContent(templateData, { waitUntil: "networkidle0" });
-      const pdfBuffer = await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true });
+      // Puppeteer's page.pdf() returns a plain Uint8Array, not a Node Buffer —
+      // Buffer.from(...) is required here so downstream .toString("base64")
+      // actually base64-encodes the bytes instead of silently ignoring the
+      // encoding argument and stringifying as comma-separated decimal values.
+      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true }));
       await browser.close();
 
       res.setHeader("Content-Type", "application/pdf");
@@ -306,7 +310,10 @@ export default {
       const browser = await getBrowser();
       const page = await browser.newPage();
       await page.setContent(templateData, { waitUntil: "networkidle0" });
-      const pdfBuffer = await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true });
+      // See note in generateInvoicePDF above — Buffer.from(...) is required because
+      // page.pdf() returns a Uint8Array, and Uint8Array#toString ignores the
+      // "base64" argument entirely.
+      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true }));
       await page.close();
 
       const subject = `Invoice #${invoice.invoicenumber || invoice._id}`;
@@ -345,6 +352,9 @@ export default {
           });
         }
       }
+
+      invoice.emailSentAt = new Date();
+      await invoice.save();
 
       res.status(200).json({ message: "Invoice email sent successfully!" });
     } catch (error) {

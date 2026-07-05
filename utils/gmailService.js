@@ -545,10 +545,33 @@ export async function sendEmailWithAttachments(to, subject, message, cc = "", bc
 
   const raw = Buffer.from(parts.join(nl), "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const startTime = Date.now();
-  const res = await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+  const res = await sendWithRetry(() => gmail.users.messages.send({ userId: "me", requestBody: { raw } }));
   const duration = (Date.now() - startTime) / 1000;
   console.log(` Email sent for ${email} in ${duration.toFixed(2)}s`);
   return { success: true, id: res.data.id, threadId: res.data.threadId, labelIds: res.data.labelIds || [], sendTime: duration };
+}
+
+// Transient Gmail API failures (rate limits, momentary server errors, network
+// blips) are worth a couple of retries; auth/permission/bad-request errors
+// (401/403/400) never succeed on retry, so those fail immediately instead.
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+
+async function sendWithRetry(fn, attempts = 3, baseDelayMs = 1000) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = err.code || err.response?.status;
+      const retryable = RETRYABLE_STATUS_CODES.has(status) || err.code === "ECONNRESET" || err.code === "ETIMEDOUT";
+      if (!retryable || attempt === attempts) throw err;
+      const delay = baseDelayMs * 2 ** (attempt - 1);
+      console.warn(`Gmail send attempt ${attempt} failed (${status || err.message}), retrying in ${delay}ms...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
 }
 
 // sendEmail alias

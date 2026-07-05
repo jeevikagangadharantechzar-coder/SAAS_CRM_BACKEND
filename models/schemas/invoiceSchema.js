@@ -37,6 +37,7 @@ const invoiceSchema = new mongoose.Schema(
 
     currency:              { type: String, default: "USD" },
     paidAt:                { type: Date, default: null },
+    emailSentAt:           { type: Date, default: null },
     inrAmount:             { type: Number, default: null },
     exchangeRate:          { type: Number, default: null },
     preferredCurrency:     { type: String, default: null },
