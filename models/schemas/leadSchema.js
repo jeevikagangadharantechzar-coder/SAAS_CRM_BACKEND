@@ -19,20 +19,48 @@ const leadSchema = new mongoose.Schema(
 
     assignTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
+    // False while the item is overdue on an expired Target and awaiting admin
+    // reassignment — the owning sales person keeps seeing it (read-only) until
+    // it's reassigned back to them or someone else.
+    isActive: { type: Boolean, default: true },
+
     address: { type: String },
     country: { type: String },
 
     status: {
       type: String,
-      enum: ["Hot", "Warm", "Cold", "Junk", "Converted"],
+      enum: ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"],
       default: "Cold",
     },
+    rejectionReason: { type: String, default: "" },
+    rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    rejectedAt:       { type: Date, default: null },
+
+    // Who actually performed the lead→deal conversion — only set when the
+    // converted lead keeps a read-only copy here (currently: admin conversions).
+    convertedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+
+    // Hides this lead from the Task Management / Target Management "Admin
+    // Completed" activity feeds once Admin dismisses it there — purely a
+    // feed-declutter flag, the lead record itself (and its Converted status)
+    // is untouched. Two independent flags so dismissing from one feed never
+    // hides the item from the other — a lead can legitimately be linked to
+    // both a Task and a Target at once.
+    taskAdminActivityDismissed: { type: Boolean, default: false },
+    targetAdminActivityDismissed: { type: Boolean, default: false },
 
     followUpDate:    { type: Date, default: Date.now },
     emailSentAt:     { type: Date, default: null },
     lastReminderAt:  { type: Date, default: null },
 
     notes: { type: String },
+
+    followUpNotes: [
+      {
+        note:      { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
 
     // Meta (Facebook / Instagram) lead capture metadata
     meta: {

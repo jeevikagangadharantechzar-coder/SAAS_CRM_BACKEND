@@ -11,7 +11,9 @@ const invoiceSchema = new mongoose.Schema(
     assignTo:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     issueDate: { type: Date, required: true },
     dueDate:   { type: Date, required: true },
-    status:    { type: String, enum: ["paid", "unpaid", "send"], required: true },
+    status:    { type: String, enum: ["paid", "unpaid", "partially_paid"], required: true },
+    // Cumulative amount actually collected so far (grows as partial payments come in)
+    amountPaid: { type: Number, default: 0 },
 
     items: [
       {
@@ -33,10 +35,28 @@ const invoiceSchema = new mongoose.Schema(
     taxValue:      { type: Number, default: 0 },
     taxType:       { type: String, enum: ["percentage", "fixed"], default: "percentage" },
 
-    currency:     { type: String, default: "USD" },
-    paidAt:       { type: Date, default: null },
-    inrAmount:    { type: Number, default: null },
-    exchangeRate: { type: Number, default: null },
+    currency:              { type: String, default: "USD" },
+    paidAt:                { type: Date, default: null },
+    emailSentAt:           { type: Date, default: null },
+    inrAmount:             { type: Number, default: null },
+    exchangeRate:          { type: Number, default: null },
+    preferredCurrency:     { type: String, default: null },
+    preferredCurrencyValue:{ type: Number, default: null },
+
+    // Client-side fields that vary by country/client — not always applicable
+    billingAddress: { type: String, default: "" },
+    clientTaxId:    { type: String, default: "" },
+    poNumber:       { type: String, default: "" },
+
+    // Admin-defined ad-hoc fields, since invoice requirements vary by country/client
+    // and can't all be anticipated up front
+    customFields: [
+      {
+        label: { type: String, required: true },
+        type:  { type: String, enum: ["text", "number", "date"], default: "text" },
+        value: { type: String, default: "" },
+      },
+    ],
   },
   { timestamps: true }
 );

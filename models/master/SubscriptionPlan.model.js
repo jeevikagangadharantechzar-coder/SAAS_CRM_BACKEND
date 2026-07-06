@@ -1,6 +1,39 @@
 import mongoose from "mongoose";
 import { masterConn } from "../../config/masterDB.js";
 
+// Mirrors the tenant role permission keys (models/schemas/roleSchema.js) so a
+// tenant's effective access is the intersection of their role permissions and
+// their plan's enabled features. Defaults to true so existing plans that were
+// created before this field existed keep behaving as "all features enabled".
+const planFeaturesSchema = new mongoose.Schema(
+  {
+    dashboard:           { type: Boolean, default: true },
+    leads:               { type: Boolean, default: true },
+    create_lead:         { type: Boolean, default: true },
+    deals_all:           { type: Boolean, default: true },
+    create_deal:         { type: Boolean, default: true },
+    deals_pipeline:      { type: Boolean, default: true },
+    invoices:            { type: Boolean, default: true },
+    proposal:            { type: Boolean, default: true },
+    activities:          { type: Boolean, default: true },
+    activities_calendar: { type: Boolean, default: true },
+    activities_list:     { type: Boolean, default: true },
+    users_roles:         { type: Boolean, default: true },
+    admin_access:        { type: Boolean, default: true },
+    email_chat:          { type: Boolean, default: true },
+    email_campaigns:     { type: Boolean, default: true },
+    whatsapp_chat:       { type: Boolean, default: true },
+    reports:             { type: Boolean, default: true },
+    analytics:           { type: Boolean, default: true },
+    settings:            { type: Boolean, default: true },
+    streak_leaderboard:  { type: Boolean, default: true },
+    assigned_tasks:      { type: Boolean, default: true },
+    task_management:     { type: Boolean, default: true },
+    target_management:   { type: Boolean, default: true },
+  },
+  { _id: false }
+);
+
 const subscriptionPlanSchema = new mongoose.Schema(
   {
     plan_name:            { type: String, required: true, trim: true },
@@ -16,6 +49,8 @@ const subscriptionPlanSchema = new mongoose.Schema(
 
    // max_tenants:          { type: Number, default: 0 },
     max_users_per_tenant: { type: Number, default: 0 },
+
+    features:             { type: planFeaturesSchema, default: () => ({}) },
 
     is_recommended:       { type: Boolean, default: false },
     is_visible:           { type: Boolean, default: true },

@@ -30,6 +30,7 @@ import indiaMartIntegrationSchema from "../schemas/indiaMartIntegrationSchema.js
 import auditLogSchema from "../schemas/auditLogSchema.js";
 import meetingSchema             from "../schemas/meetingSchema.js";
 import googleIntegrationSchema   from "../schemas/googleIntegrationSchema.js";
+import zoomIntegrationSchema     from "../schemas/zoomIntegrationSchema.js";
 
 
 const MODEL_MAP = [
@@ -65,6 +66,7 @@ const MODEL_MAP = [
   ["AuditLog",             auditLogSchema],
   ["Meeting",             meetingSchema],
   ["GoogleIntegration",  googleIntegrationSchema],
+  ["ZoomIntegration",    zoomIntegrationSchema],
 ];
 
 /**
@@ -118,5 +120,6 @@ export function getTenantModels(conn) {
     AuditLog:             conn.model("AuditLog"),
     Meeting:             conn.model("Meeting"),
     GoogleIntegration:   conn.model("GoogleIntegration"),
+    ZoomIntegration:     conn.model("ZoomIntegration"),
   };
 }

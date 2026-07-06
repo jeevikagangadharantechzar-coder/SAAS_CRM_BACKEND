@@ -4,16 +4,22 @@ import ejs from "ejs";
 import fs from "fs";
 import puppeteer from "puppeteer";
 import nodemailer from "nodemailer";
+import axios from "axios";
 import { getExchangeRate } from "../services/currencyService.js";
 import { getTenantModels } from "../models/tenant/index.js";
+import { notifyUser } from "../realtime/socket.js";
 import InvoiceLegacy from "../models/invoice.model.js";
 import SettingsLegacy from "../models/Settings.js";
+import { sendEmailWithAttachments } from "../utils/gmailService.js";
 
 const getInvoice = (req) => req.tenantDB ? getTenantModels(req.tenantDB).Invoice : InvoiceLegacy;
 
+// Statuses where an invoice is considered (at least partly) paid and tracks amountPaid
+const PAID_FAMILY = ["paid", "partially_paid"];
+
 let browserInstance = null;
 const getBrowser = async () => {
-  if (!browserInstance) {
+  if (!browserInstance || !browserInstance.isConnected()) {
     browserInstance = await puppeteer.launch({
       headless: true,
       args: ["--no-sandbox","--disable-setuid-sandbox","--disable-gpu","--disable-dev-shm-usage"],
@@ -29,19 +35,40 @@ export default {
         return res.status(403).json({ error: "Only Admin can create invoices" });
 
       const Invoice = getInvoice(req);
-      let { items, tax = 0, taxType = "percentage", discountValue = 0, discountType = "percentage", currency = "USD", assignTo, dueDate, ...rest } = req.body;
+      let {
+        items, tax = 0, taxType = "percentage", discountValue = 0, discountType = "percentage",
+        currency = "USD", assignTo, dueDate, status = "unpaid", paymentReceivedNow,
+        preferredCurrency, preferredCurrencyValue, ...rest
+      } = req.body;
       if (!items || items.length === 0) return res.status(400).json({ error: "Invoice must contain at least one item" });
 
       tax = Number(tax) || 0; discountValue = Number(discountValue) || 0;
-      const subtotal = items.reduce((acc, item) => acc + (Number(item.quantity)||0) * (Number(item.unitPrice)||0), 0);
+      const subtotal = items.reduce((acc, item) => acc + (Number(item.price)||0) * (Number(item.quantity)||1), 0);
       const taxAmount = taxType === "percentage" ? (subtotal * tax) / 100 : tax;
       const discount  = discountType === "percentage" ? (subtotal * discountValue) / 100 : discountValue;
       let total = subtotal + taxAmount - discount;
       if (total < 0) total = 0;
 
-      const newInvoice = new Invoice({ items, subtotal, tax, taxType, taxAmount, discountValue, discountType, discount, total, currency, assignTo, dueDate, createdBy: req.user._id, ...rest });
+      const invoiceFields = { items, subtotal, tax, taxType, taxAmount, discountValue, discountType, discount, total, currency, assignTo, dueDate, status, createdBy: req.user._id, ...rest };
+
+      if (PAID_FAMILY.includes(status)) {
+        const payment = Math.min(Math.max(Number(paymentReceivedNow) || 0, 0), total);
+        invoiceFields.amountPaid = Number(payment.toFixed(2));
+        if (preferredCurrency) invoiceFields.preferredCurrency = preferredCurrency;
+        if (preferredCurrencyValue != null) invoiceFields.preferredCurrencyValue = parseFloat(preferredCurrencyValue);
+
+        if (status === "paid") {
+          const exchangeRate = await getExchangeRate(currency);
+          invoiceFields.paidAt       = new Date();
+          invoiceFields.exchangeRate = exchangeRate;
+          invoiceFields.inrAmount    = invoiceFields.amountPaid * exchangeRate;
+        }
+      }
+
+      const newInvoice = new Invoice(invoiceFields);
       await newInvoice.save();
       res.status(201).json({ message: "Invoice created successfully", invoice: newInvoice });
+      notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(newInvoice._id), action: "created" });
     } catch (error) {
       console.error("Error creating invoice:", error);
       res.status(500).json({ error: error.message || "Internal server error" });
@@ -53,7 +80,7 @@ export default {
       const Invoice = getInvoice(req);
       const invoice = await Invoice.findById(req.params.id)
         .populate("assignTo", "firstName lastName email")
-        .populate("items.deal", "dealName value stage companyName");
+        .populate("items.deal", "dealName value stage companyName email address country phoneNumber");
       if (!invoice) return res.status(404).json({ message: "Invoice not found" });
       res.status(200).json(invoice);
     } catch (error) { res.status(500).json({ error: error.message }); }
@@ -86,7 +113,7 @@ export default {
       const invoice = await Invoice.findById(req.params.id);
       if (!invoice) return res.status(404).json({ message: "Invoice not found" });
 
-      let { items, tax = 0, discount = 0, discountType = "fixed", discountValue = 0, taxType = "fixed", price, status, ...rest } = req.body;
+      let { items, tax = 0, discount = 0, discountType = "fixed", discountValue = 0, taxType = "fixed", price, status, paymentReceivedNow, ...rest } = req.body;
       let subtotal = 0, finalDiscount = 0, taxAmount = 0, finalTotal = 0;
 
       if (items && items.length > 0) {
@@ -115,18 +142,55 @@ export default {
 
       const currentStatus = invoice.status;
       const newStatus = status || currentStatus;
-      if (newStatus === "paid" && currentStatus !== "paid") {
-        const exchangeRate = await getExchangeRate(invoice.currency);
-        updateData.paidAt = new Date(); updateData.inrAmount = finalTotal * exchangeRate;
-        updateData.exchangeRate = exchangeRate; updateData.status = "paid";
+
+      if (PAID_FAMILY.includes(newStatus)) {
+        // Cumulative amount collected so far carries over between paid/partially_paid.
+        // Switching in from unpaid starts the count fresh.
+        const previousAmountPaid = PAID_FAMILY.includes(currentStatus)
+          ? Number(invoice.amountPaid) || 0
+          : 0;
+        const payment = Number(paymentReceivedNow) || 0;
+        const maxAllowed = Math.max(finalTotal - previousAmountPaid, 0);
+
+        if (payment > maxAllowed) {
+          return res.status(400).json({
+            error: `Payment exceeds invoice total. Maximum you can add now: ${maxAllowed.toFixed(2)}`,
+          });
+        }
+
+        const newAmountPaid = Number((previousAmountPaid + payment).toFixed(2));
+        updateData.status     = newStatus;
+        updateData.amountPaid = newAmountPaid;
+
+        // Frontend sends preferredCurrency/preferredCurrencyValue computed for the cumulative amount paid
+        const { preferredCurrency, preferredCurrencyValue } = req.body;
+        if (preferredCurrency) updateData.preferredCurrency = preferredCurrency;
+        if (preferredCurrencyValue != null) updateData.preferredCurrencyValue = parseFloat(preferredCurrencyValue);
+
+        if (newStatus === "paid" && currentStatus !== "paid") {
+          const exchangeRate = await getExchangeRate(invoice.currency);
+          updateData.paidAt       = new Date();
+          updateData.inrAmount    = newAmountPaid * exchangeRate;
+          updateData.exchangeRate = exchangeRate;
+        }
       } else {
         updateData.status = newStatus;
+        // Reset payment tracking + frozen currency when moving away from paid/partially_paid
+        if (PAID_FAMILY.includes(currentStatus)) {
+          updateData.amountPaid             = 0;
+          updateData.preferredCurrency      = null;
+          updateData.preferredCurrencyValue = null;
+          updateData.paidAt                 = null;
+          updateData.inrAmount              = null;
+          updateData.exchangeRate           = null;
+        }
       }
 
       const updated = await Invoice.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
         .populate("assignTo", "firstName lastName email role")
         .populate("items.deal", "dealName value stage");
       res.status(200).json(updated);
+      notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(updated._id), action: "updated", status: updateData.status });
     } catch (error) {
       console.error("Error updating invoice:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -190,11 +254,15 @@ export default {
       const templatePath = path.join(process.cwd(), "views", "invoiceTemplate.ejs");
       if (!fs.existsSync(templatePath)) return res.status(500).json({ error: "Template file not found" });
 
-      const templateData = await ejs.renderFile(templatePath, { invoice, logoDataURI }, { async: true });
+      const templateData = await ejs.renderFile(templatePath, { invoice, logoDataURI, settings }, { async: true });
       const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox","--disable-setuid-sandbox","--disable-gpu","--disable-dev-shm-usage"] });
       const page = await browser.newPage();
       await page.setContent(templateData, { waitUntil: "networkidle0" });
-      const pdfBuffer = await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true });
+      // Puppeteer's page.pdf() returns a plain Uint8Array, not a Node Buffer —
+      // Buffer.from(...) is required here so downstream .toString("base64")
+      // actually base64-encodes the bytes instead of silently ignoring the
+      // encoding argument and stringifying as comma-separated decimal values.
+      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true }));
       await browser.close();
 
       res.setHeader("Content-Type", "application/pdf");
@@ -213,59 +281,84 @@ export default {
       const { fromEmail, toEmail } = req.body;
       if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: "Invalid invoice ID" });
       const Invoice = getInvoice(req);
-      const invoice = await Invoice.findById(id).populate("items.deal", "dealName email value stage");
+      const invoice = await Invoice.findById(id).populate("items.deal", "dealName email value stage companyName address country phoneNumber");
       if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
       const clientEmails = invoice.items.map(i => i.deal?.email).filter(Boolean);
       const targetEmails = toEmail ? [toEmail] : clientEmails;
       if (targetEmails.length === 0) return res.status(400).json({ error: "No client emails found in invoice deals" });
 
-      res.status(200).json({ message: "Invoice email is being sent!" });
-      setImmediate(async () => {
-        try {
-          const Settings = req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
-          const settings = await Settings.findOne();
-          
-          let logoDataURI = "";
-          if (settings) {
-            const logoRelativePath = settings.invoiceLogo || settings.logo;
-            if (logoRelativePath) {
-              const logoPath = path.join(process.cwd(), logoRelativePath);
-              if (fs.existsSync(logoPath)) {
-                const ext = path.extname(logoPath).substring(1);
-                const base64 = fs.readFileSync(logoPath, { encoding: 'base64' });
-                logoDataURI = `data:image/${ext};base64,${base64}`;
-              }
-            }
+      const Settings = req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
+      const settings = await Settings.findOne();
+
+      let logoDataURI = "";
+      if (settings) {
+        const logoRelativePath = settings.invoiceLogo || settings.logo;
+        if (logoRelativePath) {
+          const logoPath = path.join(process.cwd(), logoRelativePath);
+          if (fs.existsSync(logoPath)) {
+            const ext = path.extname(logoPath).substring(1);
+            const base64 = fs.readFileSync(logoPath, { encoding: 'base64' });
+            logoDataURI = `data:image/${ext};base64,${base64}`;
           }
+        }
+      }
 
-          const templatePath = path.join(process.cwd(), "views", "invoiceTemplate.ejs");
-          if (!fs.existsSync(templatePath)) return;
-          const templateData = await ejs.renderFile(templatePath, { invoice, logoDataURI }, { async: true });
-          const browser = await getBrowser();
-          const page = await browser.newPage();
-          await page.setContent(templateData, { waitUntil: "networkidle0" });
-          const pdfBuffer = await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true });
-          await page.close();
+      const templatePath = path.join(process.cwd(), "views", "invoiceTemplate.ejs");
+      if (!fs.existsSync(templatePath)) return res.status(500).json({ error: "Invoice template not found" });
+      const templateData = await ejs.renderFile(templatePath, { invoice, logoDataURI, settings }, { async: true });
+      const browser = await getBrowser();
+      const page = await browser.newPage();
+      await page.setContent(templateData, { waitUntil: "networkidle0" });
+      // See note in generateInvoicePDF above — Buffer.from(...) is required because
+      // page.pdf() returns a Uint8Array, and Uint8Array#toString ignores the
+      // "base64" argument entirely.
+      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true }));
+      await page.close();
 
-          const transporter = nodemailer.createTransport({ service: "gmail", auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
-          
-          const finalFromEmail = fromEmail || req.tenant?.adminEmail || process.env.EMAIL_USER;
-          const fromName = settings?.companyName || req.tenant?.name || "CRM Software";
+      const subject = `Invoice #${invoice.invoicenumber || invoice._id}`;
+      const message = `Hello,\n\nPlease find attached your invoice #${invoice.invoicenumber || invoice._id}.\n\nIncluded deals:\n${invoice.items.map(i => `- ${i.deal.dealName}`).join("\n")}\n\nThank you!`;
+      const attachmentFilename = `Invoice_${invoice.invoicenumber || invoice._id}.pdf`;
 
-          for (const email of targetEmails) {
-            await transporter.sendMail({
-              from: `"${fromName}" <${finalFromEmail}>`,
-              to: email,
-              subject: `Invoice #${invoice.invoicenumber || invoice._id}`,
-              text: `Hello,\n\nPlease find attached your invoice #${invoice.invoicenumber || invoice._id}.\n\nIncluded deals:\n${invoice.items.map(i => `- ${i.deal.dealName}`).join("\n")}\n\nThank you!`,
-              attachments: [{ filename: `Invoice_${invoice.invoicenumber || invoice._id}.pdf`, content: pdfBuffer }],
-            });
-          }
-        } catch (err) { console.error("Error sending invoice email asynchronously:", err); }
-      });
+      if (settings?.invoiceSenderEmail) {
+        // Tenant connected their own Gmail via OAuth — send genuinely as that account
+        // through the Gmail API, no SMTP credentials involved at all.
+        const attachment = {
+          filename: attachmentFilename,
+          content: pdfBuffer.toString("base64"),
+          mimetype: "application/pdf",
+          size: pdfBuffer.length,
+        };
+        for (const email of targetEmails) {
+          await sendEmailWithAttachments(email, subject, message, "", "", [attachment], [], settings.invoiceSenderEmail);
+        }
+      } else {
+        // No tenant Gmail connected — fall back to the shared platform mailbox
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+        });
+
+        const finalFromEmail = fromEmail || req.tenant?.adminEmail || process.env.EMAIL_USER;
+        const fromName = settings?.companyName || req.tenant?.name || "CRM Software";
+
+        for (const email of targetEmails) {
+          await transporter.sendMail({
+            from: `"${fromName}" <${finalFromEmail}>`,
+            to: email,
+            subject,
+            text: message,
+            attachments: [{ filename: attachmentFilename, content: pdfBuffer }],
+          });
+        }
+      }
+
+      invoice.emailSentAt = new Date();
+      await invoice.save();
+
+      res.status(200).json({ message: "Invoice email sent successfully!" });
     } catch (error) {
-      console.error("Error processing invoice email request:", error);
+      console.error("Error sending invoice email:", error);
       res.status(500).json({ error: "Failed to send invoice email", details: error.message });
     }
   },

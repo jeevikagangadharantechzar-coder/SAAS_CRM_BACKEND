@@ -55,6 +55,7 @@ const userSchema = new mongoose.Schema(
     },
 
     profileImage: String,
+    currency:     { type: String, default: "USD", trim: true },
 
     resetPasswordToken:  String,
     resetPasswordExpire: Date,

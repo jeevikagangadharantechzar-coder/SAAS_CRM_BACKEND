@@ -12,6 +12,9 @@ const getModels = (req) => {
   return { Lead: LeadLegacy, Deal: DealLegacy, Invoice: InvoiceLegacy, User: UserLegacy };
 };
 
+// Statuses counted as revenue-generating (fully or partially collected)
+const PAID_FAMILY = ["paid", "partially_paid"];
+
 export default {
   getDashboardSummary: async (req, res) => {
     try {
@@ -39,17 +42,20 @@ export default {
       const userId   = req.user?._id;
 
       const revenueByCurrency = {};
-      let paidQuery = { status: "paid", ...(dateFilter.createdAt && { createdAt: dateFilter.createdAt }) };
+      let paidQuery = { status: { $in: PAID_FAMILY }, ...(dateFilter.createdAt && { createdAt: dateFilter.createdAt }) };
       if (userRole !== "admin") paidQuery.assignTo = userId;
       const paidInvoices = await Invoice.find(paidQuery);
       paidInvoices.forEach(inv => {
         const curr   = inv.currency;
-        const amount = Number(inv.total);
+        // Partially paid invoices only count the amount actually collected so far
+        const amount = Number(inv.amountPaid) || Number(inv.total);
         const inrValue = inv.inrAmount || amount;
-        if (!revenueByCurrency[curr]) revenueByCurrency[curr] = { amount: 0, inr: 0, count: 0 };
+        if (!revenueByCurrency[curr]) revenueByCurrency[curr] = { amount: 0, inr: 0, count: 0 , preferredCurrency: inv.preferredCurrency, preferredCurrencyValue: 0};
         revenueByCurrency[curr].amount += amount;
         revenueByCurrency[curr].inr    += inrValue;
         revenueByCurrency[curr].count  += 1;
+        revenueByCurrency[curr].preferredCurrencyValue += Number(inv.preferredCurrencyValue || 0);
+
       });
 
       const pendingInvoicesByCurrency = {};

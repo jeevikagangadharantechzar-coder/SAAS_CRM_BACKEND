@@ -3,6 +3,7 @@ import Redis from "ioredis";
 import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import NotificationLegacy from "../models/notification.model.js";
+import { initTargetSocket } from "./targetSocket.js";
 
 const redisConfig = {
   host: "127.0.0.1",
@@ -26,6 +27,10 @@ export let io;
 
 export const initSocket = (server) => {
   io = new Server(server, { cors: { origin: "*" } });
+
+  // Dedicated namespace for target-management real-time events (kept separate
+  // from the generic notification bell socket below).
+  initTargetSocket(io);
 
   io.on("connection", (socket) => {
     const { userId } = socket.handshake.auth;

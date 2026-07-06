@@ -5,8 +5,11 @@ const dealSchema = new mongoose.Schema({
   dealTitle:    { type: String },
   dealName:     { type: String, required: true },
   assignedTo:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  value:        { type: String, required: true },
-  currency:     { type: String, default: "INR" },
+   isActive:     { type: Boolean, default: true },
+  value:                 { type: String, required: true },
+  currency:              { type: String, default: "INR" },
+  preferredCurrency:     { type: String, default: null },
+  preferredCurrencyValue:{ type: Number, default: null },
   clientType: {
     type: String,
     enum: ["B2B", "B2C"],
@@ -21,9 +24,13 @@ const dealSchema = new mongoose.Schema({
       "Invoice Sent",
       "Closed Won",
       "Closed Lost",
+      "Rejected",
     ],
     default: "Qualification",
   },
+  rejectionReason: { type: String, default: "" },
+  rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  rejectedAt:       { type: Date, default: null },
   convertedAt:      { type: Date, default: null },
   notes:            { type: String },
   phoneNumber:      { type: String },
@@ -62,6 +69,14 @@ const dealSchema = new mongoose.Schema({
     },
   ],
   wonBy:         { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  convertedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  // Hides this deal from the Task Management / Target Management "Admin
+  // Completed" activity feeds once Admin dismisses it there — purely a
+  // feed-declutter flag, the deal record itself is untouched. Two independent
+  // flags so dismissing from one feed never hides the item from the other —
+  // a deal can legitimately be linked to both a Task and a Target at once.
+  taskAdminActivityDismissed: { type: Boolean, default: false },
+  targetAdminActivityDismissed: { type: Boolean, default: false },
   leadStatusHistory: [{ status: { type: String }, changedAt: { type: Date } }],
   leadCreatedAt: { type: Date, default: null },
   clientReviewId:{ type: mongoose.Schema.Types.ObjectId, ref: "ClientReview" },

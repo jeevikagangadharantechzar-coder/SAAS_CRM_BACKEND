@@ -20,9 +20,15 @@ router.post(
 
 // Get all deals
 router.get(
-  "/getAll", 
+  "/getAll",
   indexControllers.dealsController.getAllDeals
 );
+
+// Rejected deals — dedicated list + bulk delete + reject action (specific
+// routes, must come before the generic "/:id" routes below)
+router.get("/rejected", adminOnly, indexControllers.dealsController.getRejectedDeals);
+router.post("/rejected/bulk-delete", adminOnly, indexControllers.dealsController.bulkDeleteRejectedDeals);
+router.patch("/:id/reject", adminOnly, indexControllers.dealsController.rejectDeal);
 
 // Get deal by ID
 router.get(

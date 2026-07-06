@@ -116,7 +116,7 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date } = req.body;
+    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, currency = "USD" } = req.body;
     const actualPlanId = plan_id || planId || plan || null;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
@@ -136,6 +136,11 @@ export const createTenant = async (req, res) => {
       return res.status(409).json({ error: "Slug already taken" });
     }
 
+    const emailExists = await Tenant.findOne({ adminEmail: adminEmail.toLowerCase() });
+    if (emailExists) {
+      return res.status(409).json({ error: "Administrator email already exists" });
+    }
+
     const dbName = `crm_${slug}`;
     const tenant = await Tenant.create({
       name,
@@ -143,6 +148,7 @@ export const createTenant = async (req, res) => {
       dbName,
       adminEmail: adminEmail.toLowerCase(),
       adminName,
+      currency,
       createdBy: req.superAdmin.id,
       plan_id: actualPlanId,
       plan_status: plan_status || "trial",
@@ -214,6 +220,7 @@ export const createTenant = async (req, res) => {
         role: adminRole._id,
         dateOfBirth: new Date("1990-01-01"),
         status: "Active",
+        currency,
       });
 
       await EmailTemplate.insertMany(defaultEmailTemplates);
@@ -271,6 +278,9 @@ export const createTenant = async (req, res) => {
   } catch (err) {
     console.error("Create tenant error:", err);
     if (err.code === 11000) {
+      if (err.keyPattern?.adminEmail) {
+        return res.status(409).json({ error: "Administrator email already exists" });
+      }
       return res.status(409).json({ error: "Slug or dbName already exists" });
     }
     res.status(500).json({ error: err.message || "Server error" });
@@ -819,7 +829,7 @@ export const getUpgradeHistory = async (req, res) => {
 
 export const updateTenant = async (req, res) => {
   try {
-    const { name, adminName, adminEmail } = req.body;
+    const { name, adminName, adminEmail, currency } = req.body;
     const tenant = await Tenant.findById(req.params.id);
     if (!tenant) return res.status(404).json({ success: false, error: "Tenant not found" });
 
@@ -830,6 +840,7 @@ export const updateTenant = async (req, res) => {
     if (name) tenant.name = name;
     if (adminName) tenant.adminName = adminName;
     if (adminEmail) tenant.adminEmail = newAdminEmail;
+    if (currency) tenant.currency = currency;
     await tenant.save();
 
     // 2. Update the tenant's own database admin user record

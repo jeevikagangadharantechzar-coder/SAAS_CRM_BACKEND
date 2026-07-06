@@ -104,4 +104,85 @@ cron.schedule("* * * * *", async () => {
   }
 });
 
+const sendMeetingReminderEmail = async (meeting) => {
+  const start = new Date(meeting.startDateTime).toLocaleString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+      <div style="background:#f59e0b;padding:24px 28px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Meeting Reminder</h2>
+      </div>
+      <div style="padding:28px;">
+        <h3 style="margin:0 0 8px;color:#111827;">${meeting.title}</h3>
+        ${meeting.description ? `<p style="color:#6b7280;margin:0 0 20px;font-size:14px;">${meeting.description}</p>` : ""}
+        <p style="color:#374151;font-size:14px;">Your meeting starts in <strong>${meeting.reminderMinutes} minutes</strong>.</p>
+        <table style="width:100%;margin-bottom:24px;">
+          <tr><td style="color:#6b7280;font-size:13px;padding:6px 0;width:90px;">When</td>
+              <td style="color:#111827;font-size:13px;font-weight:600;">${start}</td></tr>
+          ${meeting.meetLink ? `<tr><td style="color:#6b7280;font-size:13px;padding:6px 0;">Meet Link</td>
+              <td style="font-size:13px;"><a href="${meeting.meetLink}" style="color:#2563eb;">${meeting.meetLink}</a></td></tr>` : ""}
+        </table>
+        ${meeting.meetLink ? `<a href="${meeting.meetLink}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Join Meeting</a>` : ""}
+      </div>
+    </div>`;
+
+  const recipients = [...new Set([
+    ...(meeting.attendees || []),
+    ...(meeting.creatorEmail ? [meeting.creatorEmail] : []),
+  ])];
+
+  await Promise.allSettled(
+    recipients.map((email) =>
+      sendEmail({ to: email, subject: `Reminder: ${meeting.title} starts in ${meeting.reminderMinutes} min`, html })
+    )
+  );
+};
+
+const processMeetingReminders = async (Meeting, label = "legacy") => {
+  const now = new Date();
+  const meetings = await Meeting.find({
+    status: "scheduled",
+    reminderSentAt: null,
+  });
+
+  for (const meeting of meetings) {
+    const reminderTime = new Date(meeting.startDateTime.getTime() - (meeting.reminderMinutes || 10) * 60 * 1000);
+    if (reminderTime <= now && now < new Date(meeting.startDateTime)) {
+      try {
+        await sendMeetingReminderEmail(meeting);
+        meeting.reminderSentAt = new Date();
+        await meeting.save();
+        console.log(`[${label}] Meeting reminder sent: ${meeting.title}`);
+      } catch (e) {
+        console.error(`[${label}] Meeting reminder failed: ${meeting.title}`, e.message);
+      }
+    }
+  }
+};
+
+// Meeting reminder cron — runs every minute
+cron.schedule("* * * * *", async () => {
+  try {
+    if (mongoose.connection.readyState !== 1) return;
+
+    let tenants = [];
+    try { tenants = await Tenant.find({ isActive: true }).lean(); } catch (_) {}
+
+    for (const tenant of tenants) {
+      try {
+        const tenantDB = await getTenantDB(tenant.dbName);
+        const { Meeting } = getTenantModels(tenantDB);
+        if (Meeting) await processMeetingReminders(Meeting, tenant.slug);
+      } catch (e) {
+        console.error(`Meeting reminder cron error for tenant ${tenant.slug}:`, e.message);
+      }
+    }
+  } catch (error) {
+    console.error("Meeting reminder cron error:", error);
+  }
+});
+
 export default cron;

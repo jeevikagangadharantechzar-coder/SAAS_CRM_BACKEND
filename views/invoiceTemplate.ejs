@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Invoice</title>
     <style>
+      * { box-sizing: border-box; }
       body {
         font-family: Arial, sans-serif;
         font-size: 12px;
@@ -12,59 +13,114 @@
         color: #333;
       }
       .invoice-box {
-        width: 95%;
+        width: 100%;
         margin: auto;
-        padding: 30px;
+        padding: 10px;
         background: #fff;
       }
 
-      /* Logo */
+      /* Header */
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        border-bottom: 2px solid #1f2937;
+        padding-bottom: 16px;
+        margin-bottom: 24px;
+      }
       .logo {
-        display: block;
-        margin: 0 auto 20px auto;
-        width: 280px; /* bigger logo */
+        max-height: 70px;
+        max-width: 220px;
+        object-fit: contain;
+      }
+      .header-right {
+        text-align: right;
+      }
+      .header-right h1 {
+        margin: 0 0 6px 0;
+        font-size: 24px;
+        letter-spacing: 1px;
+        color: #1f2937;
+      }
+      .header-right div {
+        font-size: 12px;
+        color: #555;
+        line-height: 1.6;
       }
 
-      /* Info section */
+      /* Info cards */
       .info-section {
         display: flex;
         justify-content: space-between;
-        margin-top: 10px;
+        gap: 16px;
+        margin-bottom: 20px;
       }
       .info-box {
-        width: 48%;
+        width: 50%;
         font-size: 12px;
-        line-height: 1.6;
+        line-height: 1.7;
+        background: #f8f9fb;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 14px 16px;
       }
-      .info-box strong {
+      .info-box .label {
         display: block;
+        font-size: 10px;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #6b7280;
+        margin-bottom: 6px;
+      }
+      .info-box .name {
+        display: block;
+        font-size: 13px;
+        font-weight: bold;
+        color: #1f2937;
         margin-bottom: 4px;
       }
 
-      /* Invoice details */
-      .invoice-details {
-        margin-top: 20px;
+      /* Extra details */
+      .extra-details {
+        background: #f8f9fb;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 14px 16px;
+        margin-bottom: 20px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 24px;
         font-size: 12px;
+      }
+      .extra-details .item .label {
+        font-size: 10px;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #6b7280;
+        display: block;
+        margin-bottom: 2px;
       }
 
       /* Table */
       table {
         width: 100%;
         border-collapse: collapse;
-        margin-top: 20px;
+        margin-top: 4px;
       }
-      table,
-      th,
-      td {
-        border: 1px solid #ccc;
-      }
-      th,
-      td {
-        padding: 8px;
+      th, td {
+        padding: 10px 12px;
         text-align: left;
+        border-bottom: 1px solid #e5e7eb;
       }
-      th {
+      thead th {
+        background: #1f2937;
+        color: #fff;
         font-weight: bold;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
       }
       .right {
         text-align: right;
@@ -72,7 +128,7 @@
 
       /* Totals */
       .totals {
-        margin-top: 20px;
+        margin-top: 16px;
         width: 100%;
         display: flex;
         justify-content: flex-end;
@@ -83,84 +139,134 @@
         font-size: 12px;
       }
       .totals-table td {
-        padding: 6px;
+        padding: 6px 4px;
         border: none;
       }
       .totals-table tr td:first-child {
         text-align: left;
+        color: #555;
       }
       .totals-table tr td:last-child {
         text-align: right;
       }
       .totals-table tr.total-row td {
         font-weight: bold;
-        border-top: 1px solid #000;
-        padding-top: 8px;
+        font-size: 14px;
+        border-top: 2px solid #1f2937;
+        padding-top: 10px;
+        color: #1f2937;
+      }
+
+      /* Payment details */
+      .payment-details {
+        margin-top: 24px;
+        background: #f8f9fb;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 14px 16px;
+        font-size: 12px;
+      }
+      .payment-details .label {
+        font-size: 10px;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #6b7280;
+        margin-bottom: 8px;
+      }
+      .payment-details .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 24px;
       }
 
       .footer {
         font-size: 10px;
         text-align: center;
         margin-top: 30px;
-        color: gray;
+        padding-top: 12px;
+        border-top: 1px solid #e5e7eb;
+        color: #9ca3af;
+        line-height: 1.6;
       }
     </style>
   </head>
   <body>
+    <%
+      const s = locals.settings || {};
+      const bank = s.bankDetails || {};
+      const hasBankDetails = bank.accountNumber || bank.accountName || bank.bankName;
+      const clientDeal = invoice.items[0]?.deal || {};
+      const billingAddress = invoice.billingAddress || clientDeal.address || "";
+      const terms = s.termsAndConditions || "Payment due within 30 days.";
+      const invoiceDate = invoice.issueDate || invoice.createdAt;
+      const hasExtraDetails = invoice.poNumber || invoice.clientTaxId || (invoice.customFields && invoice.customFields.length > 0);
+    %>
     <div class="invoice-box">
-      <!-- Logo -->
-      <% if (locals.logoDataURI && logoDataURI) { %>
-        <img
-          src="<%= logoDataURI %>"
-          alt="Company Logo"
-          class="logo"
-        />
-      <% } else { %>
-        <img
-          src="https://crm.stagingzar.com/images/TZI_Logo-04_-_Copy-removebg-preview.png"
-          alt="TZI Logo"
-          class="logo"
-        />
-      <% } %>
+      <!-- Header -->
+      <div class="header">
+        <% if (locals.logoDataURI && logoDataURI) { %>
+          <img src="<%= logoDataURI %>" alt="Company Logo" class="logo" />
+        <% } else { %>
+          <div class="name" style="font-size: 18px;"><%= s.companyName || "Your Company" %></div>
+        <% } %>
+        <div class="header-right">
+          <h1>INVOICE</h1>
+          <div>
+            <strong>#<%= invoice.invoicenumber %></strong><br />
+            Date: <%= new Date(invoiceDate).toLocaleDateString() %><br />
+            <% if (invoice.dueDate) { %>Due: <%= new Date(invoice.dueDate).toLocaleDateString() %><% } %>
+          </div>
+        </div>
+      </div>
 
       <!-- Info -->
       <div class="info-section">
         <!-- Company Info (left) -->
         <div class="info-box">
-          <strong>TechZarInfo Software Solutions Pvt Ltd</strong>
-          No.2D, M.S Tower, 4th Floor, Convent Rd, Cantonment,<br />
-          Tiruchirappalli, Tamil Nadu 620001<br />
-          Email: demoaccounts@techzarinfo.com<br />
-          Phone: +91 9791326199<br />
-          GSTIN: 33AAJCT1228Q1ZP<br />
-          PAN: AAJCT2568Q
+          <span class="label">From</span>
+          <span class="name"><%= s.companyName || "Your Company" %></span>
+          <% if (s.address) { %><%= s.address %><br /><% } %>
+          <% if (s.email) { %>Email: <%= s.email %><br /><% } %>
+          <% if (s.phone) { %>Phone: <%= s.phone %><br /><% } %>
+          <% if (s.taxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= s.taxId %><% } %>
         </div>
 
         <!-- Client Info (right) -->
-        <div class="info-box" style="text-align: right">
-          <strong>Bill To:</strong>
-          <%= invoice.items[0]?.deal?.companyName || invoice.items[0]?.deal?.dealName || "Client" %><br />
-          <%= invoice.items[0]?.deal?.address || "" %><br />
-          <%= invoice.items[0]?.deal?.country || "" %><br />
-          Email: <%= invoice.items[0]?.deal?.email || "" %><br />
-          Phone: <%= invoice.items[0]?.deal?.phoneNumber || "" %>
+        <div class="info-box">
+          <span class="label">Bill To</span>
+          <span class="name"><%= clientDeal.companyName || clientDeal.dealName || "Client" %></span>
+          <% if (billingAddress) { %><%= billingAddress %><br /><% } %>
+          <% if (clientDeal.country) { %><%= clientDeal.country %><br /><% } %>
+          <% if (clientDeal.email) { %>Email: <%= clientDeal.email %><br /><% } %>
+          <% if (clientDeal.phoneNumber) { %>Phone: <%= clientDeal.phoneNumber %><br /><% } %>
+          <% if (invoice.clientTaxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= invoice.clientTaxId %><% } %>
         </div>
       </div>
 
-      <!-- Invoice Details -->
-      <div class="invoice-details">
-        <strong>Invoice Date:</strong>
-        <%= new Date(invoice.createdAt).toLocaleDateString() %><br />
-        <strong>Invoice Number:</strong> <%= invoice.invoicenumber %>
+      <!-- Extra Details: PO Number, Client Tax ID, Custom Fields -->
+      <% if (hasExtraDetails) { %>
+      <div class="extra-details">
+        <% if (invoice.poNumber) { %>
+        <div class="item">
+          <span class="label">PO Number</span>
+          <%= invoice.poNumber %>
+        </div>
+        <% } %>
+        <% (invoice.customFields || []).forEach(field => { %>
+        <div class="item">
+          <span class="label"><%= field.label %></span>
+          <%= field.type === "date" && field.value ? new Date(field.value).toLocaleDateString() : field.value %>
+        </div>
+        <% }) %>
       </div>
+      <% } %>
 
       <!-- Table -->
       <table>
         <thead>
           <tr>
-            <th>Client Name</th>
-            <th>HSN/SAC Code</th>
-            <th>Total Effort (Days)</th>
+            <th>Description</th>
             <th class="right">Amount (<%= invoice.currency || "USD" %>)</th>
           </tr>
         </thead>
@@ -168,8 +274,6 @@
           <% invoice.items.forEach(item => { %>
           <tr>
             <td><%= item.deal?.dealName || "" %></td>
-            <td>998314</td>
-            <td>30</td>
             <td class="right"><%= Number(item.amount).toFixed(2) %></td>
           </tr>
           <% }) %>
@@ -184,27 +288,27 @@
             <td><%= invoice.currency %> <%= Number(invoice.subtotal).toFixed(2) %></td>
           </tr>
 
-          <% 
-            let taxAmount = 0; 
-            let discountAmount = 0; 
-            let finalTotal = Number(invoice.subtotal); 
+          <%
+            let taxAmount = 0;
+            let discountAmount = 0;
+            let finalTotal = Number(invoice.subtotal);
 
-            // Apply Tax only if currency = INR
-            if(invoice.currency === "INR" && invoice.taxValue > 0) {
+            // Apply Tax
+            if(invoice.tax > 0) {
               if(invoice.taxType === "percentage") {
-                taxAmount = (invoice.subtotal * invoice.taxValue) / 100;
+                taxAmount = (invoice.subtotal * invoice.tax) / 100;
               } else {
-                taxAmount = invoice.taxValue;
+                taxAmount = invoice.tax;
               }
               finalTotal += taxAmount;
           %>
           <tr>
-            <td>Tax (<%= invoice.taxType === "percentage" ? invoice.taxValue + "%" : invoice.taxValue %>)</td>
+            <td>Tax (<%= invoice.taxType === "percentage" ? invoice.tax + "%" : invoice.tax %>)</td>
             <td><%= invoice.currency %> <%= taxAmount.toFixed(2) %></td>
           </tr>
           <% } %>
 
-          <% 
+          <%
             // Apply Discount always
             if(invoice.discountValue > 0) {
               if(invoice.discountType === "percentage") {
@@ -227,10 +331,24 @@
         </table>
       </div>
 
+      <!-- Payment Details -->
+      <% if (hasBankDetails) { %>
+      <div class="payment-details">
+        <div class="label">Payment Details</div>
+        <div class="grid">
+          <% if (bank.accountName) { %><div>Account Name: <%= bank.accountName %></div><% } %>
+          <% if (bank.accountNumber) { %><div>Account Number: <%= bank.accountNumber %></div><% } %>
+          <% if (bank.bankName) { %><div>Bank: <%= bank.bankName %></div><% } %>
+          <% if (bank.ifscOrSwift) { %><div>IFSC/SWIFT: <%= bank.ifscOrSwift %></div><% } %>
+          <% if (bank.branch) { %><div>Branch: <%= bank.branch %></div><% } %>
+        </div>
+      </div>
+      <% } %>
+
       <!-- Footer -->
       <div class="footer">
-        Terms & Conditions: Payment due within 30 days.<br />
-        © TechZarInfo Software Solutions Pvt Ltd
+        Terms & Conditions: <%= terms %><br />
+        © <%= s.companyName || "Your Company" %>
       </div>
     </div>
   </body>

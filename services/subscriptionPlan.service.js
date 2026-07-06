@@ -42,6 +42,11 @@ export const createPlan = async (data) => {
   const existing = await SubscriptionPlan.findOne({ plan_code: code });
   if (existing) throw appError("Plan code already exists", 400);
 
+  if (data.price_monthly !== undefined && data.price_monthly < 0)
+    throw appError("Monthly price cannot be negative", 400);
+  if (data.price_yearly !== undefined && data.price_yearly < 0)
+    throw appError("Yearly price cannot be negative", 400);
+
   const plan = await SubscriptionPlan.create({ ...data, plan_code: code });
   return plan;
 };
@@ -64,6 +69,11 @@ export const updatePlan = async (id, data) => {
     }
     data.plan_code = data.plan_code.toLowerCase().trim();
   }
+
+  if (data.price_monthly !== undefined && data.price_monthly < 0)
+    throw appError("Monthly price cannot be negative", 400);
+  if (data.price_yearly !== undefined && data.price_yearly < 0)
+    throw appError("Yearly price cannot be negative", 400);
 
   const plan = await SubscriptionPlan.findByIdAndUpdate(id, data, {
     new: true,
@@ -111,7 +121,7 @@ export const getTenantSubscriptions = async ({ plan_status, plan_id, page = 1, l
 
   const [tenants, total] = await Promise.all([
     Tenant.find(filter)
-      .populate("plan_id", "plan_name plan_code plan_type price_monthly price_yearly currency billing_cycle status")
+      .populate("plan_id", "plan_name plan_code plan_type price_monthly price_yearly currency billing_cycle status features")
       .select("name slug adminEmail adminName isActive plan_id plan_status plan_start_date plan_end_date createdAt")
       .skip(skip)
       .limit(Number(limit))
