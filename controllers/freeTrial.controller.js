@@ -6,6 +6,7 @@ import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
+import userService from "../services/user.service.js";
 
 dotenv.config();
 
@@ -149,20 +150,28 @@ export const signupFreeTrial = async (req, res) => {
     const { name, email, password, businessName, industry = "", country = "", subscriptionPackage = "" } = req.body;
 
     const adminEmail = email.toLowerCase().trim();
-    let slug = slugify(businessName);
+    const slug = slugify(businessName);
 
     if (!slug || RESERVED_SLUGS.has(slug)) {
       return res.status(400).json({ success: false, error: "Please enter a valid business name.", code: "VALIDATION_ERROR" });
     }
 
-    let existing = await Tenant.findOne({ slug });
-    if (existing) {
-      const suffixedSlug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
-      existing = await Tenant.findOne({ slug: suffixedSlug });
-      if (existing) {
-        return res.status(409).json({ success: false, error: "A workspace with this business name already exists." });
-      }
-      slug = suffixedSlug;
+    const existingEmail = await Tenant.findOne({ adminEmail });
+    if (existingEmail) {
+      return res.status(409).json({
+        success: false,
+        error: "This email is already registered. Please use a different email address.",
+        field: "email",
+      });
+    }
+
+    const existingSlug = await Tenant.findOne({ slug });
+    if (existingSlug) {
+      return res.status(409).json({
+        success: false,
+        error: "This business name is already taken. Please choose another one.",
+        field: "businessName",
+      });
     }
 
     const dbName = `crm_${slug}`;
@@ -241,11 +250,12 @@ export const signupFreeTrial = async (req, res) => {
         },
       });
 
+      const hashedPassword = await userService.hashPassword(password);
       await User.create({
         firstName:   name.split(" ")[0],
         lastName:    name.split(" ").slice(1).join(" ") || name.split(" ")[0],
         email:       adminEmail,
-        password,
+        password:    hashedPassword,
         role:        adminRole._id,
         dateOfBirth: new Date("1990-01-01"),
         status:      "Active",
@@ -294,6 +304,21 @@ export const signupFreeTrial = async (req, res) => {
   } catch (err) {
     console.error("Free trial signup error:", err);
     if (err.code === 11000) {
+      const dupField = Object.keys(err.keyPattern || {})[0];
+      if (dupField === "adminEmail") {
+        return res.status(409).json({
+          success: false,
+          error: "This email is already registered. Please use a different email address.",
+          field: "email",
+        });
+      }
+      if (dupField === "slug") {
+        return res.status(409).json({
+          success: false,
+          error: "This business name is already taken. Please choose another one.",
+          field: "businessName",
+        });
+      }
       return res.status(409).json({ success: false, error: "This business name or email is already registered." });
     }
     res.status(500).json({ success: false, error: err.message || "Server error" });
