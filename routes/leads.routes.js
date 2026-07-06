@@ -2,11 +2,13 @@ import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
 import { protect, adminOrAssigned, adminOnly, adminOrSales } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
 
 // Apply protect middleware to all routes
 router.use(protect);
+router.use(checkPlanFeature("leads"));
 
 //  SPECIFIC ROUTES FIRST (no :id parameters)
 router.get("/getAllLead", indexControllers.leadsController.getLeads);

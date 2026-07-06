@@ -2,8 +2,11 @@ import express from "express";
 import indexController from "../controllers/index.controllers.js";
 import { adminOnly, adminOrSales } from "../middlewares/auth.middleware.js";
 import { protect } from "../middlewares/auth.middleware.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
+
+router.use(checkPlanFeature("invoices"));
 //save the invoice
 router.post(
   "/createinvoice",

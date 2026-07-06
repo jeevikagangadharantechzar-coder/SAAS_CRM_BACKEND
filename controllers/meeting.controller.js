@@ -4,6 +4,7 @@ import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
 import * as zoomService from "../services/zoom.service.js";
 import { decrypt } from "../utils/crypto.js";
+import { getTenantPlanFeatures, isFeatureEnabled } from "../utils/planFeatures.js";
 
 const getModels = (req) => getTenantModels(req.tenantDB);
 
@@ -157,6 +158,15 @@ export default {
       let zoomPassword = null;
 
       if (meetingProvider === "zoom") {
+        const planFeatures = await getTenantPlanFeatures(req);
+        if (!isFeatureEnabled(planFeatures, "zoom_meetings")) {
+          return res.status(403).json({
+            success: false,
+            error: "This feature is not included in your current subscription plan.",
+            code: "FEATURE_NOT_INCLUDED",
+          });
+        }
+
         const zoomConfig = await getZoomConfig(req);
         if (!zoomService.isZoomConfigured(zoomConfig)) {
           return res.status(403).json({
@@ -175,6 +185,15 @@ export default {
         zoomStartUrl  = zoomMeeting.start_url;
         zoomPassword  = zoomMeeting.password || null;
       } else {
+        const planFeatures = await getTenantPlanFeatures(req);
+        if (!isFeatureEnabled(planFeatures, "google_meet_sync")) {
+          return res.status(403).json({
+            success: false,
+            error: "This feature is not included in your current subscription plan.",
+            code: "FEATURE_NOT_INCLUDED",
+          });
+        }
+
         if (!user?.googleAuth?.accessToken) {
           return res.status(403).json({
             success: false,
