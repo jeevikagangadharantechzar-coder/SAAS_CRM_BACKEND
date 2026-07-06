@@ -40,6 +40,15 @@ const leadSchema = new mongoose.Schema(
     // converted lead keeps a read-only copy here (currently: admin conversions).
     convertedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 
+    // Hides this lead from the Task Management / Target Management "Admin
+    // Completed" activity feeds once Admin dismisses it there — purely a
+    // feed-declutter flag, the lead record itself (and its Converted status)
+    // is untouched. Two independent flags so dismissing from one feed never
+    // hides the item from the other — a lead can legitimately be linked to
+    // both a Task and a Target at once.
+    taskAdminActivityDismissed: { type: Boolean, default: false },
+    targetAdminActivityDismissed: { type: Boolean, default: false },
+
     followUpDate:    { type: Date, default: Date.now },
     emailSentAt:     { type: Date, default: null },
     lastReminderAt:  { type: Date, default: null },

@@ -6,7 +6,12 @@ const router = express.Router();
 
 router.get("/my", protect, targetController.getMyTargets);
 router.get("/dashboard-stats", protect, targetController.getDashboardStats);
+router.get("/my-dashboard-stats", protect, targetController.getMyDashboardStats);
+router.get("/my-progress-fallback", protect, targetController.getMyProgressFallback);
+router.get("/progress-fallback-all", protect, targetController.getProgressFallbackAll);
 router.get("/sales-summary/:userId", protect, targetController.getSalesPersonSummary);
+router.get("/admin-activity", protect, targetController.getAdminActivity);
+router.post("/admin-activity/dismiss", protect, targetController.dismissAdminActivity);
 router.get("/", protect, targetController.getTargets);
 router.post("/", protect, targetController.createTarget);
 router.put("/:id", protect, targetController.updateTarget);

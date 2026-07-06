@@ -9,6 +9,7 @@ import {
   sendNotification,
   sendNotificationToAdmins,
 } from "../services/notificationService.js";
+import { notifyLeadOrDealEdited, notifyLeadStatusChangedByAdmin, notifyLeadConvertedByAdmin } from "../services/taskNotificationService.js";
 
 // Legacy fallbacks
 import LeadLegacy         from "../models/leads.model.js";
@@ -63,7 +64,7 @@ const pickNextSalesUser = async (User, Lead) => {
 export default {
   createLead: async (req, res) => {
     try {
-      const { Lead, User } = getModels(req);
+      const { Lead, User, Notification } = getModels(req);
       const { leadName, companyName, phoneNumber } = req.body;
       if (!leadName || !companyName || !phoneNumber) {
         return res.status(400).json({
@@ -105,6 +106,24 @@ export default {
 
       const lead      = new Lead(data);
       const savedLead = await lead.save();
+
+      if (data.assignTo && req.user?.role?.name === "Admin" && String(data.assignTo) !== String(req.user._id)) {
+        const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
+        Notification.create({
+          userId: data.assignTo,
+          createdBy: req.user._id,
+          type: "task",
+          title: `New Lead Assigned by Admin ${adminName}`,
+          message: `Admin ${adminName} assigned you a new lead: "${savedLead.leadName}"`,
+          text: `Admin ${adminName} assigned you a new lead: "${savedLead.leadName}"`,
+          referenceId: String(savedLead._id),
+          meta: { leadAssigned: true, leadId: String(savedLead._id), leadName: savedLead.leadName, adminName },
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          read: false,
+          isRead: false,
+        }).catch((err) => console.error("New lead assigned notification error:", err));
+      }
+
       res.status(201).json({ message: "Lead created successfully", lead: savedLead });
 
       // Notify all active admins so dashboard counts update live
@@ -301,7 +320,7 @@ export default {
 
   updateLead: async (req, res) => {
     try {
-      const { Lead, Notification } = getModels(req);
+      const { Lead } = getModels(req);
       const tDB     = req.tenantDB || null;
       const before  = await Lead.findById(req.params.id).populate("assignTo");
       if (!before) return res.status(404).json({ message: "Lead not found" });
@@ -370,30 +389,26 @@ export default {
           await sendEmail({ to: updated.assignTo.email, subject: ` Deal Converted: ${updated.leadName}`, text: `Deal converted for lead ${updated.leadName}. Congrats, ${fullName}!` });
       }
 
-      // If admin changed the status, send a persistent notification to the salesperson
+      // If admin changed the status, send a single persistent notification to
+      // the salesperson (type "task", meta.leadStatusChanged — replaces the
+      // old duplicate "target"-typed block that showed the same event twice,
+      // once in My Task and once in My Target).
       if (patch.status && patch.status !== before.status && isAdminLead) {
-        const spId = updated.assignTo ? String(updated.assignTo._id || updated.assignTo) : null;
-        if (spId && spId !== String(req.user._id)) {
+        notifyLeadStatusChangedByAdmin(getModels(req), { lead: updated, status: updated.status, previousStatus: before.status, actorId: req.user._id })
+          .catch((err) => console.error("notifyLeadStatusChangedByAdmin error:", err));
+      }
+
+      // Admin edited general details (not just status/follow-up) — notify the assignee
+      if (isAdminLead) {
+        const coreEditPairs = [
+          [patch.leadName, before.leadName], [patch.phoneNumber, before.phoneNumber], [patch.email, before.email],
+          [patch.companyName, before.companyName], [patch.source, before.source], [patch.requirement, before.requirement],
+        ];
+        const hasCoreEdit = coreEditPairs.some(([next, prev]) => next !== undefined && String(next) !== String(prev || ""));
+        if (hasCoreEdit) {
           const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
-          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-          await Notification.create({
-            userId: updated.assignTo._id || updated.assignTo,
-            createdBy: req.user._id,
-            type: "target",
-            title: `Lead Status Updated by Admin ${adminName}`,
-            message: `Your assigned lead "${updated.leadName}" was moved to "${updated.status}" status by Admin ${adminName}.`,
-            text: `Your assigned lead "${updated.leadName}" was moved to "${updated.status}" status by Admin ${adminName}.`,
-            referenceId: String(updated._id),
-            meta: { leadId: updated._id, leadName: updated.leadName, status: updated.status, adminName },
-            expiresAt,
-            read: false,
-            isRead: false,
-          });
-          notifyUser(spId, "new_notification", {
-            title: `Lead Status Updated by Admin ${adminName}`,
-            text: `Your assigned lead "${updated.leadName}" was moved to "${updated.status}" status by Admin ${adminName}.`,
-            type: "target",
-          });
+          notifyLeadOrDealEdited(getModels(req), { itemType: "lead", item: updated, actorId: req.user._id, adminName })
+            .catch((err) => console.error("notifyLeadOrDealEdited error:", err));
         }
       }
 
@@ -534,28 +549,14 @@ export default {
             notifyUser(userId, "deal:created", convPayload);
             notifyUser(userId, "lead_converted", convPayload);
           }
-          // If admin performed the conversion, send a persistent notification to the salesperson
+          // If admin performed the conversion, send a single persistent
+          // notification to the salesperson (type "task", meta.leadConverted —
+          // this is the actual conversion endpoint the frontend calls, so this
+          // replaces the old duplicate "target"-typed block that used to fire
+          // from here instead of from the — unused — createDealFromLead path).
           if (isAdmin && userId && String(req.user._id) !== userId) {
-            const adminName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Admin";
-            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-            await Notification.create({
-              userId: lead.assignTo._id,
-              createdBy: req.user._id,
-              type: "target",
-              title: `Lead Converted to Deal by Admin ${adminName}`,
-              message: `Your assigned lead "${lead.leadName}" was converted to a deal by Admin ${adminName}. The deal has been created and is now in the Qualification stage.`,
-              text: `Your assigned lead "${lead.leadName}" was converted to a deal by Admin ${adminName}. The deal has been created and is now in the Qualification stage.`,
-              referenceId: String(deal._id),
-              meta: { dealId: deal._id, leadName: lead.leadName, adminName },
-              expiresAt,
-              read: false,
-              isRead: false,
-            });
-            notifyUser(userId, "new_notification", {
-              title: `Lead Converted to Deal by Admin ${adminName}`,
-              text: `Your assigned lead "${lead.leadName}" was converted to a deal by Admin ${adminName}.`,
-              type: "target",
-            });
+            notifyLeadConvertedByAdmin(getModels(req), { lead, deal, actorId: req.user._id })
+              .catch((err) => console.error("notifyLeadConvertedByAdmin error:", err));
           }
           // Also notify all admins so Target Management live-updates
           const adminRole = await Role.findOne({ name: "Admin" });

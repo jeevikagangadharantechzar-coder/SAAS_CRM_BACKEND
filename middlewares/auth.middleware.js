@@ -52,7 +52,14 @@ export const protect = async (req, res, next) => {
 
     const tenant = req.tenant;
     if (tenant && tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)) {
-      return res.status(401).json({ message: "Subscription expired. Access restricted." });
+      const isTrial = tenant.plan_status === "trial";
+      return res.status(401).json({
+        message: isTrial
+          ? "Your 14 days free trial has ended. Please upgrade your plan to continue using the CRM."
+          : "Subscription expired. Access restricted.",
+        trialExpired: isTrial,
+        planExpired: true,
+      });
     }
 
     // Verify token version matches database version to support logout invalidation
