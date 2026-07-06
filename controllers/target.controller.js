@@ -62,6 +62,22 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   return { leadsConverted, dealsWon, calls, meetings };
 }
 
+// When a Target links SPECIFIC leads/deals and Admin personally converts/wins
+// one of them instead of the sales person, that item can never be completed
+// by the sales person themselves — leaving it in the denominator would cap
+// their achievable percentage below 100% forever for work that was taken out
+// of their hands. Effective goal = the admin-set goal minus however many of
+// those specific linked items Admin already closed out, so a sales person who
+// fully handles everything still reachable to them reaches 100%, not a
+// fraction reduced by Admin's own completions. Only applies when specific
+// leads/deals are linked (rawLinkedCount > 0) — a period-wide numeric goal
+// (no curated list) has no "this exact item was taken" concept, so it's
+// returned unchanged.
+function effectiveGoal(rawGoal, rawLinkedCount, adminHandledCount) {
+  if (rawLinkedCount === 0) return rawGoal;
+  return Math.max(0, rawGoal - adminHandledCount);
+}
+
 // Self-only progress snapshot for a sales person who has NO Target at all yet
 // (or no Target covering today) — same self-only attribution rules as
 // computeActuals/getTargets (only the sales person's own conversions/wins
@@ -214,9 +230,12 @@ export default {
         const spIdStr = String(t.salesPerson._id || t.salesPerson);
 
         // Deals created from converted linked leads (carry status history)
+        const convertedLeadDealsRole = { path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+        const wonByRole = { path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+
         const convertedLeadDeals = await Deal.find({ leadId: { $in: rawLeadIds } })
           .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email wonAt wonBy")
-          .populate("convertedBy", "firstName lastName")
+          .populate(convertedLeadDealsRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -239,7 +258,8 @@ export default {
         // Populate linked deals (full stageHistory — all stage moves shown in journey)
         const existingDeals = await Deal.find({ _id: { $in: rawDealIds } })
           .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt wonBy convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
-          .populate("convertedBy", "firstName lastName")
+          .populate(convertedLeadDealsRole)
+          .populate(wonByRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -268,13 +288,22 @@ export default {
           convertedLeadDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, spIdStr)).length;
         actuals.dealsLost = dealsLost;
 
-        const leadsPercent = t.targetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / t.targetLeads) * 100)) : 0;
-        const dealsPercent = t.targetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / t.targetDeals) * 100)) : 0;
+        // How many of THIS target's own linked leads/deals did Admin close
+        // out personally — see effectiveGoal() above for why this shrinks
+        // the denominator instead of just being excluded from the numerator.
+        const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
+        const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
+
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
+
+        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
+        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
-          t.targetLeads > 0 ? leadsPercent : null,
-          t.targetDeals > 0 ? dealsPercent : null,
+          effTargetLeads > 0 ? leadsPercent : null,
+          effTargetDeals > 0 ? dealsPercent : null,
         ].filter(v => v !== null);
         const overall = activePercentages.length > 0
           ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
@@ -286,7 +315,7 @@ export default {
           linkedDeals: existingDeals,
           convertedLeadDeals,
           actuals,
-          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall },
+          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals },
         };
       }));
 
@@ -325,9 +354,12 @@ export default {
 
         const myIdStr = String(req.user._id);
 
+        const myConvertedLeadDealsRole = { path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+        const myWonByRole = { path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+
         const convertedLeadDeals = await Deal.find({ leadId: { $in: rawLeadIds } })
           .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email wonAt wonBy")
-          .populate("convertedBy", "firstName lastName")
+          .populate(myConvertedLeadDealsRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -347,7 +379,8 @@ export default {
 
         const existingDeals = await Deal.find({ _id: { $in: rawDealIds } })
           .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt wonBy convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
-          .populate("convertedBy", "firstName lastName")
+          .populate(myConvertedLeadDealsRole)
+          .populate(myWonByRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -376,13 +409,21 @@ export default {
           convertedLeadDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, myIdStr)).length;
         actuals.dealsLost = dealsLost;
 
-        const leadsPercent = t.targetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / t.targetLeads) * 100)) : 0;
-        const dealsPercent = t.targetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / t.targetDeals) * 100)) : 0;
+        // Same admin-took-this-specific-item denominator shrink as getTargets
+        // above — see effectiveGoal().
+        const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
+        const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
+
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
+
+        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
+        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
-          t.targetLeads > 0 ? leadsPercent : null,
-          t.targetDeals > 0 ? dealsPercent : null,
+          effTargetLeads > 0 ? leadsPercent : null,
+          effTargetDeals > 0 ? dealsPercent : null,
         ].filter(v => v !== null);
         const overall = activePercentages.length > 0
           ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
@@ -394,7 +435,7 @@ export default {
           linkedDeals: existingDeals,
           convertedLeadDeals,
           actuals,
-          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall },
+          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals },
         };
       }));
 
@@ -1477,3 +1518,5 @@ export default {
     }
   },
 };
+
+
