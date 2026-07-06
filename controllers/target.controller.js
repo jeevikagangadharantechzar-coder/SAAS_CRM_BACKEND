@@ -1,80 +1,56 @@
 import { getTenantModels } from "../models/tenant/index.js";
-import { notifyUser } from "../realtime/socket.js";
 import { notifyTargetUser } from "../realtime/targetSocket.js";
 import { validateTargetDates } from "../utils/targetDateValidation.js";
 import { checkTargetDeadlineNow } from "../cron/targetCron.js";
+import {
+  createNotification,
+  findAdmins,
+  getTakenByAdminName,
+  STAGE_HISTORY_MOVER_POPULATE,
+  wasLostBySelf,
+} from "../services/targetNotificationService.js";
+import { getBulkLinkage } from "../services/linkageService.js";
 
 const getModels = (req) => getTenantModels(req.tenantDB);
 
-async function createNotification(Notification, { userId, title, message, type, meta }) {
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  const notif = await Notification.create({
-    userId,
-    title,
-    message,
-    text: message,
-    type,
-    meta,
-    expiresAt,
-    read: false,
-    isRead: false,
-  });
-  notifyUser(String(userId), "new_notification", {
-    _id: notif._id,
-    title,
-    text: message,
-    message,
-    type,
-    meta,
-    createdAt: notif.createdAt,
-  });
-  return notif;
-}
-
-async function findAdmins(User, Role) {
-  const adminRole = await Role.findOne({ name: "Admin" });
-  if (!adminRole) return [];
-  return User.find({ role: adminRole._id, status: "Active" }).select("_id");
-}
-
-// A deal an Admin has actually pushed a stage move on — i.e. the admin is
-// doing the hands-on work on it, whether or not it was ever lead-converted.
-// Requires stageHistory.movedBy to be populated with { firstName, lastName, role: { name } }.
-// Excludes moves made by the deal's own owner, in case an Admin is the assignee themselves.
-function getTakenByAdminName(stageHistory, ownerIdStr) {
-  const adminMoves = (stageHistory || []).filter((h) => {
-    if (!h.movedBy || typeof h.movedBy !== "object") return false;
-    if (String(h.movedBy._id) === ownerIdStr) return false;
-    return h.movedBy.role?.name === "Admin";
-  });
-  if (!adminMoves.length) return null;
-  const latest = adminMoves[adminMoves.length - 1].movedBy;
-  return `${latest.firstName || ""} ${latest.lastName || ""}`.trim();
-}
-
-const STAGE_HISTORY_MOVER_POPULATE = {
-  path: "stageHistory.movedBy",
-  select: "firstName lastName role",
-  populate: { path: "role", select: "name" },
-};
-
 // Compute actual counts for a user within a date range, scoped to linked leads/deals if provided
-async function computeActuals(models, userId, startDate, endDate, linkedLeadIds = null, linkedDealIds = null) {
+async function computeActuals(models, userId, startDate, endDate, linkedLeadIds = null, linkedDealIds = null, targetLeadsGoal = 0, targetDealsGoal = 0) {
   const { Lead, Deal, CallLog, Activity } = models;
 
   const start = new Date(startDate);
   const end = new Date(endDate);
   end.setHours(23, 59, 59, 999);
 
-  // Leads converted: count all linked leads that got converted (regardless of who converted them)
+  // Leads converted: only the sales person's OWN conversions count toward
+  // their personal target progress — one Admin converted on their behalf
+  // shouldn't inflate a number that's supposed to reflect their own work.
+  // Admin's own conversions still surface, just separately, in Task
+  // Management's "Admin Completed" tab (getAdminActivity).
+  //
+  // If this Target didn't link any specific leads, only fall back to a
+  // whole-date-range count when a leads GOAL was actually set (targetLeads >
+  // 0) — that's a genuine "convert N leads this period" quota with no
+  // pre-picked list. If no goal was set either, there's nothing this Target
+  // is tracking for this metric, so it must read 0 rather than pulling in
+  // every unrelated lead the sales person happened to convert elsewhere that
+  // period (which used to leak onto Targets/Tasks that never asked for it).
   const leadsConvertedQuery = linkedLeadIds && linkedLeadIds.length > 0
-    ? Deal.countDocuments({ leadId: { $in: linkedLeadIds } })
-    : Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: start, $lte: end } });
+    ? Deal.countDocuments({ leadId: { $in: linkedLeadIds }, convertedBy: userId })
+    : targetLeadsGoal > 0
+      ? Lead.countDocuments({ assignTo: userId, status: "Converted", convertedBy: userId, updatedAt: { $gte: start, $lte: end } })
+      : Promise.resolve(0);
 
-  // Deals won: if specific deals are linked, count only those that are "Closed Won"
+  // Deals won: same self-only rule — filtered by wonAt (the moment it was
+  // actually marked Closed Won) rather than updatedAt, which bumps on ANY
+  // later edit (e.g. Admin correcting the phone number next month would
+  // otherwise silently un-count an already-won deal from this period, or
+  // double-count it in a later one). Same no-goal-means-zero rule as leads
+  // converted above.
   const dealsWonQuery = linkedDealIds && linkedDealIds.length > 0
-    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won" })
-    : Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", updatedAt: { $gte: start, $lte: end } });
+    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won", wonBy: userId })
+    : targetDealsGoal > 0
+      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", wonBy: userId, wonAt: { $gte: start, $lte: end } })
+      : Promise.resolve(0);
 
   const [leadsConverted, dealsWon, calls, meetings] = await Promise.all([
     leadsConvertedQuery,
@@ -84,6 +60,130 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   ]);
 
   return { leadsConverted, dealsWon, calls, meetings };
+}
+
+// When a Target links SPECIFIC leads/deals and Admin personally converts/wins
+// one of them instead of the sales person, that item can never be completed
+// by the sales person themselves — leaving it in the denominator would cap
+// their achievable percentage below 100% forever for work that was taken out
+// of their hands. Effective goal = the admin-set goal minus however many of
+// those specific linked items Admin already closed out, so a sales person who
+// fully handles everything still reachable to them reaches 100%, not a
+// fraction reduced by Admin's own completions. Only applies when specific
+// leads/deals are linked (rawLinkedCount > 0) — a period-wide numeric goal
+// (no curated list) has no "this exact item was taken" concept, so it's
+// returned unchanged.
+function effectiveGoal(rawGoal, rawLinkedCount, adminHandledCount) {
+  if (rawLinkedCount === 0) return rawGoal;
+  return Math.max(0, rawGoal - adminHandledCount);
+}
+
+// Self-only progress snapshot for a sales person who has NO Target at all yet
+// (or no Target covering today) — same self-only attribution rules as
+// computeActuals/getTargets (only the sales person's own conversions/wins
+// count, admin-assisted ones are excluded). Unlike a real Target (which has
+// its own explicit linkedLeads/linkedDeals list), a Task only has this one
+// lead/deal (task.leadRef/task.dealRef), so we scope actuals to THAT task's
+// own linked item — never to the sales person's whole-month activity. Scoping
+// to the whole month would leak an unrelated lead/deal the sales person
+// happened to convert/win elsewhere that month onto every one of their task
+// cards, including ones where Admin did all the work themselves (which must
+// show 0, per the self-only rule). Returns a map keyed by taskId so every
+// task card gets its own correctly-scoped snapshot from a single batched call
+// — this is what powers the Task/My Tasks Progress card fallback so a sales
+// person's real work on THAT specific task shows up even before an Admin
+// ever creates a Target for them.
+async function computeFallbackSnapshotsForTasks(models, userId, tasks) {
+  const { Deal, CallLog, Activity } = models;
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const idStr = String(userId);
+
+  // Calls/meetings aren't scoped to a specific lead/deal even for real
+  // Targets (see computeActuals above) — same parity here, computed once
+  // per user and shared across all of that user's task cards.
+  const [calls, meetings] = await Promise.all([
+    CallLog.countDocuments({ userId, createdAt: { $gte: monthStart, $lte: now } }),
+    Activity.countDocuments({ assignedTo: userId, activityCategory: "Meeting", startDate: { $gte: monthStart, $lte: now } }),
+  ]);
+
+  const emptyEntry = () => ({
+    _id: null,
+    salesPerson: userId,
+    targetLeads: 0,
+    targetDeals: 0,
+    targetCalls: 0,
+    targetMeetings: 0,
+    startDate: monthStart,
+    endDate: now,
+    isFallback: true,
+    actuals: { leadsConverted: 0, dealsWon: 0, leadDealWon: 0, dealsLost: 0, calls, meetings },
+    percentages: { leadsPercent: 0, dealsPercent: 0, callsPercent: 0, meetingsPercent: 0, overall: 0 },
+  });
+
+  const result = {};
+  await Promise.all((tasks || []).map(async (task) => {
+    const linkedLeadIds = task.leadRef ? [task.leadRef] : [];
+    const linkedDealIds = task.dealRef ? [task.dealRef] : [];
+    if (!linkedLeadIds.length && !linkedDealIds.length) {
+      result[String(task._id)] = emptyEntry();
+      return;
+    }
+
+    const [leadsConverted, dealsWon, convertedLeadDeals, existingDeals] = await Promise.all([
+      linkedLeadIds.length ? Deal.countDocuments({ leadId: { $in: linkedLeadIds }, convertedBy: userId }) : 0,
+      linkedDealIds.length ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won", wonBy: userId }) : 0,
+      linkedLeadIds.length
+        ? Deal.find({ leadId: { $in: linkedLeadIds } }).select("stage wonBy stageHistory").populate(STAGE_HISTORY_MOVER_POPULATE).lean()
+        : [],
+      linkedDealIds.length
+        ? Deal.find({ _id: { $in: linkedDealIds } }).select("stage wonBy stageHistory").populate(STAGE_HISTORY_MOVER_POPULATE).lean()
+        : [],
+    ]);
+
+    // Same split as the real-Target flow: "leads to deals won" only counts
+    // deals that came FROM a linked lead; "deals lost" counts either kind.
+    const leadDealWon = convertedLeadDeals.filter((d) => d.stage === "Closed Won" && String(d.wonBy || "") === idStr).length;
+    const dealsLost =
+      existingDeals.filter((d) => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, idStr)).length +
+      convertedLeadDeals.filter((d) => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, idStr)).length;
+
+    // A Task has no admin-set numeric goal the way a Target does — its only
+    // "goal" is its own single linked lead/deal. Treating that as an implicit
+    // target of 1 (instead of always 0) means Overall Progress can actually
+    // reach 100% once the sales person completes THEIR OWN linked item,
+    // instead of permanently reading 0%/red/"keep pushing" even when the
+    // real work is already done — same overall-averaging formula as real
+    // Targets (average of leads/deals percent, only counting whichever one
+    // this task actually has a goal for).
+    const targetLeads = linkedLeadIds.length ? 1 : 0;
+    const targetDeals = linkedDealIds.length ? 1 : 0;
+    const leadsPercent = targetLeads > 0 ? (leadsConverted > 0 ? 100 : 0) : 0;
+    const dealsPercent = targetDeals > 0 ? (dealsWon > 0 ? 100 : 0) : 0;
+    const activePercentages = [
+      targetLeads > 0 ? leadsPercent : null,
+      targetDeals > 0 ? dealsPercent : null,
+    ].filter((v) => v !== null);
+    const overall = activePercentages.length > 0
+      ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
+      : 0;
+
+    result[String(task._id)] = {
+      _id: null,
+      salesPerson: userId,
+      targetLeads,
+      targetDeals,
+      targetCalls: 0,
+      targetMeetings: 0,
+      startDate: monthStart,
+      endDate: now,
+      isFallback: true,
+      actuals: { leadsConverted, dealsWon, leadDealWon, dealsLost, calls, meetings },
+      percentages: { leadsPercent, dealsPercent, callsPercent: 0, meetingsPercent: 0, overall },
+    };
+  }));
+
+  return result;
 }
 
 export default {
@@ -98,19 +198,29 @@ export default {
 
       const { Lead, Deal } = models;
       // Step 1: lean fetch to get raw ObjectIds for accurate counting
-      const rawTargets = await Target.find()
+      const allRawTargets = await Target.find()
         .populate("salesPerson", "firstName lastName email")
         .populate("createdBy", "firstName lastName email")
         .populate("notes.addedBy", "firstName lastName")
         .sort({ createdAt: -1 })
         .lean();
 
+      // A target whose salesPerson user was deleted (populate leaves it
+      // null) would otherwise throw inside the map below and reject the
+      // WHOLE Promise.all — taking every other sales person's target down
+      // with it, so admin's Task Management ends up showing "No active
+      // target set" for everyone. Skip just the broken one instead.
+      const rawTargets = allRawTargets.filter((t) => {
+        if (!t.salesPerson) console.error(`Target ${t._id} has no resolvable salesPerson (deleted user?) — skipping`);
+        return !!t.salesPerson;
+      });
+
       const result = await Promise.all(rawTargets.map(async (t) => {
         const rawLeadIds = (t.linkedLeads || []);
         const rawDealIds = (t.linkedDeals || []);
 
         // Counts use raw IDs (works even for deleted leads)
-        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds);
+        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals);
 
         // Populate existing leads (deleted ones are simply absent)
         const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
@@ -120,9 +230,12 @@ export default {
         const spIdStr = String(t.salesPerson._id || t.salesPerson);
 
         // Deals created from converted linked leads (carry status history)
+        const convertedLeadDealsRole = { path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+        const wonByRole = { path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+
         const convertedLeadDeals = await Deal.find({ leadId: { $in: rawLeadIds } })
-          .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email")
-          .populate("convertedBy", "firstName lastName")
+          .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email wonAt wonBy")
+          .populate(convertedLeadDealsRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -144,8 +257,9 @@ export default {
 
         // Populate linked deals (full stageHistory — all stage moves shown in journey)
         const existingDeals = await Deal.find({ _id: { $in: rawDealIds } })
-          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
-          .populate("convertedBy", "firstName lastName")
+          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt wonBy convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
+          .populate(convertedLeadDealsRole)
+          .populate(wonByRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -160,23 +274,36 @@ export default {
             };
           }));
 
-        // Count leads that converted to a deal AND that deal is Closed Won
-        const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won").length;
+        // Count leads that converted to a deal AND that deal is Closed Won BY
+        // THE SALES PERSON THEMSELVES — admin-assisted wins don't count
+        // toward their own target progress (they show in Admin Completed).
+        const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won" && String(d.wonBy || "") === spIdStr).length;
         actuals.leadDealWon = leadDealWon;
 
-        // Count all Closed Lost deals (linked deals + converted lead deals)
+        // Count Closed Lost deals (linked deals + converted lead deals) —
+        // same self-only rule as leadDealWon above: only counts if the sales
+        // person themselves moved it to Closed Lost, not an admin-closed loss.
         const dealsLost =
-          existingDeals.filter(d => d.stage === "Closed Lost").length +
-          convertedLeadDeals.filter(d => d.stage === "Closed Lost").length;
+          existingDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, spIdStr)).length +
+          convertedLeadDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, spIdStr)).length;
         actuals.dealsLost = dealsLost;
 
-        const leadsPercent = t.targetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / t.targetLeads) * 100)) : 0;
-        const dealsPercent = t.targetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / t.targetDeals) * 100)) : 0;
+        // How many of THIS target's own linked leads/deals did Admin close
+        // out personally — see effectiveGoal() above for why this shrinks
+        // the denominator instead of just being excluded from the numerator.
+        const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
+        const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
+
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
+
+        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
+        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
-          t.targetLeads > 0 ? leadsPercent : null,
-          t.targetDeals > 0 ? dealsPercent : null,
+          effTargetLeads > 0 ? leadsPercent : null,
+          effTargetDeals > 0 ? dealsPercent : null,
         ].filter(v => v !== null);
         const overall = activePercentages.length > 0
           ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
@@ -188,7 +315,7 @@ export default {
           linkedDeals: existingDeals,
           convertedLeadDeals,
           actuals,
-          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall },
+          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals },
         };
       }));
 
@@ -219,7 +346,7 @@ export default {
         const rawLeadIds = (t.linkedLeads || []);
         const rawDealIds = (t.linkedDeals || []);
 
-        const actuals = await computeActuals(models, req.user._id, t.startDate, t.endDate, rawLeadIds, rawDealIds);
+        const actuals = await computeActuals(models, req.user._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals);
 
         const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
           .select("leadName companyName phoneNumber email status createdAt statusHistory")
@@ -227,9 +354,12 @@ export default {
 
         const myIdStr = String(req.user._id);
 
+        const myConvertedLeadDealsRole = { path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+        const myWonByRole = { path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+
         const convertedLeadDeals = await Deal.find({ leadId: { $in: rawLeadIds } })
-          .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email")
-          .populate("convertedBy", "firstName lastName")
+          .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email wonAt wonBy")
+          .populate(myConvertedLeadDealsRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -248,8 +378,9 @@ export default {
           }));
 
         const existingDeals = await Deal.find({ _id: { $in: rawDealIds } })
-          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
-          .populate("convertedBy", "firstName lastName")
+          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt wonBy convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
+          .populate(myConvertedLeadDealsRole)
+          .populate(myWonByRole)
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .lean()
           .then(deals => deals.map(d => {
@@ -264,23 +395,35 @@ export default {
             };
           }));
 
-        // Count leads that converted to a deal AND that deal is Closed Won
-        const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won").length;
+        // Count leads that converted to a deal AND that deal is Closed Won BY
+        // THE SALES PERSON THEMSELVES — admin-assisted wins don't count
+        // toward their own target progress (they show in Admin Completed).
+        const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won" && String(d.wonBy || "") === myIdStr).length;
         actuals.leadDealWon = leadDealWon;
 
-        // Count all Closed Lost deals (linked deals + converted lead deals)
+        // Count Closed Lost deals (linked deals + converted lead deals) —
+        // same self-only rule as leadDealWon above: only counts if you
+        // yourself moved it to Closed Lost, not an admin-closed loss.
         const dealsLost =
-          existingDeals.filter(d => d.stage === "Closed Lost").length +
-          convertedLeadDeals.filter(d => d.stage === "Closed Lost").length;
+          existingDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, myIdStr)).length +
+          convertedLeadDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, myIdStr)).length;
         actuals.dealsLost = dealsLost;
 
-        const leadsPercent = t.targetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / t.targetLeads) * 100)) : 0;
-        const dealsPercent = t.targetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / t.targetDeals) * 100)) : 0;
+        // Same admin-took-this-specific-item denominator shrink as getTargets
+        // above — see effectiveGoal().
+        const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
+        const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
+
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
+
+        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
+        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
-          t.targetLeads > 0 ? leadsPercent : null,
-          t.targetDeals > 0 ? dealsPercent : null,
+          effTargetLeads > 0 ? leadsPercent : null,
+          effTargetDeals > 0 ? dealsPercent : null,
         ].filter(v => v !== null);
         const overall = activePercentages.length > 0
           ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
@@ -292,7 +435,7 @@ export default {
           linkedDeals: existingDeals,
           convertedLeadDeals,
           actuals,
-          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall },
+          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals },
         };
       }));
 
@@ -320,7 +463,12 @@ export default {
         Lead.find({ assignTo: userId, status: { $nin: ["Rejected", "Converted"] } })
           .select("leadName companyName phoneNumber email status createdAt updatedAt")
           .sort({ createdAt: -1 }),
-        Deal.find({ assignedTo: userId })
+        // Closed Won/Lost deals are already-finished outcomes — same reasoning
+        // as excluding Converted/Rejected leads above. This also keeps deals
+        // Admin already closed out of the picker entirely, since linking an
+        // already-decided deal to a future target makes no sense and previously
+        // let Admin's own wins inflate "Total Deals"/the Won highlight here.
+        Deal.find({ assignedTo: userId, stage: { $nin: ["Closed Won", "Closed Lost"] } })
           .select("dealName dealTitle stage value currency companyName phoneNumber email createdAt updatedAt wonAt convertedAt convertedBy stageHistory lossReason lossNotes stageLostAt")
           .populate("convertedBy", "firstName lastName")
           .populate(STAGE_HISTORY_MOVER_POPULATE)
@@ -637,9 +785,10 @@ export default {
       weekStart.setDate(now.getDate() - now.getDay());
 
       const [
-        totalLeads,
+        totalLeadsCreated,
+        activeLeads,
         convertedLeads,
-        totalDeals,
+        activeDeals,
         wonDeals,
         monthCalls,
         monthMeetings,
@@ -647,8 +796,14 @@ export default {
         weekMeetings,
       ] = await Promise.all([
         Lead.countDocuments({ createdAt: { $gte: monthStart } }),
+        // "Assigned Leads" — leads still open (not yet converted/rejected), so
+        // this count naturally drops to 0 as they get converted to deals,
+        // instead of double-counting a lead that's already become a deal.
+        Lead.countDocuments({ createdAt: { $gte: monthStart }, status: { $nin: ["Converted", "Rejected"] } }),
         Lead.countDocuments({ status: "Converted", updatedAt: { $gte: monthStart } }),
-        Deal.countDocuments({ createdAt: { $gte: monthStart } }),
+        // "Assigned Deals" — deals still active in the pipeline (not yet
+        // Closed Won/Lost), so this drops to 0 once they're all won/lost.
+        Deal.countDocuments({ createdAt: { $gte: monthStart }, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
         Deal.countDocuments({ stage: "Closed Won", updatedAt: { $gte: monthStart } }),
         CallLog.countDocuments({ userId: { $exists: true }, createdAt: { $gte: monthStart } }),
         Activity.countDocuments({ activityCategory: "Meeting", startDate: { $gte: monthStart } }),
@@ -658,10 +813,10 @@ export default {
 
       res.status(200).json({
         monthly: {
-          totalLeads,
+          totalLeads: activeLeads,
           convertedLeads,
-          leadToDealRate: totalLeads > 0 ? Math.round((convertedLeads / totalLeads) * 100) : 0,
-          totalDeals,
+          leadToDealRate: totalLeadsCreated > 0 ? Math.round((convertedLeads / totalLeadsCreated) * 100) : 0,
+          totalDeals: activeDeals,
           wonDeals,
           calls: monthCalls,
           meetings: monthMeetings,
@@ -673,6 +828,123 @@ export default {
       });
     } catch (err) {
       console.error("Error fetching dashboard stats:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Sales: same shape as getDashboardStats, but scoped to the logged-in
+  // sales person's own leads/deals/calls/meetings — powers My Tasks's own
+  // "My Monthly Overview" widget so it always shows real numbers, even with
+  // zero active Targets (a Target-derived sum shows nothing in that case).
+  getMyDashboardStats: async (req, res) => {
+    try {
+      const models = getModels(req);
+      const { Lead, Deal, CallLog, Activity } = models;
+      const userId = req.user._id;
+
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - now.getDay());
+
+      const [
+        totalLeadsCreated,
+        activeLeads,
+        convertedLeads,
+        activeDeals,
+        wonDeals,
+        monthCalls,
+        monthMeetings,
+        weekCalls,
+        weekMeetings,
+      ] = await Promise.all([
+        Lead.countDocuments({ assignTo: userId, createdAt: { $gte: monthStart } }),
+        // "Assigned Leads" — leads still open (not yet converted/rejected), so
+        // this count naturally drops to 0 as they get converted to deals.
+        Lead.countDocuments({ assignTo: userId, createdAt: { $gte: monthStart }, status: { $nin: ["Converted", "Rejected"] } }),
+        Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: monthStart } }),
+        // "Assigned Deals" — deals still active in the pipeline (not yet
+        // Closed Won/Lost), so this drops to 0 once they're all won/lost.
+        Deal.countDocuments({ assignedTo: userId, createdAt: { $gte: monthStart }, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
+        Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", updatedAt: { $gte: monthStart } }),
+        CallLog.countDocuments({ userId, createdAt: { $gte: monthStart } }),
+        Activity.countDocuments({ userId, activityCategory: "Meeting", startDate: { $gte: monthStart } }),
+        CallLog.countDocuments({ userId, createdAt: { $gte: weekStart } }),
+        Activity.countDocuments({ userId, activityCategory: "Meeting", startDate: { $gte: weekStart } }),
+      ]);
+
+      res.status(200).json({
+        monthly: {
+          totalLeads: activeLeads,
+          convertedLeads,
+          leadToDealRate: totalLeadsCreated > 0 ? Math.round((convertedLeads / totalLeadsCreated) * 100) : 0,
+          totalDeals: activeDeals,
+          wonDeals,
+          calls: monthCalls,
+          meetings: monthMeetings,
+        },
+        weekly: {
+          calls: weekCalls,
+          meetings: weekMeetings,
+        },
+      });
+    } catch (err) {
+      console.error("Error fetching my dashboard stats:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Sales: their own fallback Progress-card snapshot for tasks where they
+  // have no Target covering it yet — see computeFallbackSnapshotsForTasks
+  // above. Keyed by taskId (not flattened to one aggregate), so each task
+  // card only ever shows progress from its OWN linked lead/deal.
+  getMyProgressFallback: async (req, res) => {
+    try {
+      const models = getModels(req);
+      const { Task } = models;
+      const myTasks = await Task.find({ assignedTo: req.user._id, archived: { $ne: true } })
+        .select("leadRef dealRef")
+        .lean();
+      const snapshot = await computeFallbackSnapshotsForTasks(models, req.user._id, myTasks);
+      res.status(200).json(snapshot);
+    } catch (err) {
+      console.error("Error fetching my progress fallback:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: same fallback snapshots, but batched for every Sales-role user in
+  // one call — powers Task Management's Progress card for any task whose
+  // assignee has no Target covering it, without an N+1 fetch per task card.
+  // Flattened into one object keyed by taskId (not by userId) so a lookup by
+  // task._id always gets that task's own scoped numbers.
+  getProgressFallbackAll: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const models = getModels(req);
+      const { User, Role, Task } = models;
+      // Non-Admin, same rule the salesPerson picker in Target Management's
+      // create-target form already uses — role name varies per tenant, only
+      // "not Admin" is guaranteed.
+      const adminRole = await Role.findOne({ name: "Admin" });
+      const salesUsers = await User.find({ role: { $ne: adminRole?._id } }).select("_id").lean();
+
+      const allTasks = await Task.find({ archived: { $ne: true } }).select("assignedTo leadRef dealRef").lean();
+      const tasksByUser = new Map();
+      for (const t of allTasks) {
+        const uid = String(t.assignedTo);
+        if (!tasksByUser.has(uid)) tasksByUser.set(uid, []);
+        tasksByUser.get(uid).push(t);
+      }
+
+      const perUserMaps = await Promise.all(
+        salesUsers.map((u) => computeFallbackSnapshotsForTasks(models, u._id, tasksByUser.get(String(u._id)) || []))
+      );
+      res.status(200).json(Object.assign({}, ...perUserMaps));
+    } catch (err) {
+      console.error("Error fetching progress fallback for all sales users:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },
@@ -1174,4 +1446,77 @@ export default {
       res.status(500).json({ message: "Internal server error" });
     }
   },
+
+  // Admin-only: leads Admin personally converted + deals Admin personally
+  // closed Won — the "Admin Completed" activity feed in Target Management.
+  // Strictly Target-scoped: only leads/deals that are actually linked to a
+  // Target (linkedLeads/linkedDeals) show up here. A lead/deal linked to
+  // BOTH a Task and a Target legitimately shows in both feeds — that's real
+  // dual context, not a bug. Mirrors task.controller.js's getAdminActivity,
+  // deliberately kept as a separate, independent endpoint/dismiss-flag so the
+  // two features never share state.
+  getAdminActivity: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied: Admins only" });
+      const models = getModels(req);
+      const { Lead, Deal } = models;
+
+      const [convertedLeads, wonDeals, linkage] = await Promise.all([
+        Lead.find({ status: "Converted", convertedBy: { $ne: null }, targetAdminActivityDismissed: { $ne: true } })
+          .populate({ path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
+          .populate("assignTo", "firstName lastName")
+          .select("leadName companyName convertedBy assignTo updatedAt")
+          .sort({ updatedAt: -1 })
+          .lean(),
+        Deal.find({ stage: "Closed Won", wonBy: { $ne: null }, targetAdminActivityDismissed: { $ne: true } })
+          .populate({ path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
+          .populate("assignedTo", "firstName lastName")
+          .select("dealName dealTitle companyName value currency wonBy wonAt assignedTo")
+          .sort({ wonAt: -1 })
+          .lean(),
+        getBulkLinkage(models),
+      ]);
+
+      const { targetLeadIds, targetDealIds } = linkage;
+
+      const leadsConvertedByAdmin = convertedLeads
+        .filter((l) => l.convertedBy?.role?.name === "Admin")
+        .filter((l) => targetLeadIds.has(String(l._id)));
+      const dealsWonByAdmin = wonDeals
+        .filter((d) => d.wonBy?.role?.name === "Admin")
+        .filter((d) => targetDealIds.has(String(d._id)));
+
+      res.status(200).json({
+        leadsConvertedByAdmin,
+        dealsWonByAdmin,
+        counts: { leads: leadsConvertedByAdmin.length, deals: dealsWonByAdmin.length },
+      });
+    } catch (err) {
+      console.error("Error fetching target admin activity:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin-only: dismiss (hide) a single lead/deal row from Target
+  // Management's "Admin Completed" feed — declutter only, never touches the
+  // underlying record, and never affects Task Management's own Admin
+  // Completed feed (separate taskAdminActivityDismissed flag).
+  dismissAdminActivity: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied: Admins only" });
+      const { itemType, itemId } = req.body;
+      if (!["lead", "deal"].includes(itemType) || !itemId) {
+        return res.status(400).json({ message: "itemType (lead|deal) and itemId are required" });
+      }
+      const { Lead, Deal } = getModels(req);
+      const Model = itemType === "lead" ? Lead : Deal;
+      await Model.findByIdAndUpdate(itemId, { targetAdminActivityDismissed: true });
+      res.status(200).json({ message: "Removed from Admin Completed" });
+    } catch (err) {
+      console.error("Error dismissing target admin activity item:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
 };
+
+
