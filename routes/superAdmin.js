@@ -22,6 +22,7 @@ import {
   getSettings as getSuperAdminSettings,
   updateSettings as updateSuperAdminSettings,
   uploadPlatformLogo,
+  uploadSuperAdminFavicon,
 } from "../controllers/superAdminSettings.controller.js";
 import uploadPlatformLogoMiddleware from "../middlewares/uploadPlatformLogo.js";
 
@@ -53,6 +54,7 @@ router.post("/api/tenants/:id/impersonate", superAdminAuth, impersonateTenant);
 router.get("/api/public/branding", getPublicBranding);
 router.get("/api/settings",  superAdminAuth, getSuperAdminSettings);
 router.put("/api/settings",  superAdminAuth, updateSuperAdminSettings);
-router.post("/api/settings/logo", superAdminAuth, uploadPlatformLogoMiddleware.single("logo"), uploadPlatformLogo);
+router.post("/api/settings/logo",    superAdminAuth, uploadPlatformLogoMiddleware.single("logo"),    uploadPlatformLogo);
+router.post("/api/settings/favicon", superAdminAuth, uploadPlatformLogoMiddleware.single("favicon"), uploadSuperAdminFavicon);
 
 export default router;

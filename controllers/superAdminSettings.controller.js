@@ -32,13 +32,17 @@ async function getOrCreate() {
   return settings;
 }
 
-// Public — no auth — returns only branding fields (used by login page)
+// Public — no auth — returns branding fields used by login page and super admin panel
 export const getPublicBranding = async (req, res) => {
   try {
-    const settings = await SuperAdminSettings.findOne().select("platformName platformLogo");
+    const settings = await SuperAdminSettings.findOne().select(
+      "platformName platformLogo superAdminTitle superAdminFavicon"
+    );
     res.json({
-      platformName: settings?.platformName || "",
-      platformLogo: settings?.platformLogo || "",
+      platformName:      settings?.platformName      || "",
+      platformLogo:      settings?.platformLogo      || "",
+      superAdminTitle:   settings?.superAdminTitle   || "",
+      superAdminFavicon: settings?.superAdminFavicon || "",
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -63,6 +67,8 @@ export const updateSettings = async (req, res) => {
       "platformName",
       "platformLogo",
       "supportEmail",
+      "superAdminTitle",
+      "superAdminFavicon",
       "smtpHost",
       "smtpPort",
       "smtpUser",
@@ -112,6 +118,23 @@ export const uploadPlatformLogo = async (req, res) => {
     );
 
     res.json({ message: "Logo uploaded", logoPath: settings.platformLogo });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const uploadSuperAdminFavicon = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const faviconPath = req.file.path.replace(/\\/g, "/");
+    const settings = await SuperAdminSettings.findOneAndUpdate(
+      {},
+      { $set: { superAdminFavicon: faviconPath } },
+      { new: true, upsert: true }
+    );
+
+    res.json({ message: "Favicon uploaded", faviconPath: settings.superAdminFavicon });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
