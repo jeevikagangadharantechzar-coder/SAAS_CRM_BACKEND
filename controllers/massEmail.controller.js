@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import sendEmail from "../utils/sendEmail.js";
 import { addEmailToQueue } from "../utils/emailQueue.js";
+import { sendEmailWithAttachments } from "../utils/gmailService.js";
 
 const getModels = (req) => {
   if (req.tenantDB) return getTenantModels(req.tenantDB);
@@ -134,11 +135,15 @@ sendBulkEmail : async (req, res) => {
     }));
 
     if (logoCIDAttachment) attachments.push(logoCIDAttachment);
-    const finalHTML = `
+
+    // withLogo is only usable on the shared-mailbox path below — the tenant
+    // Gmail-API path has no inline/cid image support, so it sends without
+    // the logo rather than showing a broken image.
+    const buildHTML = (withLogo) => `
       <div style="background-color:#f4f6f8; padding:40px 0;">
         <div style="max-width:600px; margin:auto; background:white; padding:30px; border-radius:8px;">
 
-          ${logoBlock}
+          ${withLogo ? logoBlock : ""}
 
           <div style="font-size:14px; line-height:1.6; color:#333;">
             ${content}
@@ -168,13 +173,28 @@ sendBulkEmail : async (req, res) => {
 
     //  If NO scheduled date → send immediately
     if (!scheduledFor) {
-      for (const email of recipients) {
-        await addEmailToQueue({
-          to: email,
-          subject,
-          html: finalHTML,
-          attachments,
-        });
+      if (settings?.invoiceSenderEmail) {
+        // Tenant connected their own Gmail via OAuth — send genuinely as that
+        // account, same as invoice and proposal emails, instead of the
+        // shared mailbox.
+        const gmailAttachments = files.map((file) => ({
+          filename: file.originalname,
+          content: fs.readFileSync(file.path).toString("base64"),
+          mimetype: file.mimetype,
+          size: file.size,
+        }));
+        for (const email of recipients) {
+          await sendEmailWithAttachments(email, subject, buildHTML(false), "", "", gmailAttachments, [], settings.invoiceSenderEmail);
+        }
+      } else {
+        for (const email of recipients) {
+          await addEmailToQueue({
+            to: email,
+            subject,
+            html: buildHTML(true),
+            attachments,
+          });
+        }
       }
 
       // Update status to sent

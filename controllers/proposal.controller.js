@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import path from "path";
 import fs from "fs";
 import { getTenantModels } from "../models/tenant/index.js";
+import { sendEmailWithAttachments } from "../utils/gmailService.js";
 import {
   deleteNotificationsByEntity,
   deleteAllNotificationsByEntity,
@@ -88,10 +89,13 @@ export default {
           }
         }
 
-        const emailHTML = `
+        // withLogo is only usable on the shared-mailbox path below — the tenant
+        // Gmail-API path has no inline/cid image support, so it sends without
+        // the logo rather than showing a broken image.
+        const buildEmailHTML = (withLogo) => `
           <div style="background-color:#f4f6f8; padding:40px 0;">
             <div style="max-width:600px; margin:auto; background:white; padding:30px; border-radius:8px;">
-              ${logoBlock}
+              ${withLogo ? logoBlock : ""}
               <div style="font-size:14px; line-height:1.6; color:#333;">
                 ${content}
               </div>
@@ -103,9 +107,28 @@ export default {
           </div>
         `;
 
-        const transporter = nodemailer.createTransport({ service: "gmail", host: "smtp.gmail.com", port: 587, secure: false, auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
-        await transporter.sendMail({ from: `"${companyName}" <${process.env.EMAIL_USER}>`, to: recipients.join(","), cc: cc || undefined, subject: `Proposal: ${title}`, html: emailHTML, attachments: emailAttachments });
-        if (process.env.OWNER_EMAIL) await transporter.sendMail({ from: `"CRM Notification" <${process.env.EMAIL_USER}>`, to: process.env.OWNER_EMAIL, subject: `Proposal Sent: ${title}`, text: `A new proposal has been sent to ${recipients.join(",")}.` });
+        const subject = `Proposal: ${title}`;
+
+        if (settings?.invoiceSenderEmail) {
+          // Tenant connected their own Gmail via OAuth — send genuinely as that
+          // account, same as invoice emails.
+          const ccEmails = cc ? cc.split(",").map(e => e.trim()).filter(Boolean).join(",") : "";
+          const gmailAttachments = (req.files || []).map(file => ({
+            filename: file.originalname,
+            content: fs.readFileSync(file.path).toString("base64"),
+            mimetype: file.mimetype,
+            size: file.size,
+          }));
+          await sendEmailWithAttachments(recipients.join(","), subject, buildEmailHTML(false).replace(/\n\s*/g, ""), ccEmails, "", gmailAttachments, [], settings.invoiceSenderEmail);
+        } else {
+          const transporter = nodemailer.createTransport({ service: "gmail", host: "smtp.gmail.com", port: 587, secure: false, auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
+          await transporter.sendMail({ from: `"${companyName}" <${process.env.EMAIL_USER}>`, to: recipients.join(","), cc: cc || undefined, subject, html: buildEmailHTML(true), attachments: emailAttachments });
+        }
+
+        if (process.env.OWNER_EMAIL) {
+          const ownerTransporter = nodemailer.createTransport({ service: "gmail", host: "smtp.gmail.com", port: 587, secure: false, auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
+          await ownerTransporter.sendMail({ from: `"CRM Notification" <${process.env.EMAIL_USER}>`, to: process.env.OWNER_EMAIL, subject: `Proposal Sent: ${title}`, text: `A new proposal has been sent to ${recipients.join(",")}.` });
+        }
       }
     } catch (error) {
       console.error("Proposal Error:", error);

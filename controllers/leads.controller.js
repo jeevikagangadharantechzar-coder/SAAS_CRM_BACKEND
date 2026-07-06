@@ -565,14 +565,6 @@ export default {
             admins.forEach(a => notifyUser(String(a._id), "lead_converted", convPayload));
           }
 
-          // Send email notification if assignee has email
-          if (lead.assignTo?.email) {
-            await sendEmail({
-              to:      lead.assignTo.email,
-              subject: ` Lead Converted: ${lead.leadName}`,
-              text:    `Lead "${lead.leadName}" has been successfully converted to a deal. Deal Name: ${deal.dealName}, Value: ${formattedValue}`,
-            });
-          }
         } catch (bgErr) {
           console.error("convertLeadToDeal background tasks error:", bgErr);
         }
