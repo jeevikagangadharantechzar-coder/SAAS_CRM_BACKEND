@@ -1,22 +1,33 @@
 import SuperAdminSettings from "../models/master/SuperAdminSettings.js";
-import { BEAUTIFUL_WELCOME_BODY } from "../utils/dynamicEmail.js";
+import { BEAUTIFUL_WELCOME_BODY, BEAUTIFUL_PLAN_BODY } from "../utils/dynamicEmail.js";
 
 // Always work with the single settings document; auto-migrate old plain body
 async function getOrCreate() {
   let settings = await SuperAdminSettings.findOne();
   if (!settings) {
-    settings = await SuperAdminSettings.create({ welcomeBody: BEAUTIFUL_WELCOME_BODY });
+    settings = await SuperAdminSettings.create({
+      welcomeBody: BEAUTIFUL_WELCOME_BODY,
+      planBody: BEAUTIFUL_PLAN_BODY,
+    });
   } else {
+    let dirty = false;
+
     const isOldPlain = !settings.welcomeBody || settings.welcomeBody.trim().startsWith("<p>Hi {{adminName}},</p>");
-    // Migrate default template if it's missing the logo placeholder
     const isDefaultMissingLogo =
       settings.welcomeBody.includes("© {{year}} {{platformName}}") &&
       !settings.welcomeBody.includes("{{logoImgTag}}");
-
     if (isOldPlain || isDefaultMissingLogo) {
       settings.welcomeBody = BEAUTIFUL_WELCOME_BODY;
-      await settings.save();
+      dirty = true;
     }
+
+    // Migrate plan body if it's missing the date fields
+    if (!settings.planBody || !settings.planBody.includes("{{startDate}}")) {
+      settings.planBody = BEAUTIFUL_PLAN_BODY;
+      dirty = true;
+    }
+
+    if (dirty) await settings.save();
   }
   return settings;
 }

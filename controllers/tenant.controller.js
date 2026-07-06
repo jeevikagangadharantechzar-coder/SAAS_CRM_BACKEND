@@ -142,6 +142,25 @@ export const createTenant = async (req, res) => {
     }
 
     const dbName = `crm_${slug}`;
+
+    // Auto-calculate plan dates when a plan is assigned but dates aren't provided
+    let resolvedStartDate = plan_start_date || null;
+    let resolvedEndDate = plan_end_date || null;
+    if (actualPlanId && !resolvedStartDate) {
+      resolvedStartDate = new Date();
+    }
+    if (actualPlanId && !resolvedEndDate) {
+      try {
+        const planDoc = await SubscriptionPlan.findById(actualPlanId);
+        if (planDoc) {
+          const days = planDoc.billing_cycle === "yearly" ? 365
+            : planDoc.billing_cycle === "monthly" ? 30
+            : 30;
+          resolvedEndDate = new Date(resolvedStartDate.getTime() + days * 24 * 60 * 60 * 1000);
+        }
+      } catch (_) {}
+    }
+
     const tenant = await Tenant.create({
       name,
       slug,
@@ -152,8 +171,8 @@ export const createTenant = async (req, res) => {
       createdBy: req.superAdmin.id,
       plan_id: actualPlanId,
       plan_status: plan_status || "trial",
-      plan_start_date: plan_start_date || null,
-      plan_end_date: plan_end_date || null,
+      plan_start_date: resolvedStartDate,
+      plan_end_date: resolvedEndDate,
     });
 
     try {
@@ -649,7 +668,7 @@ export const approveUpgradeRequest = async (req, res) => {
     request.status = "approved";
     await request.save();
 
-    // 5. Send Upgrade activation email with generated credentials
+    // 5. Send Upgrade activation email with generated credentials + plan summary
     const loginUrl = `${process.env.FRONTEND_URL}/${tenant.slug}/login`;
     sendEmail({
       to: tenant.adminEmail,
@@ -663,6 +682,27 @@ export const approveUpgradeRequest = async (req, res) => {
         loginUrl,
       }),
     }).catch((emailErr) => console.error("Upgrade activation email failed:", emailErr.message));
+
+    // Send plan summary email with start/end dates
+    const fmt = (d) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+    const price = plan.billing_cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
+    sendPlanEmail({
+      to: tenant.adminEmail,
+      vars: {
+        adminName: tenant.adminName,
+        planName: plan.plan_name,
+        planType: plan.plan_type,
+        price,
+        currency: plan.currency,
+        billingCycle: plan.billing_cycle,
+        maxUsers: plan.max_users_per_tenant,
+        description: plan.description,
+        startDate: fmt(tenant.plan_start_date),
+        endDate: fmt(tenant.plan_end_date),
+        loginUrl,
+        isTrial: false,
+      },
+    }).catch((emailErr) => console.error("Plan summary email failed:", emailErr.message));
 
     emitToSuperAdmin("upgrade_request_resolved", { id: req.params.id });
     res.json({ success: true, message: "Upgrade request approved successfully." });
