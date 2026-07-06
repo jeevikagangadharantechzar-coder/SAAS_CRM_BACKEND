@@ -133,25 +133,38 @@ export default {
 
       const userIds = targetUsers.map(u => u._id);
       const [allLeads, allDeals] = await Promise.all([
-        Lead.find({ assignTo: { $in: userIds } }).select("_id assignTo createdAt").lean(),
+        Lead.find({ assignTo: { $in: userIds } }).select("_id assignTo createdAt status").lean(),
         Deal.find({ assignedTo: { $in: userIds } }).select("_id assignedTo leadId createdAt convertedAt stage").lean(),
       ]);
 
       const leadsMap = {}; const dealsMap = {};
       targetUsers.forEach(u => { const id = u._id.toString(); leadsMap[id] = {range:0,cumulative:0}; dealsMap[id] = {rangeQ:0,rangeC:0,cumQ:0,cumC:0}; });
-      allLeads.forEach(lead => { const id = lead.assignTo?.toString(); if (!leadsMap[id]) return; leadsMap[id].cumulative++; const d = new Date(lead.createdAt); if (d >= rangeStart && d <= rangeEnd) leadsMap[id].range++; });
+      allLeads.forEach(lead => { 
+        const id = lead.assignTo?.toString(); 
+        if (!leadsMap[id]) return; 
+        leadsMap[id].cumulative++; 
+        const d = new Date(lead.createdAt); 
+        const isUnfinished = lead.status?.toLowerCase() !== "converted";
+        if (d >= rangeStart && d <= rangeEnd) {
+          leadsMap[id].range++; 
+        } else if (d < rangeStart && isUnfinished) {
+          leadsMap[id].range++;
+        }
+      });
       allDeals.forEach(deal => {
         const id = deal.assignedTo?.toString(); if (!dealsMap[id]) return;
-        dealsMap[id].cumQ++; const d = new Date(deal.createdAt); if (d >= rangeStart && d <= rangeEnd) dealsMap[id].rangeQ++;
-        if (deal.convertedAt) { dealsMap[id].cumC++; const cd = new Date(deal.convertedAt); if (cd >= rangeStart && cd <= rangeEnd) dealsMap[id].rangeC++; }
+        if (deal.stage === "Qualification") {
+          dealsMap[id].cumQ++; const d = new Date(deal.createdAt); if (d >= rangeStart && d <= rangeEnd) dealsMap[id].rangeQ++;
+          if (deal.convertedAt) { dealsMap[id].cumC++; const cd = new Date(deal.convertedAt); if (cd >= rangeStart && cd <= rangeEnd) dealsMap[id].rangeC++; }
+        }
       });
 
       const rows = targetUsers.map(user => {
         const id = user._id.toString(); const lm = leadsMap[id]; const dm = dealsMap[id];
         const loginHistory = user.loginHistory || [];
-        const rangeTotalLeads = lm.range + dm.rangeQ;
+        const rangeTotalLeads = lm.range;
         const rangeConvRate   = rangeTotalLeads > 0 ? (dm.rangeC / rangeTotalLeads) * 100 : 0;
-        const cumTotalLeads   = lm.cumulative + dm.cumQ;
+        const cumTotalLeads   = lm.cumulative;
         const cumConvRate     = cumTotalLeads > 0 ? (dm.cumC / cumTotalLeads) * 100 : 0;
         const rangeLoginDays  = new Set(loginHistory.filter(l => { if (!l?.login) return false; const d = new Date(l.login); return d >= rangeStart && d <= rangeEnd; }).map(l => new Date(l.login).toDateString()));
         const { status, statusIcon, statusColor } = getStatus(rangeConvRate);
