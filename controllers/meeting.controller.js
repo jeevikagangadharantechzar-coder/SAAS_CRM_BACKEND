@@ -229,10 +229,16 @@ export default {
         creatorEmail:    user.email,
       });
 
-      const creatorName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email;
-      sendMeetingInvites(meeting, creatorName, user.email).catch((e) =>
-        console.error("Invite emails failed:", e.message, e)
-      );
+      // Google Calendar already emails attendees itself (sendUpdates: "all"
+      // above), sent from the organizer's own connected Google account. Only
+      // Zoom has no built-in invite email, so only send our own for that case
+      // — otherwise attendees get the invite twice.
+      if (meetingProvider === "zoom") {
+        const creatorName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email;
+        sendMeetingInvites(meeting, creatorName, user.email).catch((e) =>
+          console.error("Invite emails failed:", e.message, e)
+        );
+      }
 
       res.status(201).json({ success: true, meeting });
     } catch (err) {

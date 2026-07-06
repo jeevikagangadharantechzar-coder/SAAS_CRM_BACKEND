@@ -28,6 +28,7 @@ router.get(
 //update the invoice
 router.put(
   "/updateInvoice/:id",
+  protect,
   indexController.invoiceController.updateInvoice
 );
 //delete the invoice by id
