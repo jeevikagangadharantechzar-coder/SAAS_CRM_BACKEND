@@ -19,6 +19,7 @@ import linkedinWebhookRoutes    from "./routes/linkedinWebhook.routes.js";
 // Multi-tenant SaaS imports
 import superAdminRoutes from "./routes/superAdmin.js";
 import subscriptionPlanRoutes from "./routes/superadmin/subscriptionPlan.routes.js";
+import freeTrialRoutes from "./routes/freeTrial.routes.js";
 import tenantApiRouter from "./routes/tenantRouter.js";
 import { resolveTenant } from "./middlewares/resolveTenant.js";
 
@@ -26,6 +27,7 @@ import { resolveTenant } from "./middlewares/resolveTenant.js";
 import { startFollowUpCron } from "./controllers/followups.cron.js";
 import gmailRoutes from "./routes/gmailRoutes.js";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
+import zoomAuthRoutes from "./routes/zoomAuthRoutes.js";
 
 import salesRoutes from "./routes/salesReports.routes.js";
 import connectDB from "./config/db.js";
@@ -43,6 +45,12 @@ import notificationRoutes from "./routes/notification.routes.js";
 
 // Unified notification cron
 import "./cron/notificationCron.js";
+
+// Target management cron (separate from the generic notification cron)
+import "./cron/targetCron.js";
+
+// Task management due-date reminder cron
+import "./cron/taskCron.js";
 
 // Socket
 import { initSocket } from "./realtime/socket.js";
@@ -71,7 +79,8 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
   "https://uenjoytours.cloud",
   "https://crm.stagingzar.com",
-  "https://sales.stagingzar.com"
+  "https://sales.stagingzar.com",
+  "https://crm.techzarinfo.cloud"
 ];
 
 if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
@@ -158,6 +167,7 @@ app.use("/webhooks/linkedin", linkedinWebhookRoutes);
 // ─────────────────────────────────────────────
 app.use("/superadmin", superAdminRoutes);
 app.use("/api/superadmin/subscription-plans", subscriptionPlanRoutes);
+app.use("/api/free-trial", freeTrialRoutes);
 app.use("/:tenantSlug/api", resolveTenant, tenantApiRouter);
 
 // ─────────────────────────────────────────────
@@ -168,6 +178,7 @@ app.use("/api/files", fileRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/gmail", gmailRoutes);
 app.use("/api/google-auth", googleAuthRoutes);
+app.use("/api/zoom-auth", zoomAuthRoutes);
 app.use("/api/deals", lostDealRoutes);
 app.use("/api/cltv", clientLTVRoutes);
 app.use("/api/calllogs", callLogRoutes);

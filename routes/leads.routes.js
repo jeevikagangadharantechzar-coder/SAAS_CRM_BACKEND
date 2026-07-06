@@ -12,6 +12,9 @@ router.use(protect);
 router.get("/getAllLead", indexControllers.leadsController.getLeads);
 router.get("/recent", indexControllers.leadsController.getRecentLeads);
 router.get("/pending", indexControllers.leadsController.getPendingLeads);
+router.get("/missed-followups", indexControllers.leadsController.getMissedFollowUps);
+router.get("/rejected", adminOnly, indexControllers.leadsController.getRejectedLeads);
+router.post("/rejected/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteRejectedLeads);
 
 //  CREATE ROUTE
 router.post(
@@ -28,7 +31,9 @@ router.delete("/deleteLead/:id", adminOrAssigned, indexControllers.leadsControll
 //  ACTION ROUTES (these have :id but are still specific action paths)(convert, show status, create follow-up)
 router.patch("/:id/convert", adminOrAssigned, indexControllers.leadsController.convertLeadToDeal);
 router.patch("/:id/status", adminOrAssigned, indexControllers.leadsController.updateLeadStatus);
+router.patch("/:id/reject", adminOnly, indexControllers.leadsController.rejectLead);
 router.patch("/:id/followup", protect, indexControllers.leadsController.updateFollowUpDate);
+router.post("/:id/followup-notes", adminOrAssigned, indexControllers.leadsController.addFollowUpNote);
 
 //  GENERIC ROUTE WITH :id LAST (catch-all for /:id)
 router.get("/getLead/:id", adminOrAssigned, indexControllers.leadsController.getLeadById);

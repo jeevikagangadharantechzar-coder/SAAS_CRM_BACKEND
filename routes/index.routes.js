@@ -22,6 +22,7 @@ import settingsRoutes from "./settingsRoutes.js";
 import emailRoutes from "./email.routes.js"
 import gmailRoutes from "./gmailRoutes.js"; 
 import googleAuthRoutes from "./googleAuthRoutes.js";
+import zoomAuthRoutes from "./zoomAuthRoutes.js";
 import linkedinRoutes from "./linkedin.routes.js";
 import justdialRoutes from "./justdial.routes.js";
 import ninetyNineAcresRoutes from "./99acres.routes.js";
@@ -45,7 +46,8 @@ router.use("/dashboard", adminDashboard);
 // router.use("/notification", notificationRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/gmail", gmailRoutes); 
-router.use("/google-auth", googleAuthRoutes); 
+router.use("/google-auth", googleAuthRoutes);
+router.use("/zoom-auth", zoomAuthRoutes);
 router.use("/sales", salesRoutes);
 router.use("/ai", aiRoutes);
 router.use("/streak", streakRoutes); 

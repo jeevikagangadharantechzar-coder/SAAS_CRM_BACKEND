@@ -18,6 +18,24 @@ const settingsSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+
+    address:     { type: String, default: "" },
+    phone:       { type: String, default: "" },
+    email:       { type: String, default: "" },
+    taxIdLabel:  { type: String, default: "Tax ID" },
+    taxId:       { type: String, default: "" },
+
+    bankDetails: {
+      accountName:   { type: String, default: "" },
+      accountNumber: { type: String, default: "" },
+      bankName:      { type: String, default: "" },
+      ifscOrSwift:   { type: String, default: "" },
+      branch:        { type: String, default: "" },
+    },
+
+    termsAndConditions: { type: String, default: "Payment due within 30 days." },
+
+    invoiceSenderEmail: { type: String, default: null },
   },
   { timestamps: true }
 );

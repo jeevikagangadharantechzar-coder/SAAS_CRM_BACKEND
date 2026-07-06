@@ -3,15 +3,43 @@ const VALID_STATUSES     = ["active", "inactive", "archived"];
 const VALID_CYCLES       = ["monthly", "yearly", "one_time"];
 const PLAN_CODE_REGEX    = /^[a-z0-9_]+$/;
 
+const VALID_FEATURE_KEYS = [
+  "dashboard", "leads", "create_lead", "deals_all", "create_deal", "deals_pipeline",
+  "invoices", "proposal", "activities", "activities_calendar", "activities_list",
+  "users_roles", "admin_access", "email_chat", "email_campaigns", "whatsapp_chat",
+  "reports", "analytics", "settings", "streak_leaderboard", "assigned_tasks", "task_management",
+  "target_management",
+];
+
 const fail = (res, message) =>
   res.status(400).json({ success: false, error: message, code: "VALIDATION_ERROR" });
+
+const validateFeatures = (features) => {
+  if (features === undefined) return null;
+  if (typeof features !== "object" || features === null || Array.isArray(features)) {
+    return "features must be an object of feature keys mapped to booleans";
+  }
+  for (const [key, value] of Object.entries(features)) {
+    if (!VALID_FEATURE_KEYS.includes(key)) {
+      return `Unknown feature key: ${key}`;
+    }
+    if (typeof value !== "boolean") {
+      return `features.${key} must be a boolean`;
+    }
+  }
+  return null;
+};
 
 export const validateCreatePlan = (req, res, next) => {
   const {
     plan_name, plan_code, plan_type, status,
     price_monthly, price_yearly, currency,
     billing_cycle, max_tenants, max_users_per_tenant,
+    features,
   } = req.body;
+
+  const featuresError = validateFeatures(features);
+  if (featuresError) return fail(res, featuresError);
 
   if (!plan_name || typeof plan_name !== "string" ||
       plan_name.trim().length < 2 || plan_name.trim().length > 100) {
@@ -73,7 +101,11 @@ export const validateUpdatePlan = (req, res, next) => {
     plan_name, plan_code, plan_type, status,
     price_monthly, price_yearly, currency,
     billing_cycle, max_tenants, max_users_per_tenant,
+    features,
   } = req.body;
+
+  const featuresError = validateFeatures(features);
+  if (featuresError) return fail(res, featuresError);
 
   if (plan_name !== undefined &&
       (typeof plan_name !== "string" ||

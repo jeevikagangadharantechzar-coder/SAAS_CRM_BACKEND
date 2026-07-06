@@ -39,6 +39,9 @@ import {
   clearGmailSession,
   getEmailFromRequest,
 } from "../middlewares/gmail.middleware.js";
+import { getTenantModels } from "../models/tenant/index.js";
+import { getTenantDB } from "../config/tenantDB.js";
+import SettingsLegacy from "../models/Settings.js";
 
 const router = express.Router();
 
@@ -72,7 +75,11 @@ router.get("/auth-url", (req, res) => {
       host?.includes("localhost") || host?.includes("127.0.0.1")
         ? process.env.GMAIL_REDIRECT_URI
         : process.env.GMAIL_LIVE_REDIRECT_URI;
-    res.json({ success: true, url: generateAuthUrl(redirectUri) });
+    // GMAIL_REDIRECT_URI now points at the shared /google-auth callback (see
+    // googleAuth.controller.js), which branches on this purpose to know this
+    // is the inbox-connect flow rather than Calendar or invoice-connect.
+    const state = Buffer.from(JSON.stringify({ purpose: "gmail-inbox" })).toString("base64url");
+    res.json({ success: true, url: generateAuthUrl(redirectUri, state) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -101,9 +108,16 @@ router.get("/auth-status", async (req, res) => {
  * After exchangeCodeForTokens() we call setGmailSession() which writes a
  * signed httpOnly cookie.  From this point on, all API calls are keyed to
  * that cookie — the client never needs to send an email parameter.
+ *
+ * Also doubles as the callback for "Connect Gmail" invoice sending (see
+ * settingsController.getInvoiceGmailConnectUrl) — Google only redirects to
+ * pre-registered URIs, so both flows share this one route and branch on the
+ * "purpose" encoded in `state`. That connect step has no user session at this
+ * point (Google redirected the bare browser here), so tenant identity has to
+ * travel inside `state` rather than coming from a JWT.
  */
 router.get("/oauth2callback", async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
   const host = req.get("host");
   const isLocal = host?.includes("localhost") || host?.includes("127.0.0.1");
   const frontendUrl = isLocal
@@ -113,36 +127,63 @@ router.get("/oauth2callback", async (req, res) => {
     ? process.env.GMAIL_REDIRECT_URI
     : process.env.GMAIL_LIVE_REDIRECT_URI;
 
+  let statePayload = null;
+  if (state) {
+    try { statePayload = JSON.parse(Buffer.from(state, "base64url").toString()); } catch { /* not a recognized state — treat as inbox connect */ }
+  }
+  const isInvoiceConnect = statePayload?.purpose === "invoice";
+  const returnPath = isInvoiceConnect
+    ? (statePayload.tenantSlug ? `/${statePayload.tenantSlug}/settings` : "/settings")
+    : "/emailchat";
+  const connectedParam = isInvoiceConnect ? "gmail_invoice_connected" : "gmail_connected";
+
   if (error) {
     const msg =
       error === "access_denied" ? "App not verified." : "Authorization failed.";
     return res.redirect(
-      `${frontendUrl}/emailchat?gmail_error=1&error=${encodeURIComponent(msg)}`
+      `${frontendUrl}${returnPath}?gmail_error=1&error=${encodeURIComponent(msg)}`
     );
   }
   if (!code)
     return res.redirect(
-      `${frontendUrl}/emailchat?gmail_error=1&error=No+authorization+code`
+      `${frontendUrl}${returnPath}?gmail_error=1&error=No+authorization+code`
     );
 
   try {
     const result = await exchangeCodeForTokens(code, redirectUri);
     const email  = result.email;
 
-    // bind the authenticated email to a server-side session
-    setGmailSession(res, email);
+    if (isInvoiceConnect) {
+      // Persist against the tenant's Settings doc instead of a session cookie —
+      // this connection needs to apply for every user in that tenant, not just
+      // whoever's browser happened to click "Connect".
+      let Settings;
+      if (statePayload.dbName) {
+        const tenantConn = await getTenantDB(statePayload.dbName);
+        Settings = getTenantModels(tenantConn).Settings;
+      } else {
+        Settings = SettingsLegacy;
+      }
+      let settings = await Settings.findOne();
+      if (!settings) settings = new Settings({});
+      settings.invoiceSenderEmail = email;
+      await settings.save();
+    } else {
+      // bind the authenticated email to a server-side session
+      setGmailSession(res, email);
+    }
 
     // Email is passed in the URL only so the frontend can display a
     // welcome message — it is NOT trusted for auth decisions.
     return res.redirect(
-      `${frontendUrl}/emailchat?gmail_connected=1&email=${encodeURIComponent(email)}`
+      `${frontendUrl}${returnPath}?${connectedParam}=1&email=${encodeURIComponent(email)}`
     );
   } catch (err) {
     let msg = err.message;
     if (err.message?.includes("invalid_grant"))
       msg = "Authorization code expired. Please reconnect.";
     return res.redirect(
-      `${frontendUrl}/emailchat?gmail_error=1&error=${encodeURIComponent(msg)}`
+      `${frontendUrl}${returnPath}?gmail_error=1&error=${encodeURIComponent(msg)}`
     );
   }
 });

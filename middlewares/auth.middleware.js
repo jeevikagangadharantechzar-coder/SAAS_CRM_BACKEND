@@ -52,7 +52,14 @@ export const protect = async (req, res, next) => {
 
     const tenant = req.tenant;
     if (tenant && tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)) {
-      return res.status(401).json({ message: "Subscription expired. Access restricted." });
+      const isTrial = tenant.plan_status === "trial";
+      return res.status(401).json({
+        message: isTrial
+          ? "Your 14 days free trial has ended. Please upgrade your plan to continue using the CRM."
+          : "Subscription expired. Access restricted.",
+        trialExpired: isTrial,
+        planExpired: true,
+      });
     }
 
     // Verify token version matches database version to support logout invalidation
@@ -87,7 +94,6 @@ export const adminCreateOnly = (req, res, next) => {
 export const adminOrAssigned = async (req, res, next) => {
   try {
     const roleName = req.user.role.name?.toLowerCase();
-    if (roleName === "admin") return next();
 
     const Lead = req.tenantDB
       ? getTenantModels(req.tenantDB).Lead
@@ -100,7 +106,27 @@ export const adminOrAssigned = async (req, res, next) => {
       return res.status(404).json({ message: "Lead not found" });
     }
 
+    // Rejected/Converted leads are terminal — read-only for everyone, Admin
+    // included — except DELETE, which Admin can always use to permanently
+    // remove a rejected lead (e.g. from the dedicated Rejected Leads page).
+    const isTerminal = lead.status === "Rejected" || lead.status === "Converted";
+    const isAdminDelete = roleName === "admin" && req.method === "DELETE";
+    if (isTerminal && req.method !== "GET" && !isAdminDelete) {
+      return res.status(403).json({
+        message: `This lead is ${lead.status.toLowerCase()} and can no longer be edited.`,
+      });
+    }
+
+    if (roleName === "admin") return next();
+
     if (lead.assignTo && lead.assignTo.toString() === req.user._id.toString()) {
+      // Disabled (overdue, pending admin reassignment) leads are read-only for
+      // the sales person — GET is fine, any write is blocked until reassigned.
+      if (lead.isActive === false && req.method !== "GET") {
+        return res.status(403).json({
+          message: "This lead is disabled pending admin reassignment.",
+        });
+      }
       return next();
     }
 
@@ -115,7 +141,6 @@ export const adminOrAssigned = async (req, res, next) => {
 export const adminOrAssignedToDeal = async (req, res, next) => {
   try {
     const roleName = req.user.role.name?.toLowerCase();
-    if (roleName === "admin") return next();
 
     const Deal = req.tenantDB
       ? getTenantModels(req.tenantDB).Deal
@@ -128,7 +153,27 @@ export const adminOrAssignedToDeal = async (req, res, next) => {
       return res.status(404).json({ message: "Deal not found" });
     }
 
+    // Rejected/Closed Won deals are terminal — read-only for everyone, Admin
+    // included — except DELETE, which Admin can always use to permanently
+    // remove a rejected deal (e.g. from the dedicated Reject Deals page).
+    const isTerminal = deal.stage === "Rejected" || deal.stage === "Closed Won";
+    const isAdminDelete = roleName === "admin" && req.method === "DELETE";
+    if (isTerminal && req.method !== "GET" && !isAdminDelete) {
+      return res.status(403).json({
+        message: `This deal is ${deal.stage.toLowerCase()} and can no longer be edited.`,
+      });
+    }
+
+    if (roleName === "admin") return next();
+
     if (deal.assignedTo && deal.assignedTo.toString() === req.user._id.toString()) {
+      // Disabled (overdue, pending admin reassignment) deals are read-only for
+      // the sales person — GET is fine, any write is blocked until reassigned.
+      if (deal.isActive === false && req.method !== "GET") {
+        return res.status(403).json({
+          message: "This deal is disabled pending admin reassignment.",
+        });
+      }
       return next();
     }
 

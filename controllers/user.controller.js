@@ -86,6 +86,7 @@ const getMe = async (req, res) => {
       if (!user) return res.status(404).json({ message: "User not found" });
 
       let tenantLimit = null;
+      let planFeatures = null;
       if (req.tenant) {
         const tenant = await Tenant.findById(req.tenant._id).populate("plan_id");
         if (tenant && tenant.plan_id) {
@@ -94,6 +95,7 @@ const getMe = async (req, res) => {
             max_users: tenant.plan_id.max_users_per_tenant,
             plan_end_date: tenant.plan_end_date,
           };
+          planFeatures = tenant.plan_id.features;
         }
       }
 
@@ -104,6 +106,8 @@ const getMe = async (req, res) => {
         profileImage: user.profileImage,
         role: user.role,
         tenantLimit,
+        currency:user.currency || null,
+        planFeatures,
       });
     } catch (err) {
       res.status(500).json({ message: err.message });
@@ -196,10 +200,14 @@ const loginUser = async (req, res) => {
         return res.status(401).json({ success: false, message: "Invalid email or password" });
 
       if (tenant && (tenant.plan_status === "expired" || (tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)))) {
+        const isTrial = tenant.plan_status === "trial";
         return res.status(403).json({
           success: false,
           planExpired: true,
-          message: "Your subscription validity has expired. Please contact superadmin to renew."
+          trialExpired: isTrial,
+          message: isTrial
+            ? "Your 14 days free trial has ended. Please upgrade your plan to continue using the CRM."
+            : "Your subscription validity has expired. Please contact superadmin to renew."
         });
       }
 
@@ -281,13 +289,11 @@ const logoutUser = async (req, res) => {
 const updatePassword = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
-      const { email, currentPassword, newPassword } = req.body;
+      const { currentPassword, newPassword } = req.body;
       const userId = req.user.id;
 
       const user = await User.findById(userId).select("+password");
       if (!user) return res.status(404).json({ message: "User not found" });
-      if (user.email !== email)
-        return res.status(400).json({ message: "Email does not match your account" });
       if (!(await userService.matchPassword(currentPassword, user.password)))
         return res.status(401).json({ message: "Current password is incorrect" });
 
