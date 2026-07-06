@@ -41,6 +41,11 @@ export default {
       if (selectedDealId) {
         dealInfo = await Deal.findById(selectedDealId).lean();
         if (!dealInfo) return res.status(404).json({ error: "Deal not found" });
+        // Only block on creation — an existing proposal shouldn't fail to save
+        // just because its linked deal moved to Closed Won after the fact.
+        if (!id && dealInfo.stage === "Closed Won") {
+          return res.status(400).json({ error: "Cannot create a proposal for a deal that is already Closed Won." });
+        }
       }
 
       const attachments = (req.files || []).map(file => ({ name: file.originalname, path: file.path, type: file.mimetype, size: file.size, uploadedAt: new Date() }));
