@@ -17,6 +17,7 @@ import {
   getUpgradeHistory,
   updateTenant,
 } from "../controllers/tenant.controller.js";
+import { listFreeTrialSignups, deleteFreeTrialSignup } from "../controllers/freeTrial.controller.js";
 
 const router = express.Router();
 
@@ -41,5 +42,9 @@ router.patch("/api/tenants/:id/toggle",   superAdminAuth, toggleTenant);
 router.delete("/api/tenants/:id",         superAdminAuth, deleteTenant);
 router.get("/api/dashboard/stats",        superAdminAuth, getDashboardStats);
 router.post("/api/tenants/:id/impersonate", superAdminAuth, impersonateTenant);
+
+// Free trial signup log
+router.get("/api/free-trials",             superAdminAuth, listFreeTrialSignups);
+router.delete("/api/free-trials/:id",      superAdminAuth, deleteFreeTrialSignup);
 
 export default router;

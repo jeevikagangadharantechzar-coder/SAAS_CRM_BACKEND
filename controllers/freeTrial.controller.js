@@ -123,6 +123,68 @@ function trialWelcomeEmailHtml({ name, email, password, businessName, loginUrl, 
 </html>`;
 }
 
+export const listFreeTrialSignups = async (req, res) => {
+  try {
+    const { search = "", period = "", startDate, endDate, page = 1, limit = 10 } = req.query;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
+
+    const filter = {};
+
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filter.$or = [{ name: regex }, { email: regex }, { businessName: regex }, { slug: regex }];
+    }
+
+    const now = new Date();
+    if (period === "weekly") {
+      filter.createdAt = { $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) };
+    } else if (period === "monthly") {
+      filter.createdAt = { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) };
+    } else if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(`${startDate}T00:00:00.000Z`);
+      if (endDate) filter.createdAt.$lte = new Date(`${endDate}T23:59:59.999Z`);
+    }
+
+    const [total, signups] = await Promise.all([
+      FreeTrialSignup.countDocuments(filter),
+      FreeTrialSignup.find(filter)
+        .populate("tenant", "isActive plan_status plan_end_date slug")
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum),
+    ]);
+
+    res.json({
+      success: true,
+      data: signups,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.max(Math.ceil(total / limitNum), 1),
+      },
+    });
+  } catch (err) {
+    console.error("List free trial signups error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
+export const deleteFreeTrialSignup = async (req, res) => {
+  try {
+    const signup = await FreeTrialSignup.findByIdAndDelete(req.params.id);
+    if (!signup) {
+      return res.status(404).json({ success: false, error: "Signup record not found" });
+    }
+    res.json({ success: true, message: "Free trial signup record deleted" });
+  } catch (err) {
+    console.error("Delete free trial signup error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
 export const validateFreeTrialSignup = (req, res, next) => {
   const { name, email, password, businessName } = req.body;
 
