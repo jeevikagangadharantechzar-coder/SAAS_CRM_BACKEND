@@ -1,7 +1,10 @@
 import express from "express";
 import aiController from "../controllers/ai.controller.js";
 import { protect } from "../middlewares/auth.middleware.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 const router = express.Router();
+
+router.use(checkPlanFeature("chatbot"));
 
 // POST /api/ai/process
 router.post("/chat", protect, aiController.processMessage);

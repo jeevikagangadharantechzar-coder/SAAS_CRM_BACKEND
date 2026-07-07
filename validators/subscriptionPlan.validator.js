@@ -8,7 +8,7 @@ const VALID_FEATURE_KEYS = [
   "invoices", "proposal", "activities", "activities_calendar", "activities_list",
   "users_roles", "admin_access", "email_chat", "email_campaigns", "whatsapp_chat",
   "reports", "analytics", "settings", "streak_leaderboard", "assigned_tasks", "task_management",
-  "target_management",
+  "target_management", "meetings", "google_meet_sync", "zoom_meetings", "messages", "chatbot",
 ];
 
 const fail = (res, message) =>
