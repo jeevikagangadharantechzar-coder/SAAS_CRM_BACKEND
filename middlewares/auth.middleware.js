@@ -26,6 +26,22 @@ export const protect = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.SECRET_KEY);
 
+    // Confirm the tenant this token was issued for still exists before ever
+    // touching its database — otherwise a stale token for a deleted tenant
+    // silently recreates the dropped database on first write (login history,
+    // streak, etc.)
+    if (!req.tenant && decoded.dbName) {
+      if (decoded.tenantId) {
+        req.tenant = await Tenant.findById(decoded.tenantId);
+      } else {
+        req.tenant = await Tenant.findOne({ dbName: decoded.dbName });
+      }
+
+      if (!req.tenant) {
+        return res.status(401).json({ message: "This workspace no longer exists. Please sign in again." });
+      }
+    }
+
     // Resolve tenantDB from token payload if not already set by resolveTenant
     if (!req.tenantDB && decoded.dbName) {
       req.tenantDB = await getTenantDB(decoded.dbName);
@@ -39,15 +55,6 @@ export const protect = async (req, res, next) => {
 
     if (!req.user) {
       return res.status(401).json({ message: "User not found" });
-    }
-
-    // Check subscription plan expiration
-    if (!req.tenant) {
-      if (decoded.tenantId) {
-        req.tenant = await Tenant.findById(decoded.tenantId);
-      } else if (decoded.dbName) {
-        req.tenant = await Tenant.findOne({ dbName: decoded.dbName });
-      }
     }
 
     const tenant = req.tenant;

@@ -4,6 +4,7 @@ import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import NotificationLegacy from "../models/notification.model.js";
 import { initTargetSocket } from "./targetSocket.js";
+import Tenant from "../models/master/Tenant.js";
 
 const redisConfig = {
   host: "127.0.0.1",
@@ -64,13 +65,22 @@ const addUserSocket = async (userId, socket) => {
   connectedUsers[uid].push(socket);
   console.log("User connected:", uid);
 
-  // Resolve tenant-aware Notification model via dbName in handshake
+  // Resolve tenant-aware Notification model via dbName in handshake — but
+  // only if that tenant still exists. Otherwise a stale client-side token for
+  // a deleted tenant would silently recreate its dropped database on connect.
   let NotificationModel = NotificationLegacy;
   const { dbName } = socket.handshake.auth;
   if (dbName) {
     try {
-      const tenantConn = await getTenantDB(dbName);
-      NotificationModel = getTenantModels(tenantConn).Notification;
+      const tenant = await Tenant.findOne({ dbName });
+      if (tenant) {
+        const tenantConn = await getTenantDB(dbName);
+        NotificationModel = getTenantModels(tenantConn).Notification;
+      } else {
+        console.warn("Socket: rejected connection for deleted tenant dbName:", dbName);
+        socket.emit("session_invalid");
+        return;
+      }
     } catch (e) {
       console.warn("Socket: could not resolve tenant DB for notifications:", e.message);
     }
