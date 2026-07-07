@@ -1,34 +1,26 @@
-import Tenant from "../models/master/Tenant.js";
+import { getTenantPlanFeatures, isFeatureEnabled } from "../utils/planFeatures.js";
 
 /**
- * Blocks access to a route unless the tenant's current subscription plan has
- * the given feature enabled.
+ * Blocks access to a route (or an entire router, via router.use) unless the
+ * tenant's current subscription plan has the given feature enabled.
  *
  * Usage:
- *   router.get("/whatsapp/messages", checkPlanFeature("whatsapp_chat"), getMessages)
+ *   router.use(checkPlanFeature("leads"))
+ *   router.use(checkPlanFeature(["deals_all", "deals_pipeline"])) // enabled if ANY match
  *
  * featureKey must match one of the boolean keys on the SubscriptionPlan
- * `features` sub-schema (models/master/SubscriptionPlan.model.js).
- *
- * Not currently attached to any route — available for gating specific
- * endpoints as needed.
+ * `features` sub-schema (models/master/SubscriptionPlan.model.js). Adding a
+ * new gated feature only requires a new key there plus this one line on the
+ * relevant router — no other code needs to change.
  */
 const checkPlanFeature = (featureKey) => async (req, res, next) => {
   try {
-    const tenantId = req.tenantId || req.tenant?._id || req.user?.tenantId;
+    const features = await getTenantPlanFeatures(req);
 
-    // No tenant context in this request — skip the check
-    if (!tenantId) return next();
+    // No tenant context, no tenant record, or no plan assigned — allow by default
+    if (features === null) return next();
 
-    const tenant = await Tenant.findById(tenantId).populate("plan_id");
-
-    // No tenant record or no plan assigned — allow by default
-    if (!tenant || !tenant.plan_id) return next();
-
-    const isEnabled = tenant.plan_id.features?.[featureKey];
-
-    // undefined (legacy plans without this key saved) defaults to allowed
-    if (isEnabled === false) {
+    if (!isFeatureEnabled(features, featureKey)) {
       return res.status(403).json({
         success: false,
         error: "This feature is not included in your current subscription plan.",

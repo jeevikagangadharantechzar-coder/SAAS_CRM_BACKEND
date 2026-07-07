@@ -1,5 +1,6 @@
 import express from "express";
 import { protect } from "../middlewares/auth.middleware.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 import {
   createGroup,
   getGroups,
@@ -17,6 +18,7 @@ import {
 const router = express.Router();
 
 router.use(protect);
+router.use(checkPlanFeature("messages"));
 
 router.post("/",                              createGroup);
 router.get("/",                               getGroups);

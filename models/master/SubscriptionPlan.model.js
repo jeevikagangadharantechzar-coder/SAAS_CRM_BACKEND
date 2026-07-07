@@ -30,6 +30,11 @@ const planFeaturesSchema = new mongoose.Schema(
     assigned_tasks:      { type: Boolean, default: true },
     task_management:     { type: Boolean, default: true },
     target_management:   { type: Boolean, default: true },
+    meetings:            { type: Boolean, default: true },
+    google_meet_sync:    { type: Boolean, default: true },
+    zoom_meetings:       { type: Boolean, default: true },
+    messages:            { type: Boolean, default: true },
+    chatbot:             { type: Boolean, default: true },
   },
   { _id: false }
 );

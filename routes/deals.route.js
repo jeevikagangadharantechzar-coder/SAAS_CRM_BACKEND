@@ -6,11 +6,15 @@ import {
   adminOrAssignedToDeal,
 } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
 
 // All routes are protected
 router.use(protect);
+// Pipeline view is just a different frontend lens on the same deals API, so
+// either "deals_all" or "deals_pipeline" being enabled is enough to pass here.
+router.use(checkPlanFeature(["deals_all", "deals_pipeline"]));
 
 // Convert lead → deal
 router.post(
