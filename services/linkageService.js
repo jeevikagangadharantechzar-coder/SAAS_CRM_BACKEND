@@ -9,9 +9,12 @@ export async function getLinkage(models, { leadId, dealId }) {
   const { Task, Target, Deal } = models;
   const taskOr = [];
   const targetOr = [];
-  if (leadId) { taskOr.push({ leadRef: leadId }); targetOr.push({ linkedLeads: leadId }); }
+  // Match both the legacy singular field and the newer leadRefs/dealRefs
+  // array — a lead/deal can be task-linked without being the array's
+  // current "primary" (most-recently-linked) item.
+  if (leadId) { taskOr.push({ leadRef: leadId }, { leadRefs: leadId }); targetOr.push({ linkedLeads: leadId }); }
   if (dealId) {
-    taskOr.push({ dealRef: dealId });
+    taskOr.push({ dealRef: dealId }, { dealRefs: dealId });
     targetOr.push({ linkedDeals: dealId });
     // A deal born from converting a linked lead never gets its own _id added
     // to linkedDeals/dealRef — it's only reachable via its parent lead. Without
@@ -20,7 +23,7 @@ export async function getLinkage(models, { leadId, dealId }) {
     if (Deal) {
       const dealDoc = await Deal.findById(dealId).select("leadId").lean();
       if (dealDoc?.leadId) {
-        taskOr.push({ leadRef: dealDoc.leadId });
+        taskOr.push({ leadRef: dealDoc.leadId }, { leadRefs: dealDoc.leadId });
         targetOr.push({ linkedLeads: dealDoc.leadId });
       }
     }
@@ -40,15 +43,17 @@ export async function getLinkage(models, { leadId, dealId }) {
 // once without N+1 queries.
 export async function getBulkLinkage(models) {
   const { Task, Target, Deal } = models;
-  const [taskLeadIds, taskDealIds, targetLeadIds, targetDealIds] = await Promise.all([
+  const [taskLeadIds, taskLeadIdsArr, taskDealIds, taskDealIdsArr, targetLeadIds, targetDealIds] = await Promise.all([
     Task ? Task.distinct("leadRef", { leadRef: { $ne: null }, archived: { $ne: true } }) : [],
+    Task ? Task.distinct("leadRefs", { archived: { $ne: true } }) : [],
     Task ? Task.distinct("dealRef", { dealRef: { $ne: null }, archived: { $ne: true } }) : [],
+    Task ? Task.distinct("dealRefs", { archived: { $ne: true } }) : [],
     Target ? Target.distinct("linkedLeads") : [],
     Target ? Target.distinct("linkedDeals") : [],
   ]);
 
-  const taskLeadIdSet = new Set(taskLeadIds.map(String));
-  const taskDealIdSet = new Set(taskDealIds.map(String));
+  const taskLeadIdSet = new Set([...taskLeadIds, ...taskLeadIdsArr].map(String));
+  const taskDealIdSet = new Set([...taskDealIds, ...taskDealIdsArr].map(String));
   const targetLeadIdSet = new Set(targetLeadIds.map(String));
   const targetDealIdSet = new Set(targetDealIds.map(String));
 

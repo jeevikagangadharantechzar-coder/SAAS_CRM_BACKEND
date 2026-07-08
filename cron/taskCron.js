@@ -17,7 +17,7 @@ async function createNotification(Notification, { userId, title, message, type, 
   return notif;
 }
 
-const getAdminIds = async (User, Role) => {
+export const getAdminIds = async (User, Role) => {
   const adminRole = await Role.findOne({ name: "Admin" }).lean();
   if (!adminRole) return [];
   const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id").lean();
@@ -68,7 +68,7 @@ const sendReminder = async (t, adminIds, Task, Notification, tomorrow) => {
   await Task.findByIdAndUpdate(t._id, { reminderSentAt: new Date() });
 };
 
-const sendDueToday = async (t, adminIds, Task, Notification, today) => {
+export const sendDueToday = async (t, adminIds, Task, Notification, today) => {
   const salesName = `${t.assignedTo.firstName} ${t.assignedTo.lastName}`;
   const linked = linkedItemLine(t);
   const linkedMeta = buildLinkedMeta(t);
@@ -132,6 +132,129 @@ const processTasks = async (models, tenantDB) => {
   }
 };
 
+// ── Per-lead/deal due-date reminders ────────────────────────────────────
+// A newly-linked lead/deal added during a Task edit can carry its own due
+// date (task.leadDueDates/task.dealDueDates, set in TaskManagement.jsx's
+// edit modal) separate from the task's own dueDate above. Same
+// tomorrow/due-today windows and one-shot-guard idea as processTasks above,
+// just scoped per linked item instead of per task — entirely additive, never
+// touches or interacts with the task-level reminderSentAt/dueTodaySentAt
+// guards, and does nothing at all for a task with no per-item due dates set.
+const sendItemReminder = async (t, itemId, isDeal, name, adminIds, Task, Notification, tomorrow, sentAtField) => {
+  const salesName = `${t.assignedTo.firstName} ${t.assignedTo.lastName}`;
+  const kind = isDeal ? "deal" : "lead";
+  const line = `${isDeal ? "Deal" : "Lead"}: ${name}`;
+  // "Lead"/"Deal" Deadline Tomorrow — same naming convention as the task's own
+  // "Task Deadline Tomorrow" title, instead of the generic "Item" wording.
+  const title = isDeal ? "Deal Deadline Tomorrow" : "Lead Deadline Tomorrow";
+  const meta = { taskId: String(t._id), taskReminder: true, itemDueReminder: true, linkedType: kind, linkedId: String(itemId), linkedName: name };
+
+  const salesMsg = `⏰ Tomorrow (${tomorrow.toDateString()}) is the due date for ${line} on your task "${t.title}" — please finish it before the deadline!`;
+  await createNotification(Notification, { userId: t.assignedTo._id, title, message: salesMsg, type: "task", meta });
+
+  const adminMsg = `⏰ Reminder: tomorrow (${tomorrow.toDateString()}) is the due date for ${salesName}'s ${line.toLowerCase()} on task "${t.title}".`;
+  for (const adminId of adminIds) {
+    // needsReassign: true — same Reassign button + flow the task's own
+    // due-date reminder notification already gives Admin (reassignTask
+    // endpoint reassigns the whole task, transferring its linked leads/deals
+    // and notifying both the new assignee and the sales person who
+    // previously held them).
+    await createNotification(Notification, { userId: adminId, title, message: adminMsg, type: "task", meta: { ...meta, salesName, needsReassign: true } });
+  }
+
+  await Task.findByIdAndUpdate(t._id, { $set: { [`${sentAtField}.${itemId}`]: new Date() } });
+};
+
+export const sendItemDueToday = async (t, itemId, isDeal, name, adminIds, Task, Notification, today, sentAtField) => {
+  const salesName = `${t.assignedTo.firstName} ${t.assignedTo.lastName}`;
+  const kind = isDeal ? "deal" : "lead";
+  const line = `${isDeal ? "Deal" : "Lead"}: ${name}`;
+  const title = isDeal ? "Deal Due Today" : "Lead Due Today";
+  const meta = { taskId: String(t._id), taskDueToday: true, itemDueToday: true, linkedType: kind, linkedId: String(itemId), linkedName: name };
+
+  const salesMsg = `🚨 Today (${today.toDateString()}) is the due date for ${line} on your task "${t.title}".`;
+  await createNotification(Notification, { userId: t.assignedTo._id, title, message: salesMsg, type: "task", meta });
+
+  const adminMsg = `🚨 Today is the due date for ${salesName}'s ${line.toLowerCase()} on task "${t.title}".`;
+  for (const adminId of adminIds) {
+    await createNotification(Notification, { userId: adminId, title, message: adminMsg, type: "task", meta: { ...meta, salesName, needsReassign: true } });
+  }
+
+  await Task.findByIdAndUpdate(t._id, { $set: { [`${sentAtField}.${itemId}`]: new Date() } });
+};
+
+const processLeadDealDueDates = async (models) => {
+  if (!models.Task || !models.User || !models.Role || !models.Notification || !models.Lead || !models.Deal) return;
+  const { Task, User, Role, Notification, Lead, Deal } = models;
+
+  const today = utcDayStart(0);
+  const todayEnd = utcDayEnd(today);
+  const tomorrow = utcDayStart(1);
+  const tomorrowEnd = utcDayEnd(tomorrow);
+  const adminIds = await getAdminIds(User, Role);
+
+  // Cheap Mongo-side filter — only tasks that actually have at least one
+  // per-item due date set, before doing any per-task JS work below.
+  const tasks = await Task.find({
+    status: { $ne: "Completed" },
+    archived: { $ne: true },
+    $or: [
+      { leadDueDates: { $exists: true, $ne: {} } },
+      { dealDueDates: { $exists: true, $ne: {} } },
+    ],
+  }).populate("assignedTo", "firstName lastName _id").lean();
+
+  if (!tasks.length) return;
+
+  // Batch-resolve every referenced lead/deal's name in two queries total,
+  // instead of one lookup per linked item.
+  const leadIds = new Set();
+  const dealIds = new Set();
+  tasks.forEach((t) => {
+    Object.keys(t.leadDueDates || {}).forEach((id) => leadIds.add(id));
+    Object.keys(t.dealDueDates || {}).forEach((id) => dealIds.add(id));
+  });
+  const [leads, deals] = await Promise.all([
+    leadIds.size ? Lead.find({ _id: { $in: [...leadIds] } }).select("leadName").lean() : [],
+    dealIds.size ? Deal.find({ _id: { $in: [...dealIds] } }).select("dealName dealTitle").lean() : [],
+  ]);
+  const leadNameById = new Map(leads.map((l) => [String(l._id), l.leadName]));
+  const dealNameById = new Map(deals.map((d) => [String(d._id), d.dealName || d.dealTitle]));
+
+  for (const t of tasks) {
+    if (!t.assignedTo) continue;
+    try {
+      const leadReminderSent = t.leadDueReminderSentAt || {};
+      const leadDueTodaySent = t.leadDueTodaySentAt || {};
+      for (const [leadId, dueRaw] of Object.entries(t.leadDueDates || {})) {
+        const due = new Date(dueRaw);
+        const name = leadNameById.get(leadId) || "a linked lead";
+        if (due >= tomorrow && due <= tomorrowEnd && !leadReminderSent[leadId]) {
+          await sendItemReminder(t, leadId, false, name, adminIds, Task, Notification, tomorrow, "leadDueReminderSentAt");
+        }
+        if (due >= today && due <= todayEnd && !leadDueTodaySent[leadId]) {
+          await sendItemDueToday(t, leadId, false, name, adminIds, Task, Notification, today, "leadDueTodaySentAt");
+        }
+      }
+
+      const dealReminderSent = t.dealDueReminderSentAt || {};
+      const dealDueTodaySent = t.dealDueTodaySentAt || {};
+      for (const [dealId, dueRaw] of Object.entries(t.dealDueDates || {})) {
+        const due = new Date(dueRaw);
+        const name = dealNameById.get(dealId) || "a linked deal";
+        if (due >= tomorrow && due <= tomorrowEnd && !dealReminderSent[dealId]) {
+          await sendItemReminder(t, dealId, true, name, adminIds, Task, Notification, tomorrow, "dealDueReminderSentAt");
+        }
+        if (due >= today && due <= todayEnd && !dealDueTodaySent[dealId]) {
+          await sendItemDueToday(t, dealId, true, name, adminIds, Task, Notification, today, "dealDueTodaySentAt");
+        }
+      }
+    } catch (e) {
+      console.error(`Lead/deal due-date reminder error for task ${t._id}:`, e.message);
+    }
+  }
+};
+
 export const runTaskDeadlineCron = async () => {
   let tenants = [];
   try {
@@ -145,6 +268,7 @@ export const runTaskDeadlineCron = async () => {
       const tenantDB = await getTenantDB(tenant.dbName);
       const models = getTenantModels(tenantDB);
       await processTasks(models, tenantDB);
+      await processLeadDealDueDates(models);
     } catch (e) {
       console.error(`Task cron error for tenant ${tenant.slug}:`, e.message);
     }
