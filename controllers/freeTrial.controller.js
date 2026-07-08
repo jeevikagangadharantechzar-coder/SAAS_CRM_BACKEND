@@ -7,6 +7,32 @@ import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
 import userService from "../services/user.service.js";
+import { getCalendarDaysLeft, formatExpiryDate } from "../utils/trialDate.util.js";
+
+// Live read of the tenant's actual plan_end_date — the frontend banner/modal
+// pulls this on mount and on socket reconnect instead of trusting only the
+// snapshot inside a push notification's meta, which can go stale if that
+// notification was queued while the browser was offline and gets replayed
+// after later DB edits changed the real date (see FreeTrialContext.jsx).
+export const getTrialStatus = async (req, res) => {
+  const tenant = req.tenant;
+  if (!tenant) return res.status(404).json({ success: false, message: "Tenant not found" });
+
+  const isTrial = tenant.plan_status === "trial";
+  const hasEndDate = !!tenant.plan_end_date;
+  const daysLeft = hasEndDate ? getCalendarDaysLeft(tenant.plan_end_date) : null;
+  const isExpired =
+    tenant.plan_status === "expired" || (hasEndDate && new Date() > new Date(tenant.plan_end_date));
+
+  return res.status(200).json({
+    success: true,
+    planStatus: tenant.plan_status,
+    isTrial,
+    isExpired,
+    daysLeft: isTrial ? daysLeft : null,
+    expiryDate: hasEndDate ? formatExpiryDate(tenant.plan_end_date) : null,
+  });
+};
 
 dotenv.config();
 

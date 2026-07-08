@@ -18,6 +18,7 @@ import {
   updateTenant,
 } from "../controllers/tenant.controller.js";
 import { listFreeTrialSignups, deleteFreeTrialSignup } from "../controllers/freeTrial.controller.js";
+import { runFreeTrialCron } from "../cron/freeTrialCron.js";
 
 const router = express.Router();
 
@@ -46,5 +47,18 @@ router.post("/api/tenants/:id/impersonate", superAdminAuth, impersonateTenant);
 // Free trial signup log
 router.get("/api/free-trials",             superAdminAuth, listFreeTrialSignups);
 router.delete("/api/free-trials/:id",      superAdminAuth, deleteFreeTrialSignup);
+
+// Manually fires the free-trial reminder/expiry cron on demand — the
+// scheduled job only runs hourly (cron/freeTrialCron.js), so this lets an
+// admin verify a trial-date change immediately instead of waiting for the
+// next tick.
+router.post("/api/free-trials/run-cron", superAdminAuth, async (req, res) => {
+  try {
+    await runFreeTrialCron();
+    res.json({ success: true, message: "Free-trial cron executed" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 export default router;

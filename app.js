@@ -22,6 +22,7 @@ import subscriptionPlanRoutes from "./routes/superadmin/subscriptionPlan.routes.
 import freeTrialRoutes from "./routes/freeTrial.routes.js";
 import tenantApiRouter from "./routes/tenantRouter.js";
 import { resolveTenant } from "./middlewares/resolveTenant.js";
+import { checkTrialExpiry } from "./middlewares/checkTrialExpiry.js";
 
 // Routes
 import { startFollowUpCron } from "./controllers/followups.cron.js";
@@ -59,6 +60,7 @@ import { initChatSocket } from "./realtime/chatSocket.js";
 // Background jobs
 import "./cron/emailCron.js";
 import "./cron/subscriptionCron.js";
+import "./cron/freeTrialCron.js";
 import "./workers/emailWorker.js";
 
 dotenv.config();
@@ -73,6 +75,7 @@ const app = express();
 // ─────────────────────────────────────────────
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:5174",
   "http://localhost:3000",
   "http://127.0.0.1:5173",
   "http://127.0.0.1:3000",
@@ -167,7 +170,7 @@ app.use("/webhooks/linkedin", linkedinWebhookRoutes);
 app.use("/superadmin", superAdminRoutes);
 app.use("/api/superadmin/subscription-plans", subscriptionPlanRoutes);
 app.use("/api/free-trial", freeTrialRoutes);
-app.use("/:tenantSlug/api", resolveTenant, tenantApiRouter);
+app.use("/:tenantSlug/api", resolveTenant, checkTrialExpiry, tenantApiRouter);
 
 // ─────────────────────────────────────────────
 // Legacy / existing API Routes (single-tenant, kept for backward compat)

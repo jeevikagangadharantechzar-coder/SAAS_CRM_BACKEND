@@ -14,7 +14,9 @@ const Notification = new mongoose.Schema(
         "activity",
         "admin",
         "activity_reminder",
-        "followup"
+        "followup",
+        "trial_reminder",
+        "trial_expired"
       ],
       default: "followup",
     },
