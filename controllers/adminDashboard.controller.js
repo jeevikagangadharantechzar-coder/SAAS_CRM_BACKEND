@@ -106,8 +106,11 @@ export default {
       const leadsMap = {}, dealsMap = {};
       salesUsers.forEach(u => {
         const id = u._id.toString();
-        leadsMap[id] = { range: 0, cumulative: 0 };
-        dealsMap[id] = { rangeTotal: 0, cumTotal: 0, rangeQ: 0, rangeC: 0, cumQ: 0, cumC: 0 };
+        leadsMap[id] = { range: 0, cumulative: 0, seenRange: new Set() };
+        dealsMap[id] = { 
+          rangeTotal: 0, cumTotal: 0, rangeQ: 0, rangeC: 0, cumQ: 0, cumC: 0,
+          seenCum: new Set(), seenRange: new Set()
+        };
       });
       allLeads.forEach(lead => {
         const id = lead.assignTo?.toString();
@@ -117,8 +120,10 @@ export default {
         const isUnfinished = lead.status?.toLowerCase() !== "converted";
         if (d >= rangeStart && d <= rangeEnd) {
           leadsMap[id].range++;
+          leadsMap[id].seenRange.add(lead._id.toString());
         } else if (d < rangeStart && isUnfinished) {
           leadsMap[id].range++;
+          leadsMap[id].seenRange.add(lead._id.toString());
         }
       });
       allDeals.forEach(deal => {
@@ -126,18 +131,38 @@ export default {
         dealsMap[id].cumTotal++;
         const d = new Date(deal.createdAt); 
         if (d >= rangeStart && d <= rangeEnd) dealsMap[id].rangeTotal++;
+
+        const leadId = deal.leadId ? deal.leadId.toString() : deal._id.toString();
+        
+        if (!dealsMap[id].seenCum.has(leadId)) {
+          dealsMap[id].seenCum.add(leadId);
+          dealsMap[id].cumC++;
+        }
+
+        const conversionDate = deal.convertedAt ? new Date(deal.convertedAt) : d;
+        if (conversionDate >= rangeStart && conversionDate <= rangeEnd) {
+          if (!dealsMap[id].seenRange.has(leadId)) {
+            dealsMap[id].seenRange.add(leadId);
+            dealsMap[id].rangeC++;
+            
+            if (leadsMap[id] && !leadsMap[id].seenRange.has(leadId)) {
+              leadsMap[id].range++;
+              leadsMap[id].seenRange.add(leadId);
+            }
+          }
+        }
+
         if (deal.stage === "Qualification") {
           dealsMap[id].cumQ++; if (d >= rangeStart && d <= rangeEnd) dealsMap[id].rangeQ++;
-          if (deal.convertedAt) { dealsMap[id].cumC++; const cd = new Date(deal.convertedAt); if (cd >= rangeStart && cd <= rangeEnd) dealsMap[id].rangeC++; }
         }
       });
 
       const rows = salesUsers.map(u => {
         const id = u._id.toString(); const lm = leadsMap[id]; const dm = dealsMap[id];
-        const rangeTotalLeads = lm.range + dm.rangeTotal;
-        const rangeConvRate = rangeTotalLeads > 0 ? (dm.rangeC / rangeTotalLeads) * 100 : 0;
-        const cumTotalLeads = lm.cumulative + dm.cumTotal;
-
+        const rangeTotalLeads = lm.range;
+        const rangeConvRate = rangeTotalLeads > 0 ? Math.min((dm.rangeC / rangeTotalLeads) * 100, 100) : 0;
+        const cumTotalLeads = lm.cumulative;
+        const cumConvRate = cumTotalLeads > 0 ? Math.min((dm.cumC / cumTotalLeads) * 100, 100) : 0;
         // Current login streak from loginHistory
         const loginHistory = u.loginHistory || [];
         const uniqueDates  = [...new Set(loginHistory.filter(l => l?.login).map(l => new Date(l.login).toDateString()))].map(d => new Date(d)).sort((a, b) => b - a);
