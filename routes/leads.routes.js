@@ -18,6 +18,10 @@ router.get("/missed-followups", indexControllers.leadsController.getMissedFollow
 router.get("/rejected", adminOnly, indexControllers.leadsController.getRejectedLeads);
 router.post("/rejected/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteRejectedLeads);
 
+//  IMPORT / EXPORT ROUTES
+router.get("/export", indexControllers.leadsController.exportLeads);
+router.post("/bulk-import", adminOrSales, indexControllers.leadsController.bulkImportLeads);
+
 //  CREATE ROUTE
 router.post(
   "/create",
@@ -35,7 +39,7 @@ router.patch("/:id/convert", adminOrAssigned, indexControllers.leadsController.c
 router.patch("/:id/status", adminOrAssigned, indexControllers.leadsController.updateLeadStatus);
 router.patch("/:id/reject", adminOnly, indexControllers.leadsController.rejectLead);
 router.patch("/:id/followup", protect, indexControllers.leadsController.updateFollowUpDate);
-router.post("/:id/followup-notes", adminOrAssigned, indexControllers.leadsController.addFollowUpNote);
+router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);
 
 //  GENERIC ROUTE WITH :id LAST (catch-all for /:id)
 router.get("/getLead/:id", adminOrAssigned, indexControllers.leadsController.getLeadById);

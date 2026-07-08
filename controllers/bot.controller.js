@@ -47,14 +47,25 @@ export default {
       if (userRole !== "Admin") dealQuery.assignedTo = userId;
 
       const [leads, deals] = await Promise.all([
-        Lead.find(leadQuery).select("_id leadName companyName phoneNumber"),
+        Lead.find(leadQuery).select("_id leadName companyName phoneNumber status"),
         Deal.find(dealQuery).select("_id dealName companyName phoneNumber"),
       ]);
 
-      const matches = [
-        ...leads.map((l) => ({ id: l._id, name: l.leadName, company: l.companyName || "", phone: l.phoneNumber || "", type: "lead" })),
-        ...deals.map((d) => ({ id: d._id, name: d.dealName, company: d.companyName || "", phone: d.phoneNumber || "", type: "deal" })),
-      ];
+      const matchesMap = new Map();
+      deals.forEach((d) => {
+        const key = (d.phoneNumber || d.dealName || "").toLowerCase().trim();
+        if (key) matchesMap.set(key, { id: d._id, name: d.dealName, company: d.companyName || "", phone: d.phoneNumber || "", type: "deal" });
+      });
+
+      leads.forEach((l) => {
+        if (l.status && l.status.toLowerCase() === "converted") return;
+        const key = (l.phoneNumber || l.leadName || "").toLowerCase().trim();
+        if (key && !matchesMap.has(key)) {
+          matchesMap.set(key, { id: l._id, name: l.leadName, company: l.companyName || "", phone: l.phoneNumber || "", type: "lead" });
+        }
+      });
+
+      const matches = Array.from(matchesMap.values());
 
       if (matches.length === 0) {
         await saveHistory(BotHistory, { userId, command, searchTerm, action: "search", matchCount: 0 });
@@ -87,22 +98,32 @@ export default {
       const userId   = req.user._id;
       const userRole = req.user.role.name;
 
-      let leadQuery = {};
+      let leadQuery = { status: { $ne: "Converted" } };
       if (userRole !== "Admin") leadQuery.assignTo = userId;
-      const recentLeads = await Lead.find(leadQuery).sort({ updatedAt: -1 }).limit(3).select("leadName companyName phoneNumber");
+      const recentLeads = await Lead.find(leadQuery).sort({ updatedAt: -1 }).limit(5).select("leadName companyName phoneNumber status");
 
       let dealQuery = {};
       if (userRole !== "Admin") dealQuery.assignedTo = userId;
-      const recentDeals = await Deal.find(dealQuery).sort({ updatedAt: -1 }).limit(3).select("dealName companyName phoneNumber");
+      const recentDeals = await Deal.find(dealQuery).sort({ updatedAt: -1 }).limit(5).select("dealName companyName phoneNumber");
 
-      await saveHistory(BotHistory, { userId, action: "suggestion", matchCount: recentLeads.length + recentDeals.length });
+      const sugMap = new Map();
+      recentDeals.forEach(d => {
+        const key = (d.phoneNumber || d.dealName || "").toLowerCase().trim();
+        if (key) sugMap.set(key, { command: `call ${d.companyName || d.dealName}`, label: `[Deal] ${d.dealName} - ${d.companyName || "No company"}`, phone: d.phoneNumber, type: "deal" });
+      });
+      recentLeads.forEach(l => {
+        const key = (l.phoneNumber || l.leadName || "").toLowerCase().trim();
+        if (key && !sugMap.has(key)) {
+          sugMap.set(key, { command: `call ${l.companyName || l.leadName}`, label: `[Lead] ${l.leadName} - ${l.companyName || "No company"}`, phone: l.phoneNumber, type: "lead" });
+        }
+      });
+      const suggestions = Array.from(sugMap.values()).slice(0, 6);
+
+      await saveHistory(BotHistory, { userId, action: "suggestion", matchCount: suggestions.length });
 
       res.json({
         success: true,
-        suggestions: [
-          ...recentLeads.map((l) => ({ command: `call ${l.companyName || l.leadName}`, label: `${l.leadName} - ${l.companyName || "No company"}`, phone: l.phoneNumber, type: "lead" })),
-          ...recentDeals.map((d) => ({ command: `call ${d.companyName || d.dealName}`, label: `${d.dealName} - ${d.companyName || "No company"}`, phone: d.phoneNumber, type: "deal" })),
-        ],
+        suggestions,
       });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -171,7 +192,7 @@ async function initiateCall({ contactId, contactType, userId, userRole, res, Lea
 
   return res.json({
     success:    true,
-    message:    `Ready to call ${name}`,
+    message:    `Ready to call ${contactType === "lead" ? "Lead" : "Deal"}: ${name}`,
     sourceType: contactType,
     lead: { id: record._id, name, company, phone: phoneNumber },
     callLog: { id: callLog._id, sessionId, phoneNumber },

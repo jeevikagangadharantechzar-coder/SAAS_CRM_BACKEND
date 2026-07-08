@@ -12,11 +12,21 @@ const tenantSchema = new mongoose.Schema(
     isActive:        { type: Boolean, default: true },
     createdBy:       { type: mongoose.Schema.Types.ObjectId, default: null },
 
-    plan_id:         { type: mongoose.Schema.Types.ObjectId, ref: "SubscriptionPlan", default: null },
-    plan_status:     { type: String, enum: ["active", "expired", "cancelled", "trial"], default: "trial" },
-    plan_start_date: { type: Date, default: null },
-    plan_end_date:   { type: Date, default: null },
+    plan_id:            { type: mongoose.Schema.Types.ObjectId, ref: "SubscriptionPlan", default: null },
+    plan_status:        { type: String, enum: ["active", "grace", "expired", "cancelled", "trial"], default: "trial" },
+    plan_billing_cycle: { type: String, default: "" },
+    plan_start_date:    { type: Date, default: null },
+    plan_end_date:      { type: Date, default: null },
     isDbRefreshed:   { type: Boolean, default: false },
+
+    // Tracks which free-trial expiry reminders have already been sent so the
+    // cron (cron/freeTrialCron.js) never notifies the same milestone twice.
+    trialReminders: {
+      sevenDaySent: { type: Boolean, default: false },
+      threeDaySent: { type: Boolean, default: false },
+      oneDaySent:   { type: Boolean, default: false },
+    },
+    expiredNotifSent: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

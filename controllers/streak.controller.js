@@ -138,7 +138,14 @@ export default {
       ]);
 
       const leadsMap = {}; const dealsMap = {};
-      targetUsers.forEach(u => { const id = u._id.toString(); leadsMap[id] = { range: 0, cumulative: 0 }; dealsMap[id] = { rangeTotal: 0, cumTotal: 0, rangeQ: 0, rangeC: 0, cumQ: 0, cumC: 0 }; });
+      targetUsers.forEach(u => { 
+        const id = u._id.toString(); 
+        leadsMap[id] = { range: 0, cumulative: 0, seenRange: new Set() }; 
+        dealsMap[id] = { 
+          rangeTotal: 0, cumTotal: 0, rangeQ: 0, rangeC: 0, cumQ: 0, cumC: 0,
+          seenCum: new Set(), seenRange: new Set()
+        }; 
+      });
       allLeads.forEach(lead => {
         const id = lead.assignTo?.toString();
         if (!leadsMap[id]) return;
@@ -147,8 +154,10 @@ export default {
         const isUnfinished = lead.status?.toLowerCase() !== "converted";
         if (d >= rangeStart && d <= rangeEnd) {
           leadsMap[id].range++;
+          leadsMap[id].seenRange.add(lead._id.toString());
         } else if (d < rangeStart && isUnfinished) {
           leadsMap[id].range++;
+          leadsMap[id].seenRange.add(lead._id.toString());
         }
       });
       allDeals.forEach(deal => {
@@ -158,19 +167,38 @@ export default {
         const d = new Date(deal.createdAt); 
         if (d >= rangeStart && d <= rangeEnd) dealsMap[id].rangeTotal++;
 
+        const leadId = deal.leadId ? deal.leadId.toString() : deal._id.toString();
+        
+        if (!dealsMap[id].seenCum.has(leadId)) {
+          dealsMap[id].seenCum.add(leadId);
+          dealsMap[id].cumC++;
+        }
+
+        const conversionDate = deal.convertedAt ? new Date(deal.convertedAt) : d;
+        if (conversionDate >= rangeStart && conversionDate <= rangeEnd) {
+          if (!dealsMap[id].seenRange.has(leadId)) {
+            dealsMap[id].seenRange.add(leadId);
+            dealsMap[id].rangeC++;
+            
+            if (leadsMap[id] && !leadsMap[id].seenRange.has(leadId)) {
+              leadsMap[id].range++;
+              leadsMap[id].seenRange.add(leadId);
+            }
+          }
+        }
+
         if (deal.stage === "Qualification") {
           dealsMap[id].cumQ++; if (d >= rangeStart && d <= rangeEnd) dealsMap[id].rangeQ++;
-          if (deal.convertedAt) { dealsMap[id].cumC++; const cd = new Date(deal.convertedAt); if (cd >= rangeStart && cd <= rangeEnd) dealsMap[id].rangeC++; }
         }
       });
 
       const rows = targetUsers.map(user => {
         const id = user._id.toString(); const lm = leadsMap[id]; const dm = dealsMap[id];
         const loginHistory = user.loginHistory || [];
-        const rangeTotalLeads = lm.range + dm.rangeTotal;
-        const rangeConvRate = rangeTotalLeads > 0 ? (dm.rangeC / rangeTotalLeads) * 100 : 0;
-        const cumTotalLeads = lm.cumulative + dm.cumTotal;
-        const cumConvRate = cumTotalLeads > 0 ? (dm.cumC / cumTotalLeads) * 100 : 0;
+        const rangeTotalLeads = lm.range;
+        const rangeConvRate = rangeTotalLeads > 0 ? Math.min((dm.rangeC / rangeTotalLeads) * 100, 100) : 0;
+        const cumTotalLeads = lm.cumulative;
+        const cumConvRate = cumTotalLeads > 0 ? Math.min((dm.cumC / cumTotalLeads) * 100, 100) : 0;
         const rangeLoginDays = new Set(loginHistory.filter(l => { if (!l?.login) return false; const d = new Date(l.login); return d >= rangeStart && d <= rangeEnd; }).map(l => new Date(l.login).toDateString()));
         const { status, statusIcon, statusColor } = getStatus(rangeConvRate);
         const displayName = (user.firstName || user.lastName) ? `${user.firstName || ""} ${user.lastName || ""}`.trim() : user.email?.split("@")[0] || "Unknown";
@@ -185,8 +213,8 @@ export default {
         };
       });
 
-      // Primary: most leads converted to qualification stage; Secondary: highest conversion rate (speed)
-      const sorted = rows.filter(r => r.totalLeads > 0 || r.cumulativeTotalLeads > 0).sort((a, b) => b.qualificationDeals !== a.qualificationDeals ? b.qualificationDeals - a.qualificationDeals : b.conversionRate - a.conversionRate);
+      // Primary: highest conversion rate (speed); Secondary: most leads total
+      const sorted = rows.filter(r => r.totalLeads > 0 || r.cumulativeTotalLeads > 0).sort((a, b) => b.conversionRate !== a.conversionRate ? b.conversionRate - a.conversionRate : b.totalLeads - a.totalLeads);
       const stats = {
         totalSalespeople: sorted.length, activeSalespeople: sorted.filter(r => r.conversionRate > 0).length,
         avgConversionRate: sorted.length ? Number((sorted.reduce((s, r) => s + r.conversionRate, 0) / sorted.length).toFixed(1)) : 0,

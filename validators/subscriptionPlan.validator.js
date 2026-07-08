@@ -9,6 +9,8 @@ const VALID_FEATURE_KEYS = [
   "users_roles", "admin_access", "email_chat", "email_campaigns", "whatsapp_chat",
   "reports", "analytics", "settings", "streak_leaderboard", "assigned_tasks", "task_management",
   "target_management", "meetings", "google_meet_sync", "zoom_meetings", "messages", "chatbot",
+  "integration_facebook", "integration_linkedin", "integration_justdial",
+  "integration_indiamart", "integration_99acres", "integration_sulekha",
 ];
 
 const fail = (res, message) =>

@@ -58,6 +58,8 @@ const leadSchema = new mongoose.Schema(
     followUpNotes: [
       {
         note:      { type: String, required: true },
+        audioPath: { type: String, default: null },
+        audioName: { type: String, default: null },
         createdAt: { type: Date, default: Date.now },
       },
     ],
