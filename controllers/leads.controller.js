@@ -147,11 +147,19 @@ export default {
   getLeads: async (req, res) => {
     try {
       const { Lead, User } = getModels(req);
-      const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus } = req.query;
+      const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus, startDate, endDate } = req.query;
       const query = {};
       const andConditions = [];
 
       if (req.user.role.name !== "Admin") query.assignTo = req.user._id;
+
+      // General Start/End Date filter — plain createdAt range. Either side
+      // can be omitted independently; omitting both leaves every record visible.
+      if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate) query.createdAt.$gte = new Date(startDate);
+        if (endDate) query.createdAt.$lte = new Date(endDate + "T23:59:59.999Z");
+      }
 
       if (search?.trim()) {
         andConditions.push({

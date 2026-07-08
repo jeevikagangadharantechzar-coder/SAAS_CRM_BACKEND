@@ -7,10 +7,13 @@ import {
   broadcastTasksRefresh,
   LEAD_DEAL_POPULATE,
   attachLinkedItemBadge,
+  attachLinkedArrays,
   buildLinkedMeta,
   attachConvertedDealJourney,
 } from "../services/taskNotificationService.js";
 import { getBulkLinkage } from "../services/linkageService.js";
+import { sendDueToday, sendItemDueToday, getAdminIds } from "../cron/taskCron.js";
+import { computeTaskProgress } from "../services/taskProgressService.js";
 
 const getModels = (req) => getTenantModels(req.tenantDB);
 
@@ -40,7 +43,7 @@ export default {
       // task.dealRef, so resolve it for every task's Stage Journey view.
       await attachConvertedDealJourney(Deal, rawTasks);
 
-      res.status(200).json(rawTasks.map(attachLinkedItemBadge));
+      res.status(200).json(rawTasks.map((t) => attachLinkedArrays(attachLinkedItemBadge(t))));
     } catch (err) {
       console.error("Error fetching tasks:", err);
       res.status(500).json({ message: "Internal server error" });
@@ -54,8 +57,15 @@ export default {
         return res.status(403).json({ message: "Access denied: Admins only" });
       }
       const { Task, Notification, User, Role } = getModels(req);
-      const { title, description, priority, dueDate, assignedTo, leadRef, dealRef, callsMade, meetingsDone } = req.body;
+      const { title, description, priority, dueDate, assignedTo, leadRef, dealRef, leadRefs, dealRefs, callsMade, meetingsDone } = req.body;
       const adminName = `${req.user.firstName} ${req.user.lastName}`;
+
+      // Accept either the new array shape (from the multi-select picker) or
+      // a bare legacy scalar — leadRef/dealRef are then derived as the
+      // array's last (most-recently-linked) item, so every existing reader
+      // of the singular fields keeps working unchanged.
+      const initLeadRefs = (Array.isArray(leadRefs) && leadRefs.length ? leadRefs : (leadRef ? [leadRef] : [])).filter(Boolean);
+      const initDealRefs = (Array.isArray(dealRefs) && dealRefs.length ? dealRefs : (dealRef ? [dealRef] : [])).filter(Boolean);
 
       const task = await Task.create({
         title,
@@ -63,8 +73,10 @@ export default {
         priority,
         dueDate,
         assignedTo,
-        leadRef: leadRef || null,
-        dealRef: dealRef || null,
+        leadRef: initLeadRefs.length ? initLeadRefs[initLeadRefs.length - 1] : null,
+        dealRef: initDealRefs.length ? initDealRefs[initDealRefs.length - 1] : null,
+        leadRefs: initLeadRefs,
+        dealRefs: initDealRefs,
         callsMade: callsMade || 0,
         meetingsDone: meetingsDone || 0,
         createdBy: req.user._id,
@@ -91,6 +103,19 @@ export default {
         meta: { taskId: String(task._id), taskAssigned: true, ...buildLinkedMeta(populated) },
       });
       await broadcastTasksRefresh(User, Role, [assignedTo]);
+
+      // A task created with today's due date shouldn't have to wait for the
+      // next 15-min cron tick to get its "due today" notification — fire it
+      // immediately. sendDueToday already stamps dueTodaySentAt, so the cron
+      // correctly skips re-notifying later. Never blocks task creation.
+      if (new Date(dueDate).toDateString() === new Date().toDateString()) {
+        try {
+          const adminIds = await getAdminIds(User, Role);
+          await sendDueToday(populated, adminIds, Task, Notification, new Date());
+        } catch (e) {
+          console.error("Immediate due-today notification error:", e.message);
+        }
+      }
 
       res.status(201).json({ message: "Task created successfully", data: populated });
     } catch (err) {
@@ -120,31 +145,80 @@ export default {
       const nowCompleting = req.body.status === "Completed" && !wasCompleted;
       const actorName = `${req.user.firstName} ${req.user.lastName}`;
 
+      // Backward-compat-derived arrays as they stand BEFORE this edit.
+      const currentLeadRefs = (task.leadRefs && task.leadRefs.length) ? task.leadRefs.map(String) : (task.leadRef ? [String(task.leadRef)] : []);
+      const currentDealRefs = (task.dealRefs && task.dealRefs.length) ? task.dealRefs.map(String) : (task.dealRef ? [String(task.dealRef)] : []);
+
       // Narrow exception to the sales-permitted field list: the assignee can
-      // dismiss (unlink) a Closed-Won deal's history card from their task —
+      // dismiss (unlink) ONE Closed-Won deal from their task's linked list —
       // their own trophy to keep or clear once they've seen it, regardless
       // of whether they closed it themselves or Admin closed it on their
       // behalf (both stay visible on their list; this is just their own
-      // manual "I've seen it" cleanup, not a hide-from-them action).
+      // manual "I've seen it" cleanup, not a hide-from-them action). `dealId`
+      // defaults to the current primary so older frontend calls that only
+      // send `{dismissWonDeal:true}` keep working.
       let dismissingOwnWonDeal = false;
-      if (!isAdmin && req.body.dismissWonDeal && task.dealRef) {
-        const linkedDeal = await Deal.findById(task.dealRef).select("stage wonBy");
-        if (linkedDeal?.stage === "Closed Won") {
-          dismissingOwnWonDeal = true;
+      let dismissDealId = null;
+      if (!isAdmin && req.body.dismissWonDeal) {
+        dismissDealId = req.body.dealId ? String(req.body.dealId) : (currentDealRefs[currentDealRefs.length - 1] || null);
+        if (dismissDealId) {
+          const linkedDeal = await Deal.findById(dismissDealId).select("stage");
+          if (linkedDeal?.stage === "Closed Won") dismissingOwnWonDeal = true;
         }
       }
 
-      // Build update payload
+      // Admin can change linked leads/deals two ways:
+      //  - a full array (`leadRefs`/`dealRefs`) from the multi-select picker's
+      //    Save — a plain replace of whatever the admin left checked (checked
+      //    items are pre-hydrated from the existing links, so nothing is lost
+      //    unless explicitly unchecked);
+      //  - a single `removeLeadRef`/`removeDealRef` id from a card's own
+      //    "Unlink" button — filters just that one id out.
+      // A bare `leadRef`/`dealRef` scalar is never honored here — that raw
+      // overwrite shape was exactly the "picking a new one silently drops
+      // the old one" bug.
+      let newLeadRefs = null;
+      let newDealRefs = null;
+      if (isAdmin) {
+        if (Array.isArray(req.body.leadRefs)) {
+          newLeadRefs = [...new Set(req.body.leadRefs.filter(Boolean).map(String))];
+        } else if (req.body.removeLeadRef) {
+          newLeadRefs = currentLeadRefs.filter((id) => id !== String(req.body.removeLeadRef));
+        }
+        if (Array.isArray(req.body.dealRefs)) {
+          newDealRefs = [...new Set(req.body.dealRefs.filter(Boolean).map(String))];
+        } else if (req.body.removeDealRef) {
+          newDealRefs = currentDealRefs.filter((id) => id !== String(req.body.removeDealRef));
+        }
+      }
+      if (dismissingOwnWonDeal) {
+        newDealRefs = currentDealRefs.filter((id) => id !== dismissDealId);
+      }
+
+      // Build update payload — spread everything else the admin/sales sent,
+      // but the link fields are always computed explicitly above, never
+      // taken raw from req.body.
       const updatePayload = isAdmin
         ? { ...req.body }
-        : dismissingOwnWonDeal
-          ? { dealRef: null }
-          : { status: req.body.status, completionNotes: req.body.completionNotes };
+        : { status: req.body.status, completionNotes: req.body.completionNotes };
+      delete updatePayload.leadRef;
+      delete updatePayload.dealRef;
+      delete updatePayload.leadRefs;
+      delete updatePayload.dealRefs;
+      delete updatePayload.removeLeadRef;
+      delete updatePayload.removeDealRef;
+      delete updatePayload.dismissWonDeal;
+      delete updatePayload.dealId;
+      delete updatePayload.leadDueDates;
+      delete updatePayload.dealDueDates;
 
-      // "" (cleared in the UI) can't cast to ObjectId — normalize to null
-      if (isAdmin) {
-        if (updatePayload.leadRef === "") updatePayload.leadRef = null;
-        if (updatePayload.dealRef === "") updatePayload.dealRef = null;
+      if (newLeadRefs) {
+        updatePayload.leadRefs = newLeadRefs;
+        updatePayload.leadRef = newLeadRefs.length ? newLeadRefs[newLeadRefs.length - 1] : null;
+      }
+      if (newDealRefs) {
+        updatePayload.dealRefs = newDealRefs;
+        updatePayload.dealRef = newDealRefs.length ? newDealRefs[newDealRefs.length - 1] : null;
       }
 
       if (nowCompleting) {
@@ -160,22 +234,59 @@ export default {
         updatePayload.dueTodaySentAt = null;
       }
 
-      // Did the admin attach/change the linked lead or deal on this edit?
-      const beforeLead = task.leadRef ? String(task.leadRef) : null;
-      const beforeDeal = task.dealRef ? String(task.dealRef) : null;
-      const afterLead = "leadRef" in updatePayload ? (updatePayload.leadRef ? String(updatePayload.leadRef) : null) : beforeLead;
-      const afterDeal = "dealRef" in updatePayload ? (updatePayload.dealRef ? String(updatePayload.dealRef) : null) : beforeDeal;
-      const linkedItemChanged = isAdmin && (afterLead !== beforeLead || afterDeal !== beforeDeal);
+      // Did the admin add/remove any linked lead or deal on this edit?
+      const sortedEq = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+      const addedLeadIds = newLeadRefs ? newLeadRefs.filter((id) => !currentLeadRefs.includes(id)) : [];
+      const addedDealIds = newDealRefs ? newDealRefs.filter((id) => !currentDealRefs.includes(id)) : [];
+      const linkedItemChanged = isAdmin && (
+        (newLeadRefs && !sortedEq(newLeadRefs, currentLeadRefs)) ||
+        (newDealRefs && !sortedEq(newDealRefs, currentDealRefs))
+      );
 
-      // Defensive safeguard: a task should never end up actively pointing at
-      // a deal that's already Closed Won (the deal-linking picker already
+      // Each lead/deal newly added to the task on THIS edit (not one that was
+      // already linked) must come with its own due date, picked inline in the
+      // linking panel — existing links are left untouched, their stored due
+      // dates (if any) just carry over unchanged in the merge below.
+      if (isAdmin && (addedLeadIds.length || addedDealIds.length)) {
+        const providedLeadDates = req.body.leadDueDates || {};
+        const providedDealDates = req.body.dealDueDates || {};
+        const missingLead = addedLeadIds.filter((id) => !providedLeadDates[id]);
+        const missingDeal = addedDealIds.filter((id) => !providedDealDates[id]);
+        if (missingLead.length || missingDeal.length) {
+          return res.status(400).json({ message: "Please set a due date for each newly linked lead/deal." });
+        }
+      }
+      if (newLeadRefs) {
+        const existingLeadDueDates = task.leadDueDates ? Object.fromEntries(task.leadDueDates) : {};
+        const providedLeadDates = req.body.leadDueDates || {};
+        const mergedLeadDueDates = {};
+        newLeadRefs.forEach((id) => {
+          const merged = providedLeadDates[id] || existingLeadDueDates[id];
+          if (merged) mergedLeadDueDates[id] = merged;
+        });
+        updatePayload.leadDueDates = mergedLeadDueDates;
+      }
+      if (newDealRefs) {
+        const existingDealDueDates = task.dealDueDates ? Object.fromEntries(task.dealDueDates) : {};
+        const providedDealDates = req.body.dealDueDates || {};
+        const mergedDealDueDates = {};
+        newDealRefs.forEach((id) => {
+          const merged = providedDealDates[id] || existingDealDueDates[id];
+          if (merged) mergedDealDueDates[id] = merged;
+        });
+        updatePayload.dealDueDates = mergedDealDueDates;
+      }
+
+      // Defensive safeguard: a task should never end up actively holding a
+      // deal that's already Closed Won (the deal-linking picker already
       // hides such deals, but this covers any other path that could still
       // link one) — archive it immediately instead of leaving a stale,
-      // already-resolved deal sitting in an "active" task.
+      // already-resolved deal sitting in an "active" task. Checks every
+      // newly-added deal id, not just a single before/after scalar.
       let linkingToAlreadyWonDeal = false;
-      if (afterDeal && afterDeal !== beforeDeal) {
-        const linkedDeal = await Deal.findById(afterDeal).select("stage");
-        if (linkedDeal?.stage === "Closed Won") linkingToAlreadyWonDeal = true;
+      for (const id of addedDealIds) {
+        const linkedDeal = await Deal.findById(id).select("stage");
+        if (linkedDeal?.stage === "Closed Won") { linkingToAlreadyWonDeal = true; break; }
       }
       if (linkingToAlreadyWonDeal) updatePayload.archived = true;
 
@@ -203,9 +314,36 @@ export default {
       }).populate(LEAD_DEAL_POPULATE);
       const updatedObj = updated.toObject();
       await attachConvertedDealJourney(Deal, [updatedObj]);
-      const updatedLean = attachLinkedItemBadge(updatedObj);
+      const updatedLean = attachLinkedArrays(attachLinkedItemBadge(updatedObj));
 
-      // Admin attached/changed the linked lead or deal → notify the assigned
+      // A newly-linked lead/deal whose own due date is today shouldn't have
+      // to wait for the next 15-min cron tick to get its reminder — same
+      // immediate-fire pattern as a brand-new task's own due date in
+      // createTask above. Never blocks the update response.
+      if (addedLeadIds.length || addedDealIds.length) {
+        try {
+          const todayStr = new Date().toDateString();
+          const leadNameById = new Map((updated.leadRefs || []).map((l) => [String(l._id), l.leadName]));
+          const dealNameById = new Map((updated.dealRefs || []).map((d) => [String(d._id), d.dealName || d.dealTitle]));
+          const itemAdminIds = await getAdminIds(User, Role);
+          for (const id of addedLeadIds) {
+            const due = updatePayload.leadDueDates?.[id];
+            if (due && new Date(due).toDateString() === todayStr) {
+              await sendItemDueToday(updatedObj, id, false, leadNameById.get(id) || "a linked lead", itemAdminIds, Task, Notification, new Date(), "leadDueTodaySentAt");
+            }
+          }
+          for (const id of addedDealIds) {
+            const due = updatePayload.dealDueDates?.[id];
+            if (due && new Date(due).toDateString() === todayStr) {
+              await sendItemDueToday(updatedObj, id, true, dealNameById.get(id) || "a linked deal", itemAdminIds, Task, Notification, new Date(), "dealDueTodaySentAt");
+            }
+          }
+        } catch (e) {
+          console.error("Immediate lead/deal due-today notification error:", e.message);
+        }
+      }
+
+      // Admin attached/changed a linked lead or deal → notify the assigned
       // sales person (shows in their sidebar bell + Notifications & Reminders tab).
       if (linkedItemChanged) {
         const leadName = updated.leadRef?.leadName || null;
@@ -351,7 +489,7 @@ export default {
       if (req.user.role?.name !== "Admin") {
         return res.status(403).json({ message: "Access denied: Admins only" });
       }
-      const { Task, Notification, User, Role } = getModels(req);
+      const { Task, Notification, User, Role, Lead, Deal } = getModels(req);
       const { newAssigneeId, note, extendDueDate } = req.body;
       if (!newAssigneeId) return res.status(400).json({ message: "newAssigneeId is required" });
 
@@ -367,18 +505,33 @@ export default {
       const isSamePerson = oldAssigneeId === String(newAssigneeId);
       const resolvedDueDate = extendDueDate ? new Date(extendDueDate) : null;
 
+      // Whichever leads/deals are currently linked to this task, captured
+      // before the update — reassigning to a DIFFERENT person moves
+      // ownership of these along with the task itself.
+      const leadIdsToTransfer = (task.leadRefs && task.leadRefs.length) ? task.leadRefs.map(String) : (task.leadRef ? [String(task.leadRef)] : []);
+      const dealIdsToTransfer = (task.dealRefs && task.dealRefs.length) ? task.dealRefs.map(String) : (task.dealRef ? [String(task.dealRef)] : []);
+      const isTransferringLinkedItems = !isSamePerson && (leadIdsToTransfer.length > 0 || dealIdsToTransfer.length > 0);
+
+      const historyEntries = [{
+        event: "Reassigned",
+        detail: isSamePerson
+          ? `Kept with ${oldAssigneeName} by Admin ${adminName}${resolvedDueDate ? ` — due date extended` : ""}${note ? ` — Note: ${note}` : ""}`
+          : `Reassigned from ${oldAssigneeName} to ${newUser.firstName} ${newUser.lastName} by Admin ${adminName}${note ? ` — Note: ${note}` : ""}`,
+        by: req.user._id,
+        at: new Date(),
+      }];
+      if (isTransferringLinkedItems) {
+        historyEntries.push({
+          event: "LinkedItemChanged",
+          detail: `${leadIdsToTransfer.length} lead(s) and ${dealIdsToTransfer.length} deal(s) transferred to ${newUser.firstName} ${newUser.lastName} along with the task reassignment`,
+          by: req.user._id,
+          at: new Date(),
+        });
+      }
+
       const updatePayload = {
         assignedTo: newAssigneeId,
-        $push: {
-          history: {
-            event: "Reassigned",
-            detail: isSamePerson
-              ? `Kept with ${oldAssigneeName} by Admin ${adminName}${resolvedDueDate ? ` — due date extended` : ""}${note ? ` — Note: ${note}` : ""}`
-              : `Reassigned from ${oldAssigneeName} to ${newUser.firstName} ${newUser.lastName} by Admin ${adminName}${note ? ` — Note: ${note}` : ""}`,
-            by: req.user._id,
-            at: new Date(),
-          },
-        },
+        $push: { history: { $each: historyEntries } },
         // Restart the reminder cycle — a fresh assignee/deadline shouldn't stay
         // silent just because the cron already fired for the old state.
         reminderSentAt: null,
@@ -386,9 +539,17 @@ export default {
       };
       if (resolvedDueDate) updatePayload.dueDate = resolvedDueDate;
 
+      // Transfer ownership of the linked lead(s)/deal(s) to the new assignee —
+      // same pattern as target.controller.js's reassignItem, minus its
+      // `isActive` flag (that's Target's own overdue-tracking concern).
+      if (isTransferringLinkedItems) {
+        if (leadIdsToTransfer.length) await Lead.updateMany({ _id: { $in: leadIdsToTransfer } }, { assignTo: newAssigneeId });
+        if (dealIdsToTransfer.length) await Deal.updateMany({ _id: { $in: dealIdsToTransfer } }, { assignedTo: newAssigneeId });
+      }
+
       const updated = await Task.findByIdAndUpdate(req.params.id, updatePayload, { new: true })
         .populate(LEAD_DEAL_POPULATE);
-      const updatedLean = attachLinkedItemBadge(updated.toObject());
+      const updatedLean = attachLinkedArrays(attachLinkedItemBadge(updated.toObject()));
 
       // Mark the due-date reminder notifications for this task as resolved
       // everywhere they appear, so the "Reassign" button turns into a
@@ -407,17 +568,19 @@ export default {
           meta: { taskId: String(task._id), taskReactivated: true, ...buildLinkedMeta(updated) },
         });
       } else {
+        const transferNoteToNew = isTransferringLinkedItems ? " Its linked lead(s)/deal(s) now belong to you too." : "";
+        const transferNoteToOld = isTransferringLinkedItems ? " Its linked lead(s)/deal(s) transferred with it." : "";
         await createNotification(Notification, {
           userId: newAssigneeId,
           title: "Task Reassigned to You",
-          message: `Admin ${adminName} reassigned task "${task.title}" to you.${note ? ` Note: ${note}` : ""}`,
+          message: `Admin ${adminName} reassigned task "${task.title}" to you.${transferNoteToNew}${note ? ` Note: ${note}` : ""}`,
           type: "task",
           meta: { taskId: String(task._id), taskAssigned: true, ...buildLinkedMeta(updated) },
         });
         await createNotification(Notification, {
           userId: oldAssigneeId,
           title: "Task Reassigned",
-          message: `Admin ${adminName} reassigned task "${task.title}" to ${newUser.firstName} ${newUser.lastName}.${note ? ` Note: ${note}` : ""}`,
+          message: `Admin ${adminName} reassigned task "${task.title}" to ${newUser.firstName} ${newUser.lastName}.${transferNoteToOld}${note ? ` Note: ${note}` : ""}`,
           type: "task",
           meta: { taskId: String(task._id), taskRemoved: true, ...buildLinkedMeta(updated) },
         });
@@ -650,7 +813,7 @@ export default {
       await broadcastTasksRefresh(User, Role, [originalAssigneeId, reassignToUserId]);
       res.status(200).json({
         message: isSamePerson ? "Kept with same sales person" : "Task reassigned",
-        data: attachLinkedItemBadge(updated.toObject()),
+        data: attachLinkedArrays(attachLinkedItemBadge(updated.toObject())),
       });
     } catch (err) {
       console.error("Error resolving task reason note:", err);
@@ -771,6 +934,56 @@ export default {
       res.status(200).json({ message: "Removed from Admin Completed" });
     } catch (err) {
       console.error("Error dismissing admin activity item:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Sales: their own Progress-card ratio for every one of their tasks, in
+  // one batched call — see services/taskProgressService.js. Kept entirely
+  // separate from Target Management's own progress endpoints (different
+  // file, no shared function) so a change here can never affect Target
+  // Management/My Targets.
+  getMyTaskProgress: async (req, res) => {
+    try {
+      const { Task } = getModels(req);
+      const myTasks = await Task.find({ assignedTo: req.user._id, archived: { $ne: true } })
+        .select("leadRef dealRef leadRefs dealRefs")
+        .lean();
+      const snapshot = await computeTaskProgress(getModels(req), req.user._id, myTasks);
+      res.status(200).json(snapshot);
+    } catch (err) {
+      console.error("Error fetching my task progress:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: same Progress-card ratios, batched for every Sales-role user in
+  // one call — powers Task Management's card for every assignee without an
+  // N+1 fetch per task card. Flattened into one object keyed by taskId.
+  getTaskProgressAll: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const models = getModels(req);
+      const { User, Role, Task } = models;
+      const adminRole = await Role.findOne({ name: "Admin" });
+      const salesUsers = await User.find({ role: { $ne: adminRole?._id } }).select("_id").lean();
+
+      const allTasks = await Task.find({ archived: { $ne: true } }).select("assignedTo leadRef dealRef leadRefs dealRefs").lean();
+      const tasksByUser = new Map();
+      for (const t of allTasks) {
+        const uid = String(t.assignedTo);
+        if (!tasksByUser.has(uid)) tasksByUser.set(uid, []);
+        tasksByUser.get(uid).push(t);
+      }
+
+      const perUserMaps = await Promise.all(
+        salesUsers.map((u) => computeTaskProgress(models, u._id, tasksByUser.get(String(u._id)) || []))
+      );
+      res.status(200).json(Object.assign({}, ...perUserMaps));
+    } catch (err) {
+      console.error("Error fetching task progress for all sales users:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },
