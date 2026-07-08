@@ -28,6 +28,10 @@ router.get(
   indexControllers.dealsController.getAllDeals
 );
 
+// Import / Export routes — must stay above the generic "/:id" routes below
+router.get("/export", indexControllers.dealsController.exportDeals);
+router.post("/bulk-import", adminOnly, indexControllers.dealsController.bulkImportDeals);
+
 // Rejected deals — dedicated list + bulk delete + reject action (specific
 // routes, must come before the generic "/:id" routes below)
 router.get("/rejected", adminOnly, indexControllers.dealsController.getRejectedDeals);

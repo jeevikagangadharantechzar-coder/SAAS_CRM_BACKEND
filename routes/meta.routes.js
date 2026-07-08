@@ -7,11 +7,13 @@
 import express from "express";
 import { protect } from "../middlewares/auth.middleware.js";
 import metaController from "../controllers/meta.controller.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
 
 // All routes below require the user to be logged in
 router.use(protect);
+router.use(checkPlanFeature("integration_facebook"));
 
 // GET  /meta/auth-url        → returns Facebook OAuth URL
 router.get("/auth-url", metaController.getAuthUrl);
