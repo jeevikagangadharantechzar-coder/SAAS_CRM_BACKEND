@@ -1,11 +1,13 @@
 import express from "express";
 import { protect } from "../middlewares/auth.middleware.js";
 import linkedinController from "../controllers/linkedin.controller.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
 
 // Require authenticated user for all configuration endpoints
 router.use(protect);
+router.use(checkPlanFeature("integration_linkedin"));
 
 // GET  /linkedin/auth-url    → returns OAuth URL with state
 router.get("/auth-url", linkedinController.getAuthUrl);
