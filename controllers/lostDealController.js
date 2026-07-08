@@ -54,18 +54,20 @@ saveLostDealReason : async (req, res) => {
       createdBy: userId,
     });
 
-    // Capture previous stage BEFORE changing it
+//  mark as closed lost
+const updateData = {
+  stage: "Closed Lost",
+  lossReason: reason,
+  lossNotes: notes || "",
+  updatedAt: new Date()
+};
+
 if (deal.stage !== "Closed Lost") {
-  deal.stageLostAt = deal.stage;   // Save where it was lost
-  deal.lostDate = new Date();      // Save lost timestamp
+  updateData.stageLostAt = deal.stage;
+  updateData.lostDate = new Date();
 }
 
-//  mark as closed lost
-deal.stage = "Closed Lost";
-deal.lossReason = reason;
-deal.lossNotes = notes || "";
-
-await deal.save();
+const updatedDeal = await Deal.findByIdAndUpdate(dealId, updateData, { new: true, runValidators: false });
 
     return res.status(200).json({
       success: true,
@@ -73,11 +75,11 @@ await deal.save();
       data: {
         lostReason,
         deal: {
-          _id: deal._id,
-          dealName: deal.dealName,
-          stage: deal.stage,
-          lossReason: deal.lossReason,
-          lossNotes: deal.lossNotes,
+          _id: updatedDeal._id,
+          dealName: updatedDeal.dealName,
+          stage: updatedDeal.stage,
+          lossReason: updatedDeal.lossReason,
+          lossNotes: updatedDeal.lossNotes,
         },
       },
     });
@@ -86,10 +88,8 @@ await deal.save();
     return res.status(500).json({
       success: false,
       message: "Server error while saving lost deal",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: error.message,
+      stack: error.stack
     });
   }
 },

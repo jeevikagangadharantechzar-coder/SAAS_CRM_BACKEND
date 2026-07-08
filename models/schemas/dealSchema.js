@@ -92,6 +92,8 @@ const dealSchema = new mongoose.Schema({
         type: String,
         enum: ["Created", "Updated", "Completed", "Cancelled", "Rescheduled", "Scheduled"],
       },
+      outcome:        { type: String },
+      notes:          { type: String },
     },
   ],
   createdAt:     { type: Date, default: Date.now },
