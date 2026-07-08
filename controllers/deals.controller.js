@@ -553,7 +553,7 @@ export default {
       const { Deal } = getModels(req);
       const tDB = req.tenantDB || null;
       const { id } = req.params;
-      const { followUpDate, followUpComment } = req.body;
+      const { followUpDate, followUpComment, previousOutcome, previousNotes } = req.body;
       const deal = await Deal.findById(id).populate("assignedTo");
       if (!deal) return res.status(404).json({ message: "Deal not found" });
 
@@ -562,15 +562,41 @@ export default {
         return res.status(403).json({ message: "Access denied" });
       if (!followUpDate) return res.status(400).json({ message: "Follow-up date is required" });
 
+      if (deal.followUpDate && (!previousOutcome || !previousNotes)) {
+        return res.status(400).json({ message: "Previous outcome and notes are required to reschedule" });
+      }
+
       const parsedDate = new Date(followUpDate);
       if (isNaN(parsedDate.getTime())) return res.status(400).json({ message: "Invalid date format" });
+
+      const newHistory = [...(deal.followUpHistory || [])];
+
+      // Mark the old follow-up as completed/missed using the user provided outcome
+      if (deal.followUpDate) {
+        newHistory.push({
+          date: new Date(),
+          followUpDate: deal.followUpDate,
+          followUpComment: deal.followUpComment || "",
+          changedBy: req.user._id,
+          action: "Completed",
+          outcome: previousOutcome,
+          notes: previousNotes
+        });
+      }
+
+      // Add the newly scheduled follow-up
+      newHistory.push({
+        date: new Date(),
+        followUpDate: parsedDate,
+        followUpComment: followUpComment || "",
+        changedBy: req.user._id,
+        action: "Scheduled"
+      });
 
       const updatedDeal = await Deal.findByIdAndUpdate(id, {
         followUpDate: parsedDate, followUpComment: followUpComment || "",
         lastReminderAt: null,
-        followUpHistory: [...(deal.followUpHistory || []),
-          { date: new Date(), followUpDate: parsedDate, followUpComment: followUpComment || "",
-            changedBy: req.user._id, action: "Scheduled" }],
+        followUpHistory: newHistory,
       }, { new: true })
         .populate("assignedTo", "firstName lastName email")
         .populate("followUpHistory.changedBy", "firstName lastName email");

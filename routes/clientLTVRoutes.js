@@ -24,8 +24,6 @@ router.post("/calculate/:companyName", clientLTVController.calculateClientCLV);
 // Support tickets
 router.post("/tickets", clientLTVController.createSupportTicket);
 
-// Renewals
-router.post("/renewals", clientLTVController.createRenewal);
 
 // Pricing risks
 router.get("/pricing-risks", clientLTVController.getPricingRisks);
