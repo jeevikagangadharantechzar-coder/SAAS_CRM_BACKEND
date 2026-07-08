@@ -1,11 +1,20 @@
 import * as planService from "../services/subscriptionPlan.service.js";
 
-const sendError = (res, err) =>
-  res.status(err.statusCode || 500).json({
+const sendError = (res, err) => {
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyValue || {})[0] || "field";
+    return res.status(400).json({
+      success: false,
+      error: `A plan with this ${field} already exists.`,
+      code: "DUPLICATE_KEY",
+    });
+  }
+  return res.status(err.statusCode || 500).json({
     success: false,
     error: err.message,
     code: err.code || "SERVER_ERROR",
   });
+};
 
 export const getAllPlans = async (req, res) => {
   try {
@@ -141,7 +150,7 @@ export const assignPlanToTenant = async (req, res) => {
       });
     }
 
-    const validCycles = ["monthly", "yearly", "one_time"];
+    const validCycles = ["monthly", "half_yearly", "yearly", "one_time"];
     if (!validCycles.includes(billing_cycle)) {
       return res.status(400).json({
         success: false,

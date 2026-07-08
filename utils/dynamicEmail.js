@@ -424,3 +424,108 @@ export async function sendPlanEmail({ to, vars }) {
 }
 
 export { BEAUTIFUL_WELCOME_BODY, BEAUTIFUL_PLAN_BODY };
+
+// ─── Plan Expiry Reminder ──────────────────────────────────────────────────
+
+const EXPIRY_REMINDER_BODY = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:40px 0;">
+    <tr><td align="center">
+      <table width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:{{headerBg}};padding:36px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">{{urgencyLabel}}</h1>
+            <p style="margin:8px 0 0;color:{{headerSubColor}};font-size:14px;">Your subscription on {{platformName}} is expiring</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:36px 40px;">
+            <p style="margin:0 0 20px;color:#333;font-size:16px;">Hi <strong>{{adminName}}</strong>,</p>
+            <p style="margin:0 0 28px;color:#555;font-size:15px;line-height:1.6;">{{bodyMessage}}</p>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:{{boxBg}};border:1px solid {{boxBorder}};border-radius:8px;margin-bottom:32px;">
+              <tr><td style="padding:24px 28px;">
+                <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:{{accentColor}};text-transform:uppercase;letter-spacing:0.8px;">Plan Details</p>
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;width:130px;">Plan Name</td>
+                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:600;">{{planName}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;">Expiry Date</td>
+                    <td style="padding:7px 0;color:#111;font-size:14px;font-weight:700;">{{endDate}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:7px 0;color:#666;font-size:14px;">Days Left</td>
+                    <td style="padding:7px 0;"><span style="background:{{badgeBg}};color:{{badgeColor}};font-size:13px;font-weight:700;padding:3px 12px;border-radius:20px;">{{daysRemaining}} day(s)</span></td>
+                  </tr>
+                </table>
+              </td></tr>
+            </table>
+
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td align="center" style="padding-bottom:28px;">
+                <a href="{{loginUrl}}" target="_blank" style="display:inline-block;background:{{accentColor}};color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 44px;border-radius:8px;letter-spacing:0.3px;box-shadow:0 4px 12px rgba(0,0,0,0.2);">Renew / Upgrade Now →</a>
+              </td></tr>
+            </table>
+
+            <p style="margin:0;color:#888;font-size:13px;line-height:1.6;border-top:1px solid #eee;padding-top:20px;">
+              To avoid any service interruption, please renew or upgrade your plan before the expiry date.<br/>
+              Contact your platform administrator if you need assistance.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f9fafc;padding:20px 40px;text-align:center;border-top:1px solid #eee;">
+            <p style="margin:0;color:#aaa;font-size:12px;">© {{year}} {{platformName}}. All rights reserved.</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+/**
+ * Send plan expiry reminder email to a tenant admin.
+ * vars: { adminName, planName, endDate, daysRemaining, loginUrl, isUrgent }
+ *   isUrgent = true  → 1-day warning (red)
+ *   isUrgent = false → 7-day warning (amber)
+ */
+export async function sendPlanExpiryReminderEmail({ to, vars }) {
+  let settings = null;
+  try {
+    settings = await SuperAdminSettings.findOne();
+  } catch (_) {}
+
+  const platformName = settings?.platformName || "TZI CRM SaaS Platform";
+  const isUrgent = !!vars.isUrgent;
+
+  const subject = isUrgent
+    ? `🚨 Your ${vars.planName} plan expires TOMORROW — Renew now`
+    : `⚠️ Your ${vars.planName} plan expires in ${vars.daysRemaining} days — Renew now`;
+
+  const allVars = {
+    ...vars,
+    platformName,
+    year: new Date().getFullYear(),
+    urgencyLabel:   isUrgent ? "Plan Expires Tomorrow!" : "Plan Expiring Soon",
+    bodyMessage:    isUrgent
+      ? `Your <strong>${vars.planName}</strong> plan expires <strong>tomorrow (${vars.endDate})</strong>. Renew immediately to avoid service interruption.`
+      : `Your <strong>${vars.planName}</strong> plan will expire on <strong>${vars.endDate}</strong> — that is only <strong>${vars.daysRemaining} days</strong> away. Please renew before the expiry date.`,
+    headerBg:       isUrgent ? "linear-gradient(135deg,#dc2626 0%,#991b1b 100%)" : "linear-gradient(135deg,#d97706 0%,#b45309 100%)",
+    headerSubColor: isUrgent ? "#fecaca" : "#fef3c7",
+    accentColor:    isUrgent ? "#dc2626" : "#d97706",
+    boxBg:          isUrgent ? "#fef2f2" : "#fffbeb",
+    boxBorder:      isUrgent ? "#fecaca" : "#fde68a",
+    badgeBg:        isUrgent ? "#fee2e2" : "#fef3c7",
+    badgeColor:     isUrgent ? "#991b1b" : "#92400e",
+  };
+
+  const html = interpolate(EXPIRY_REMINDER_BODY, allVars);
+  const transporter = await getTransporter();
+  const from = await getFromAddress(settings);
+  await transporter.sendMail({ from, to, subject, html });
+}

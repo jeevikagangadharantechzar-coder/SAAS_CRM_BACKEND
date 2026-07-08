@@ -39,7 +39,7 @@ export const getPlanById = async (id) => {
 
 export const createPlan = async (data) => {
   const code = data.plan_code?.toLowerCase().trim();
-  const existing = await SubscriptionPlan.findOne({ plan_code: code });
+  const existing = await SubscriptionPlan.findOne({ plan_code: code, is_deleted: false });
   if (existing) throw appError("Plan code already exists", 400);
 
   if (data.price_monthly !== undefined && data.price_monthly < 0)
@@ -156,6 +156,9 @@ export const assignPlanToTenant = async (tenantId, planId, billing_cycle) => {
   if (billing_cycle === "monthly") {
     plan_end_date = new Date(plan_start_date);
     plan_end_date.setMonth(plan_end_date.getMonth() + 1);
+  } else if (billing_cycle === "half_yearly") {
+    plan_end_date = new Date(plan_start_date);
+    plan_end_date.setMonth(plan_end_date.getMonth() + 6);
   } else if (billing_cycle === "yearly") {
     plan_end_date = new Date(plan_start_date);
     plan_end_date.setFullYear(plan_end_date.getFullYear() + 1);
@@ -166,6 +169,7 @@ export const assignPlanToTenant = async (tenantId, planId, billing_cycle) => {
 
   tenant.plan_id = planId;
   tenant.plan_status = "active";
+  tenant.plan_billing_cycle = billing_cycle;
   tenant.plan_start_date = plan_start_date;
   tenant.plan_end_date = plan_end_date;
   await tenant.save();

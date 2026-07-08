@@ -116,7 +116,7 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, currency = "USD" } = req.body;
+    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD" } = req.body;
     const actualPlanId = plan_id || planId || plan || null;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
@@ -146,17 +146,20 @@ export const createTenant = async (req, res) => {
     // Auto-calculate plan dates when a plan is assigned but dates aren't provided
     let resolvedStartDate = plan_start_date || null;
     let resolvedEndDate = plan_end_date || null;
+    let resolvedPlanDoc = null;
     if (actualPlanId && !resolvedStartDate) {
       resolvedStartDate = new Date();
     }
     if (actualPlanId && !resolvedEndDate) {
       try {
-        const planDoc = await SubscriptionPlan.findById(actualPlanId);
-        if (planDoc) {
-          const days = planDoc.billing_cycle === "yearly" ? 365
-            : planDoc.billing_cycle === "monthly" ? 30
-            : 30;
-          resolvedEndDate = new Date(resolvedStartDate.getTime() + days * 24 * 60 * 60 * 1000);
+        resolvedPlanDoc = await SubscriptionPlan.findById(actualPlanId);
+        if (resolvedPlanDoc) {
+          // Use the billing cycle the super admin selected; fall back to plan default
+          const cycle = billing_cycle || resolvedPlanDoc.billing_cycle || "monthly";
+          const months = cycle === "yearly" ? 12 : cycle === "half_yearly" ? 6 : 1;
+          const end = new Date(resolvedStartDate);
+          end.setMonth(end.getMonth() + months);
+          resolvedEndDate = end;
         }
       } catch (_) {}
     }
@@ -170,7 +173,8 @@ export const createTenant = async (req, res) => {
       currency,
       createdBy: req.superAdmin.id,
       plan_id: actualPlanId,
-      plan_status: plan_status || "trial",
+      plan_status: actualPlanId ? "active" : (plan_status || "trial"),
+      plan_billing_cycle: actualPlanId ? (billing_cycle || resolvedPlanDoc?.billing_cycle || "") : "",
       plan_start_date: resolvedStartDate,
       plan_end_date: resolvedEndDate,
     });
@@ -260,28 +264,31 @@ export const createTenant = async (req, res) => {
 
     // Send plan details or trial info email
     if (tenant.plan_id) {
-      SubscriptionPlan.findById(tenant.plan_id).then((plan) => {
-        if (!plan) return;
-        const price = plan.billing_cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
+      const planForEmail = resolvedPlanDoc || await SubscriptionPlan.findById(tenant.plan_id).catch(() => null);
+      if (planForEmail) {
+        const cycle = billing_cycle || planForEmail.billing_cycle || "monthly";
+        const tier = planForEmail.tiers?.find((t) => t.billing_cycle === cycle);
+        const price = tier?.price ?? (cycle === "yearly" ? planForEmail.price_yearly : planForEmail.price_monthly);
+        const CYCLE_LABELS = { monthly: "Monthly", half_yearly: "Half Year", yearly: "Yearly", one_time: "One-time" };
         const fmt = (d) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
         sendPlanEmail({
           to: adminEmail,
           vars: {
             adminName,
-            planName: plan.plan_name,
-            planType: plan.plan_type,
+            planName: planForEmail.plan_name,
+            planType: planForEmail.plan_type,
             price,
-            currency: plan.currency,
-            billingCycle: plan.billing_cycle,
-            maxUsers: plan.max_users_per_tenant,
-            description: plan.description,
+            currency: planForEmail.currency,
+            billingCycle: CYCLE_LABELS[cycle] || cycle,
+            maxUsers: planForEmail.max_users_per_tenant,
+            description: planForEmail.description,
             startDate: fmt(tenant.plan_start_date),
             endDate: fmt(tenant.plan_end_date),
             loginUrl,
             isTrial: false,
           },
         }).catch(err => console.error("Plan email failed:", err.message));
-      }).catch(() => { });
+      }
     } else {
       sendPlanEmail({
         to: adminEmail,
@@ -528,7 +535,7 @@ export const resetTenantDB = async (tenant, plainPassword) => {
 
 export const createUpgradeRequest = async (req, res) => {
   try {
-    const { tenantSlug, planId, wantedUsers, loginDays, description, type } = req.body;
+    const { tenantSlug, planId, wantedUsers, loginDays, billing_cycle, description, type } = req.body;
 
     const tenant = await Tenant.findOne({ slug: tenantSlug }).populate("plan_id");
     if (!tenant) return res.status(404).json({ success: false, error: "Tenant not found" });
@@ -536,15 +543,23 @@ export const createUpgradeRequest = async (req, res) => {
     const newPlan = await SubscriptionPlan.findById(planId);
     if (!newPlan) return res.status(404).json({ success: false, error: "Subscription plan not found" });
 
+    // Resolve target plan price from tiers (if available) or fallback fields
+    const targetTier = newPlan.tiers?.find((t) => t.billing_cycle === billing_cycle);
+    const basePrice = targetTier?.price
+      ?? (billing_cycle === "yearly" ? newPlan.price_yearly : billing_cycle === "half_yearly" ? 0 : newPlan.price_monthly)
+      ?? 0;
+
     let proratedDiscount = 0;
     if (type === "mid_cycle" && tenant.plan_end_date && tenant.plan_id) {
-      const remainingMs = new Date(tenant.plan_end_date) - new Date();
-      const remainingDays = Math.max(0, Math.ceil(remainingMs / (1000 * 60 * 60 * 24)));
-      const dailyRate = (tenant.plan_id.price_monthly || 0) / 30;
-      proratedDiscount = Number((dailyRate * remainingDays).toFixed(2));
+      const currentCycle = tenant.plan_billing_cycle || "monthly";
+      const currentTier  = tenant.plan_id.tiers?.find((t) => t.billing_cycle === currentCycle);
+      const currentPrice = currentTier?.price ?? tenant.plan_id.price_monthly ?? 0;
+      const totalDays    = currentCycle === "yearly" ? 365 : currentCycle === "half_yearly" ? 180 : 30;
+      const remainingMs  = new Date(tenant.plan_end_date) - new Date();
+      const remainingDays = Math.max(0, Math.ceil(remainingMs / 86_400_000));
+      proratedDiscount = Number(((currentPrice / totalDays) * remainingDays).toFixed(2));
     }
 
-    const basePrice = newPlan.price_monthly || 0;
     const finalPrice = Math.max(0, Number((basePrice - proratedDiscount).toFixed(2)));
 
     const request = await UpgradeRequest.create({
@@ -552,8 +567,10 @@ export const createUpgradeRequest = async (req, res) => {
       plan_id: planId,
       wanted_users: Number(wantedUsers),
       login_days: Number(loginDays),
+      billing_cycle: billing_cycle || "",
       description: description || "",
       type,
+      base_price: basePrice,
       prorated_discount: proratedDiscount,
       final_price: finalPrice,
     });
@@ -843,6 +860,7 @@ export const getTenantBySlugPublic = async (req, res) => {
         slug: tenant.slug,
         plan_id: tenant.plan_id,
         plan_status: tenant.plan_status,
+        plan_billing_cycle: tenant.plan_billing_cycle,
         plan_start_date: tenant.plan_start_date,
         plan_end_date: tenant.plan_end_date,
       }
