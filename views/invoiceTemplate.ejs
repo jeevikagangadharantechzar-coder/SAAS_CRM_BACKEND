@@ -6,102 +6,98 @@
     <style>
       * { box-sizing: border-box; }
       body {
-        font-family: Arial, sans-serif;
+        font-family: Georgia, 'Times New Roman', Times, serif;
         font-size: 12px;
         margin: 0;
         padding: 0;
-        color: #333;
+        color: #1a1a1a;
       }
       .invoice-box {
         width: 100%;
         margin: auto;
-        padding: 10px;
+        padding: 26px 30px;
         background: #fff;
+        border: 2px solid #1f3864;
       }
 
       /* Header */
       .header {
+        position: relative;
         display: flex;
         justify-content: space-between;
-        align-items: flex-start;
-        border-bottom: 2px solid #1f2937;
-        padding-bottom: 16px;
-        margin-bottom: 24px;
+        align-items: center;
+        padding-bottom: 14px;
+        margin-bottom: 18px;
+        border-bottom: 2px solid #1f3864;
+      }
+      .header-logo {
+        flex: 0 0 auto;
+        width: 240px;
+        position: relative;
+        z-index: 1;
       }
       .logo {
-        max-height: 70px;
-        max-width: 220px;
+        max-height: 80px;
+        max-width: 240px;
         object-fit: contain;
       }
+      .header-company-name {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        text-align: center;
+        font-size: 19px;
+        font-weight: bold;
+        letter-spacing: 0.3px;
+        color: #1f3864;
+        pointer-events: none;
+      }
       .header-right {
+        flex: 0 0 auto;
+        position: relative;
+        z-index: 1;
         text-align: right;
       }
       .header-right h1 {
         margin: 0 0 6px 0;
-        font-size: 24px;
-        letter-spacing: 1px;
-        color: #1f2937;
+        font-size: 22px;
+        letter-spacing: 2px;
+        font-weight: bold;
+        color: #1f3864;
       }
-      .header-right div {
+      /* Shared "details table" look — used for meta, from/to, extra details, payment details */
+      .detail-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 16px;
         font-size: 12px;
-        color: #555;
-        line-height: 1.6;
       }
-
-      /* Info cards */
-      .info-section {
-        display: flex;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 20px;
+      .detail-table th {
+        border: 1px solid #1f3864;
+        background: #eef1f7;
+        color: #1f3864;
+        text-align: left;
+        font-size: 10.5px;
+        font-weight: bold;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        padding: 6px 10px;
       }
-      .info-box {
-        width: 50%;
-        font-size: 12px;
+      .detail-table td {
+        border: 1px solid #a8b8cf;
+        vertical-align: top;
+        padding: 8px 10px;
         line-height: 1.7;
-        background: #f8f9fb;
-        border: 1px solid #e5e7eb;
-        border-radius: 6px;
-        padding: 14px 16px;
       }
-      .info-box .label {
-        display: block;
-        font-size: 10px;
-        font-weight: bold;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        color: #6b7280;
-        margin-bottom: 6px;
-      }
-      .info-box .name {
-        display: block;
-        font-size: 13px;
-        font-weight: bold;
-        color: #1f2937;
-        margin-bottom: 4px;
-      }
+      .detail-table .name { display: block; font-size: 13px; font-weight: bold; margin-bottom: 3px; }
+      .detail-table .field-name { width: 160px; font-weight: bold; color: #1f3864; white-space: nowrap; }
 
-      /* Extra details */
-      .extra-details {
-        background: #f8f9fb;
-        border: 1px solid #e5e7eb;
-        border-radius: 6px;
-        padding: 14px 16px;
-        margin-bottom: 20px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px 24px;
-        font-size: 12px;
-      }
-      .extra-details .item .label {
-        font-size: 10px;
-        font-weight: bold;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        color: #6b7280;
-        display: block;
-        margin-bottom: 2px;
-      }
+      /* Meta table (No./Date/Due/Status) — plain, no box/borders */
+      .meta-table { width: auto; margin-left: auto; margin-bottom: 0; }
+      .meta-table td { border: none; padding: 2px 0 2px 14px; line-height: 1.7; }
+      .meta-table .field-name { width: auto; color: #555; text-align: right; }
 
       /* Table */
       table {
@@ -110,25 +106,24 @@
         margin-top: 4px;
       }
       th, td {
-        padding: 10px 12px;
+        padding: 8px 10px;
         text-align: left;
-        border-bottom: 1px solid #e5e7eb;
       }
       thead th {
-        background: #1f2937;
-        color: #fff;
+        border-top: 1px solid #1f3864;
+        border-bottom: 1px solid #1f3864;
         font-weight: bold;
-        font-size: 11px;
+        font-size: 11.5px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
+        color: #1f3864;
       }
-      .right {
-        text-align: right;
-      }
+      tbody tr td { border-bottom: 1px solid #ccc; }
+      .right { text-align: right; }
 
       /* Totals */
       .totals {
-        margin-top: 16px;
+        margin-top: 14px;
         width: 100%;
         display: flex;
         justify-content: flex-end;
@@ -139,55 +134,28 @@
         font-size: 12px;
       }
       .totals-table td {
-        padding: 6px 4px;
-        border: none;
+        padding: 7px 10px;
+        border: 1px solid #a8b8cf;
       }
-      .totals-table tr td:first-child {
-        text-align: left;
-        color: #555;
-      }
-      .totals-table tr td:last-child {
-        text-align: right;
-      }
+      .totals-table tr td:first-child { text-align: left; color: #333; }
+      .totals-table tr td:last-child { text-align: right; }
       .totals-table tr.total-row td {
         font-weight: bold;
         font-size: 14px;
-        border-top: 2px solid #1f2937;
-        padding-top: 10px;
-        color: #1f2937;
+        border: 1px solid #1f3864;
+        background: #eef1f7;
+        color: #1f3864;
       }
-
-      /* Payment details */
-      .payment-details {
-        margin-top: 24px;
-        background: #f8f9fb;
-        border: 1px solid #e5e7eb;
-        border-radius: 6px;
-        padding: 14px 16px;
-        font-size: 12px;
-      }
-      .payment-details .label {
-        font-size: 10px;
-        font-weight: bold;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        color: #6b7280;
-        margin-bottom: 8px;
-      }
-      .payment-details .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 6px 24px;
-      }
+      .totals-table tr.balance-row td { font-weight: bold; color: #b91c1c; }
 
       .footer {
-        font-size: 10px;
+        font-size: 10.5px;
         text-align: center;
-        margin-top: 30px;
+        margin-top: 26px;
         padding-top: 12px;
-        border-top: 1px solid #e5e7eb;
-        color: #9ca3af;
-        line-height: 1.6;
+        border-top: 2px solid #1f3864;
+        color: #444;
+        line-height: 1.7;
       }
     </style>
   </head>
@@ -200,66 +168,73 @@
       const billingAddress = invoice.billingAddress || clientDeal.address || "";
       const terms = s.termsAndConditions || "Payment due within 30 days.";
       const invoiceDate = invoice.issueDate || invoice.createdAt;
-      const hasExtraDetails = invoice.poNumber || invoice.clientTaxId || (invoice.customFields && invoice.customFields.length > 0);
+      const visibleCustomFields = (invoice.customFields || []).filter(f => f.label !== "__gst_client_state");
+      const hasExtraDetails = invoice.poNumber || invoice.clientTaxId || visibleCustomFields.length > 0;
+
+      // GST split: same state as the seller -> CGST + SGST (half each), different state -> IGST.
+      const isIndianGst = invoice.currency === "INR";
+      const gstSplitReady = isIndianGst && !!s.state && !!invoice.clientState;
+      const isIntraState = gstSplitReady && s.state === invoice.clientState;
+
+      const amountPaid = Number(invoice.amountPaid) || 0;
     %>
     <div class="invoice-box">
       <!-- Header -->
       <div class="header">
-        <% if (locals.logoDataURI && logoDataURI) { %>
-          <img src="<%= logoDataURI %>" alt="Company Logo" class="logo" />
-        <% } else { %>
-          <div class="name" style="font-size: 18px;"><%= s.companyName || "Your Company" %></div>
-        <% } %>
+        <div class="header-logo">
+          <% if (locals.logoDataURI && logoDataURI) { %>
+            <img src="<%= logoDataURI %>" alt="Company Logo" class="logo" />
+          <% } %>
+        </div>
+        <div class="header-company-name"><%= s.companyName || "Your Company" %></div>
         <div class="header-right">
           <h1>INVOICE</h1>
-          <div>
-            <strong>#<%= invoice.invoicenumber %></strong><br />
-            Date: <%= new Date(invoiceDate).toLocaleDateString() %><br />
-            <% if (invoice.dueDate) { %>Due: <%= new Date(invoice.dueDate).toLocaleDateString() %><% } %>
-          </div>
+          <table class="detail-table meta-table">
+            <tr><td class="field-name">No.</td><td><%= invoice.invoicenumber %></td></tr>
+            <tr><td class="field-name">Date</td><td><%= new Date(invoiceDate).toLocaleDateString() %></td></tr>
+            <% if (invoice.dueDate) { %><tr><td class="field-name">Due</td><td><%= new Date(invoice.dueDate).toLocaleDateString() %></td></tr><% } %>
+          </table>
         </div>
       </div>
 
       <!-- Info -->
-      <div class="info-section">
-        <!-- Company Info (left) -->
-        <div class="info-box">
-          <span class="label">From</span>
-          <span class="name"><%= s.companyName || "Your Company" %></span>
-          <% if (s.address) { %><%= s.address %><br /><% } %>
-          <% if (s.email) { %>Email: <%= s.email %><br /><% } %>
-          <% if (s.phone) { %>Phone: <%= s.phone %><br /><% } %>
-          <% if (s.taxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= s.taxId %><% } %>
-        </div>
-
-        <!-- Client Info (right) -->
-        <div class="info-box">
-          <span class="label">Bill To</span>
-          <span class="name"><%= clientDeal.companyName || clientDeal.dealName || "Client" %></span>
-          <% if (billingAddress) { %><%= billingAddress %><br /><% } %>
-          <% if (clientDeal.country) { %><%= clientDeal.country %><br /><% } %>
-          <% if (clientDeal.email) { %>Email: <%= clientDeal.email %><br /><% } %>
-          <% if (clientDeal.phoneNumber) { %>Phone: <%= clientDeal.phoneNumber %><br /><% } %>
-          <% if (invoice.clientTaxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= invoice.clientTaxId %><% } %>
-        </div>
-      </div>
+      <table class="detail-table">
+        <tr>
+          <th style="width: 50%;">From</th>
+          <th style="width: 50%;">Bill To</th>
+        </tr>
+        <tr>
+          <td>
+            <span class="name"><%= s.companyName || "Your Company" %></span>
+            <% if (s.address) { %><%= s.address %><br /><% } %>
+            <% if (s.email) { %>Email: <%= s.email %><br /><% } %>
+            <% if (s.phone) { %>Phone: <%= s.phone %><br /><% } %>
+            <% if (s.taxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= s.taxId %><% } %>
+          </td>
+          <td>
+            <span class="name"><%= clientDeal.companyName || clientDeal.dealName || "Client" %></span>
+            <% if (billingAddress) { %><%= billingAddress %><br /><% } %>
+            <% if (clientDeal.country) { %><%= clientDeal.country %><br /><% } %>
+            <% if (clientDeal.email) { %>Email: <%= clientDeal.email %><br /><% } %>
+            <% if (clientDeal.phoneNumber) { %>Phone: <%= clientDeal.phoneNumber %><br /><% } %>
+            <% if (invoice.clientTaxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= invoice.clientTaxId %><% } %>
+          </td>
+        </tr>
+      </table>
 
       <!-- Extra Details: PO Number, Client Tax ID, Custom Fields -->
       <% if (hasExtraDetails) { %>
-      <div class="extra-details">
+      <table class="detail-table">
         <% if (invoice.poNumber) { %>
-        <div class="item">
-          <span class="label">PO Number</span>
-          <%= invoice.poNumber %>
-        </div>
+        <tr><td class="field-name">PO Number</td><td><%= invoice.poNumber %></td></tr>
         <% } %>
-        <% (invoice.customFields || []).forEach(field => { %>
-        <div class="item">
-          <span class="label"><%= field.label %></span>
-          <%= field.type === "date" && field.value ? new Date(field.value).toLocaleDateString() : field.value %>
-        </div>
+        <% visibleCustomFields.forEach(field => { %>
+        <tr>
+          <td class="field-name"><%= field.label %></td>
+          <td><%= field.type === "date" && field.value ? new Date(field.value).toLocaleDateString() : field.value %></td>
+        </tr>
         <% }) %>
-      </div>
+      </table>
       <% } %>
 
       <!-- Table -->
@@ -289,30 +264,14 @@
           </tr>
 
           <%
-            let taxAmount = 0;
+            // Discount is applied first, on the raw subtotal — then tax is computed
+            // on what's left. Matches the invoice form and the stored calculation.
             let discountAmount = 0;
             let finalTotal = Number(invoice.subtotal);
 
-            // Apply Tax
-            if(invoice.tax > 0) {
-              if(invoice.taxType === "percentage") {
-                taxAmount = (invoice.subtotal * invoice.tax) / 100;
-              } else {
-                taxAmount = invoice.tax;
-              }
-              finalTotal += taxAmount;
-          %>
-          <tr>
-            <td>Tax (<%= invoice.taxType === "percentage" ? invoice.tax + "%" : invoice.tax %>)</td>
-            <td><%= invoice.currency %> <%= taxAmount.toFixed(2) %></td>
-          </tr>
-          <% } %>
-
-          <%
-            // Apply Discount always
             if(invoice.discountValue > 0) {
               if(invoice.discountType === "percentage") {
-                discountAmount = (finalTotal * invoice.discountValue) / 100;
+                discountAmount = (invoice.subtotal * invoice.discountValue) / 100;
               } else {
                 discountAmount = invoice.discountValue;
               }
@@ -324,31 +283,84 @@
           </tr>
           <% } %>
 
+          <%
+            let taxAmount = 0;
+            if(invoice.tax > 0) {
+              if(invoice.taxType === "percentage") {
+                taxAmount = (finalTotal * invoice.tax) / 100;
+              } else {
+                taxAmount = invoice.tax;
+              }
+              finalTotal += taxAmount;
+            }
+          %>
+          <% if (invoice.tax > 0 && gstSplitReady) { %>
+            <% if (isIntraState) { %>
+              <% const half = invoice.taxType === "percentage" ? ` (${invoice.tax / 2}%)` : ""; %>
+              <tr>
+                <td>CGST<%= half %></td>
+                <td><%= invoice.currency %> <%= (taxAmount / 2).toFixed(2) %></td>
+              </tr>
+              <tr>
+                <td>SGST<%= half %></td>
+                <td><%= invoice.currency %> <%= (taxAmount / 2).toFixed(2) %></td>
+              </tr>
+            <% } else { %>
+              <% const rate = invoice.taxType === "percentage" ? ` (${invoice.tax}%)` : ""; %>
+              <tr>
+                <td>IGST<%= rate %></td>
+                <td><%= invoice.currency %> <%= taxAmount.toFixed(2) %></td>
+              </tr>
+            <% } %>
+          <% } else if (invoice.tax > 0) { %>
+          <tr>
+            <td>Tax (<%= invoice.taxType === "percentage" ? invoice.tax + "%" : invoice.tax %>)</td>
+            <td><%= invoice.currency %> <%= taxAmount.toFixed(2) %></td>
+          </tr>
+          <% } %>
+
           <tr class="total-row">
             <td>Total</td>
             <td><%= invoice.currency %> <%= finalTotal.toFixed(2) %></td>
           </tr>
+
+          <% if (invoice.status === "paid" || invoice.status === "partially_paid") { %>
+          <tr>
+            <td>Amount Paid</td>
+            <td><%= invoice.currency %> <%= amountPaid.toFixed(2) %></td>
+          </tr>
+          <tr class="balance-row">
+            <td>Balance Due</td>
+            <td><%= invoice.currency %> <%= Math.max(finalTotal - amountPaid, 0).toFixed(2) %></td>
+          </tr>
+          <% } %>
         </table>
       </div>
 
+      <!-- Notes -->
+      <% if (invoice.note) { %>
+      <table class="detail-table">
+        <tr><th>Notes</th></tr>
+        <tr><td><%= invoice.note %></td></tr>
+      </table>
+      <% } %>
+
       <!-- Payment Details -->
       <% if (hasBankDetails) { %>
-      <div class="payment-details">
-        <div class="label">Payment Details</div>
-        <div class="grid">
-          <% if (bank.accountName) { %><div>Account Name: <%= bank.accountName %></div><% } %>
-          <% if (bank.accountNumber) { %><div>Account Number: <%= bank.accountNumber %></div><% } %>
-          <% if (bank.bankName) { %><div>Bank: <%= bank.bankName %></div><% } %>
-          <% if (bank.ifscOrSwift) { %><div>IFSC/SWIFT: <%= bank.ifscOrSwift %></div><% } %>
-          <% if (bank.branch) { %><div>Branch: <%= bank.branch %></div><% } %>
-        </div>
-      </div>
+      <table class="detail-table">
+        <tr><th colspan="2">Payment Details</th></tr>
+        <% if (bank.accountName) { %><tr><td class="field-name">Account Name</td><td><%= bank.accountName %></td></tr><% } %>
+        <% if (bank.accountNumber) { %><tr><td class="field-name">Account Number</td><td><%= bank.accountNumber %></td></tr><% } %>
+        <% if (bank.bankName) { %><tr><td class="field-name">Bank</td><td><%= bank.bankName %></td></tr><% } %>
+        <% if (bank.ifscOrSwift) { %><tr><td class="field-name">IFSC/SWIFT</td><td><%= bank.ifscOrSwift %></td></tr><% } %>
+        <% if (bank.branch) { %><tr><td class="field-name">Branch</td><td><%= bank.branch %></td></tr><% } %>
+      </table>
       <% } %>
 
       <!-- Footer -->
       <div class="footer">
-        Terms & Conditions: <%= terms %><br />
-        © <%= s.companyName || "Your Company" %>
+        Terms &amp; Conditions: <%= terms %><br />
+        &copy; <%= s.companyName || "Your Company" %>
       </div>
     </div>
   </body>
