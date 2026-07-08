@@ -185,8 +185,8 @@ export default {
         };
       });
 
-      // Primary: most leads converted to qualification stage; Secondary: highest conversion rate (speed)
-      const sorted = rows.filter(r => r.totalLeads > 0 || r.cumulativeTotalLeads > 0).sort((a, b) => b.qualificationDeals !== a.qualificationDeals ? b.qualificationDeals - a.qualificationDeals : b.conversionRate - a.conversionRate);
+      // Primary: highest conversion rate (speed); Secondary: most leads total
+      const sorted = rows.filter(r => r.totalLeads > 0 || r.cumulativeTotalLeads > 0).sort((a, b) => b.conversionRate !== a.conversionRate ? b.conversionRate - a.conversionRate : b.totalLeads - a.totalLeads);
       const stats = {
         totalSalespeople: sorted.length, activeSalespeople: sorted.filter(r => r.conversionRate > 0).length,
         avgConversionRate: sorted.length ? Number((sorted.reduce((s, r) => s + r.conversionRate, 0) / sorted.length).toFixed(1)) : 0,
