@@ -4,6 +4,7 @@ import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import NotificationLegacy from "../models/notification.model.js";
 import { initTargetSocket } from "./targetSocket.js";
+import { initFreeTrialSocket } from "./freeTrialSocket.js";
 import Tenant from "../models/master/Tenant.js";
 
 const redisConfig = {
@@ -32,6 +33,9 @@ export const initSocket = (server) => {
   // Dedicated namespace for target-management real-time events (kept separate
   // from the generic notification bell socket below).
   initTargetSocket(io);
+
+  // Dedicated namespace for free-trial expiry reminders/notices.
+  initFreeTrialSocket(io);
 
   io.on("connection", (socket) => {
     const { userId } = socket.handshake.auth;

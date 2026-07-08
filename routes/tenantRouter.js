@@ -48,8 +48,15 @@ import zoomIntegrationRoutes    from "./zoomIntegration.routes.js";
 
 
 import publicRoutes from "./public.routes.js";
+import { protect } from "../middlewares/auth.middleware.js";
+import { getTrialStatus } from "../controllers/freeTrial.controller.js";
 
 const router = express.Router();
+
+// Live trial-status read (see controllers/freeTrial.controller.js) — always
+// reflects the tenant's current plan_end_date, used by the frontend to keep
+// the trial banner/modal in sync instead of relying only on push-notification data.
+router.get("/trial-status", protect, getTrialStatus);
 
 router.use("/public", publicRoutes);
 router.use("/users", userRoutes);

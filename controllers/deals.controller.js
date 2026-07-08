@@ -204,17 +204,51 @@ export default {
   getAllDeals: async (req, res) => {
     try {
       const { Deal } = getModels(req);
+      const isAdmin = req.user.role.name === "Admin";
       let query = {};
-      if (req.user.role.name !== "Admin") query.assignedTo = req.user._id;
-      const { start, end } = req.query;
-      if (start && end) query.createdAt = { $gte: new Date(start), $lte: new Date(end + "T23:59:59.999Z") };
+      if (!isAdmin) query.assignedTo = req.user._id;
 
       // Rejected deals always live on the dedicated Reject Deals page instead —
       // never in the main list, for anyone (including Admin). Closed Won deals
-      // stay visible here for Admin only (read-only record-keeping copy) —
-      // the sales person's own list never shows a copy, same as Converted leads.
-      const hiddenStages = req.user.role.name !== "Admin" ? ["Rejected", "Closed Won"] : ["Rejected"];
-      query.stage = query.stage && !hiddenStages.includes(query.stage) ? query.stage : { $nin: hiddenStages };
+      // DO stay in the sales person's own list — it's their own deal, whether
+      // they or Admin closed it, and there's no separate "Won Deals" page for
+      // them to see it on otherwise.
+      query.stage = { $nin: ["Rejected"] };
+
+      const { start, end } = req.query;
+      const dealTypes = (req.query.dealType || "").split(",").map((s) => s.trim()).filter(Boolean);
+
+      if (start && end) {
+        const rangeStart = new Date(start);
+        const rangeEnd = new Date(end + "T23:59:59.999Z");
+        if (dealTypes.length) {
+          // Custom Range search (sales "Custom Range" panel): match each
+          // ticked type against its own meaningful date field — wonAt/lostDate
+          // for Won/Lost, createdAt for still-open Pending deals — instead of
+          // just createdAt, so e.g. a deal created weeks ago but won this week
+          // still matches a "Deal Won" search for this week.
+          const orConditions = [];
+          if (dealTypes.includes("won")) orConditions.push({ stage: "Closed Won", wonAt: { $gte: rangeStart, $lte: rangeEnd } });
+          if (dealTypes.includes("lost")) orConditions.push({ stage: "Closed Lost", lostDate: { $gte: rangeStart, $lte: rangeEnd } });
+          if (dealTypes.includes("pending")) orConditions.push({ stage: { $nin: ["Closed Won", "Closed Lost", "Rejected"] }, createdAt: { $gte: rangeStart, $lte: rangeEnd } });
+          query.$or = orConditions;
+        } else {
+          query.createdAt = { $gte: rangeStart, $lte: rangeEnd };
+        }
+      } else if (!isAdmin) {
+        // Default (non-search) fetch for a sales person: previous-day Closed
+        // Won / Closed Lost deals stay out of the list — only today's wins
+        // and losses show at initial render. Older ones are only reachable
+        // through the Custom Range search above. Pending (still-open) deals
+        // always show regardless of age.
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+        query.$or = [
+          { stage: { $nin: ["Closed Won", "Closed Lost"] } },
+          { stage: "Closed Won", wonAt: { $gte: todayStart, $lte: todayEnd } },
+          { stage: "Closed Lost", lostDate: { $gte: todayStart, $lte: todayEnd } },
+        ];
+      }
 
       const deals = await Deal.find(query)
         .populate("assignedTo", "firstName lastName email")
