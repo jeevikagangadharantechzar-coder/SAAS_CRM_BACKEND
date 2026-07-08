@@ -74,6 +74,18 @@ router.get("/preview", protect, async (req, res) => {
       '.csv': 'text/csv',
       '.json': 'application/json',
       '.xml': 'application/xml',
+      '.webm': 'audio/webm',
+      '.ogg': 'audio/ogg',
+      '.mp3': 'audio/mpeg',
+      '.mpeg': 'audio/mpeg',
+      '.mpga': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.m4a': 'audio/mp4',
+      '.aac': 'audio/aac',
+      '.opus': 'audio/opus',
+      '.amr': 'audio/amr',
+      '.caf': 'audio/x-caf',
+      '.3gp': 'audio/3gpp',
     };
     
     const contentType = contentTypes[ext] || 'application/octet-stream';

@@ -39,8 +39,24 @@ const storage = multer.diskStorage({
   },
 });
 
+// Voice notes: browsers often mislabel these (e.g. a WhatsApp "*.mpeg" voice
+// note is reported as mimetype "video/mpeg", not "audio/*"), so the "audio"
+// field is validated by extension instead of trusting the reported mimetype.
+const AUDIO_EXTENSIONS = [
+  ".mp3", ".wav", ".ogg", ".webm", ".m4a", ".aac",
+  ".opus", ".amr", ".mpeg", ".mpga", ".mp4", ".caf", ".3gp",
+];
+
 //  Allow images + all common document types
 const fileFilter = (req, file, cb) => {
+  if (file.fieldname === "audio") {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (file.mimetype.startsWith("audio/") || AUDIO_EXTENSIONS.includes(ext)) {
+      return cb(null, true);
+    }
+    return cb(new Error(`Audio file type "${file.mimetype || ext}" not allowed.`), false);
+  }
+
   const allowedMimes = [
     "image/jpeg",
     "image/jpg",
