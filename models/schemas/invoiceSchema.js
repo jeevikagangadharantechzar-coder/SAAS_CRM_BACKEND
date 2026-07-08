@@ -47,6 +47,8 @@ const invoiceSchema = new mongoose.Schema(
     billingAddress: { type: String, default: "" },
     clientTaxId:    { type: String, default: "" },
     poNumber:       { type: String, default: "" },
+    // Client's state, used to decide CGST+SGST (same state as the seller) vs IGST (different state)
+    clientState:    { type: String, default: "" },
 
     // Admin-defined ad-hoc fields, since invoice requirements vary by country/client
     // and can't all be anticipated up front

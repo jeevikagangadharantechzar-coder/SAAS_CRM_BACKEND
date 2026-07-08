@@ -94,7 +94,7 @@ export default {
 
   updateBusinessDetails: async (req, res) => {
     try {
-      const { address, phone, email, taxIdLabel, taxId } = req.body;
+      const { address, phone, email, taxIdLabel, taxId, state } = req.body;
       const Settings = getSettings(req);
       let settings = await Settings.findOne();
       if (!settings) settings = new Settings({});
@@ -103,6 +103,7 @@ export default {
       if (email !== undefined) settings.email = email;
       if (taxIdLabel !== undefined) settings.taxIdLabel = taxIdLabel;
       if (taxId !== undefined) settings.taxId = taxId;
+      if (state !== undefined) settings.state = state;
       await settings.save();
       res.status(200).json({ success: true, message: "Business details updated successfully", data: settings });
     } catch (error) {

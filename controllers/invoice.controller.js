@@ -44,9 +44,12 @@ export default {
 
       tax = Number(tax) || 0; discountValue = Number(discountValue) || 0;
       const subtotal = items.reduce((acc, item) => acc + (Number(item.price)||0) * (Number(item.quantity)||1), 0);
-      const taxAmount = taxType === "percentage" ? (subtotal * tax) / 100 : tax;
+      // Discount is applied first (on the raw subtotal), then tax is computed on what's left —
+      // matches the frontend invoice form and updateInvoice below.
       const discount  = discountType === "percentage" ? (subtotal * discountValue) / 100 : discountValue;
-      let total = subtotal + taxAmount - discount;
+      const discountedSubtotal = subtotal - discount;
+      const taxAmount = taxType === "percentage" ? (discountedSubtotal * tax) / 100 : tax;
+      let total = discountedSubtotal + taxAmount;
       if (total < 0) total = 0;
 
       const invoiceFields = { items, subtotal, tax, taxType, taxAmount, discountValue, discountType, discount, total, currency, assignTo, dueDate, status, createdBy: req.user._id, ...rest };
