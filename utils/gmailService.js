@@ -505,6 +505,7 @@ export async function sendEmailWithAttachments(to, subject, message, cc = "", bc
   }
 
   const boundary = `gmailbnd_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+  const altBoundary = `gmailalt_${Date.now()}_${Math.random().toString(36).substring(2)}`;
   const nl = "\r\n";
   const ccList = processEmailList(cc).join(", ");
   const bccList = processEmailList(bcc).join(", ");
@@ -519,15 +520,13 @@ export async function sendEmailWithAttachments(to, subject, message, cc = "", bc
   if (bccList) parts.push(`Bcc: ${bccList}`);
   parts.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, "");
 
-  parts.push(`--${boundary}`, `Content-Type: text/plain; charset="UTF-8"`, "Content-Transfer-Encoding: quoted-printable", "", message || " ", "");
-  parts.push(
-    `--${boundary}`,
-    `Content-Type: text/html; charset="UTF-8"`,
-    "Content-Transfer-Encoding: quoted-printable",
-    "",
-    `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${(message || " ").replace(/\n/g, "<br>")}</div>`,
-    ""
-  );
+  // text/plain and text/html must be alternatives of each other (client renders
+  // only one), not siblings in multipart/mixed — otherwise clients like Gmail
+  // display both, showing the raw HTML source above the rendered version.
+  parts.push(`--${boundary}`, `Content-Type: multipart/alternative; boundary="${altBoundary}"`, "");
+  parts.push(`--${altBoundary}`, `Content-Type: text/plain; charset="UTF-8"`, "Content-Transfer-Encoding: quoted-printable", "", (message || " ").replace(/<[^>]*>/g, ""), "");
+  parts.push(`--${altBoundary}`, `Content-Type: text/html; charset="UTF-8"`, "Content-Transfer-Encoding: quoted-printable", "", message || " ", "");
+  parts.push(`--${altBoundary}--`, "");
 
   for (const att of allAttachments) {
     const b64 = att.content.replace(/\s/g, "").match(/.{1,76}/g)?.join(nl) || att.content;

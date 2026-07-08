@@ -4,6 +4,7 @@ import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
 import * as zoomService from "../services/zoom.service.js";
 import { decrypt } from "../utils/crypto.js";
+import { getTenantPlanFeatures, isFeatureEnabled } from "../utils/planFeatures.js";
 
 const getModels = (req) => getTenantModels(req.tenantDB);
 
@@ -157,6 +158,15 @@ export default {
       let zoomPassword = null;
 
       if (meetingProvider === "zoom") {
+        const planFeatures = await getTenantPlanFeatures(req);
+        if (!isFeatureEnabled(planFeatures, "zoom_meetings")) {
+          return res.status(403).json({
+            success: false,
+            error: "This feature is not included in your current subscription plan.",
+            code: "FEATURE_NOT_INCLUDED",
+          });
+        }
+
         const zoomConfig = await getZoomConfig(req);
         if (!zoomService.isZoomConfigured(zoomConfig)) {
           return res.status(403).json({
@@ -175,6 +185,15 @@ export default {
         zoomStartUrl  = zoomMeeting.start_url;
         zoomPassword  = zoomMeeting.password || null;
       } else {
+        const planFeatures = await getTenantPlanFeatures(req);
+        if (!isFeatureEnabled(planFeatures, "google_meet_sync")) {
+          return res.status(403).json({
+            success: false,
+            error: "This feature is not included in your current subscription plan.",
+            code: "FEATURE_NOT_INCLUDED",
+          });
+        }
+
         if (!user?.googleAuth?.accessToken) {
           return res.status(403).json({
             success: false,
@@ -229,10 +248,16 @@ export default {
         creatorEmail:    user.email,
       });
 
-      const creatorName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email;
-      sendMeetingInvites(meeting, creatorName, user.email).catch((e) =>
-        console.error("Invite emails failed:", e.message, e)
-      );
+      // Google Calendar already emails attendees itself (sendUpdates: "all"
+      // above), sent from the organizer's own connected Google account. Only
+      // Zoom has no built-in invite email, so only send our own for that case
+      // — otherwise attendees get the invite twice.
+      if (meetingProvider === "zoom") {
+        const creatorName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email;
+        sendMeetingInvites(meeting, creatorName, user.email).catch((e) =>
+          console.error("Invite emails failed:", e.message, e)
+        );
+      }
 
       res.status(201).json({ success: true, meeting });
     } catch (err) {

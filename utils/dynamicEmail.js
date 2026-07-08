@@ -411,7 +411,10 @@ export async function sendPlanEmail({ to, vars }) {
     const subjectTemplate = settings?.planSubject || "Your {{planName}} Plan on {{platformName}}";
     subject = interpolate(subjectTemplate, allVars);
 
-    const bodyTemplate = settings?.planBody?.trim() ? settings.planBody : BEAUTIFUL_PLAN_BODY;
+    const storedPlan = settings?.planBody?.trim();
+    const bodyTemplate = (storedPlan && storedPlan.includes("{{startDate}}"))
+      ? storedPlan
+      : BEAUTIFUL_PLAN_BODY;
     html = interpolate(bodyTemplate, allVars);
   }
 

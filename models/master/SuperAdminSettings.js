@@ -3,10 +3,14 @@ import { masterConn } from "../../config/masterDB.js";
 
 const superAdminSettingsSchema = new mongoose.Schema(
   {
-    // Branding
+    // Tenant-facing branding (shown in emails and tenant login page)
     platformName: { type: String, default: "TZI CRM SaaS Platform" },
     platformLogo: { type: String, default: "" },
     supportEmail: { type: String, default: "" },
+
+    // Super admin panel branding (tab title + favicon, independent of tenant branding)
+    superAdminTitle:   { type: String, default: "" },
+    superAdminFavicon: { type: String, default: "" },
 
     // SMTP
     smtpHost:     { type: String, default: "" },

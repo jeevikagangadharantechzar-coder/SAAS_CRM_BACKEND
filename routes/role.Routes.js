@@ -1,8 +1,12 @@
 import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
 import { protect, adminOnly ,adminCreateOnly} from "../middlewares/auth.middleware.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
+
+router.use(checkPlanFeature("users_roles"));
+
 //create role
 router.post(
   "/",

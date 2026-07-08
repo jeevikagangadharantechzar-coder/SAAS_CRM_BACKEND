@@ -1,7 +1,9 @@
 import sendEmail from "../services/email.js";
+import { sendEmailWithAttachments } from "../utils/gmailService.js";
 import { notifyUser } from "../realtime/socket.js";
 import clientLTVController from "./clientLTVController.js";
 import { getTenantModels } from "../models/tenant/index.js";
+import SettingsLegacy from "../models/Settings.js";
 import {
   deleteNotificationsByEntity,
   deleteAllNotificationsByEntity,
@@ -23,6 +25,36 @@ import NotificationLegacy from "../models/notification.model.js";
 const getModels = (req) => {
   if (req.tenantDB) return getTenantModels(req.tenantDB);
   return { Deal: DealLegacy, Lead: LeadLegacy, Notification: NotificationLegacy };
+};
+
+const getSettings = (req) =>
+  req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
+
+// Notify the client themselves once their deal is marked Closed Won. Uses the
+// tenant's connected Gmail (Settings.invoiceSenderEmail) when available, same
+// as proposals/invoices, so it doesn't send from the generic shared mailbox.
+const sendClosedWonEmail = async (req, deal) => {
+  if (!deal.email) return;
+  try {
+    const Settings = getSettings(req);
+    const settings = await Settings.findOne();
+    const companyName = settings?.companyName || req.tenant?.name || "CRM Software";
+    const subject = `Congratulations! "${deal.dealName}" is now closed`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#333;max-width:600px;margin:auto;">
+        <p>Hi,</p>
+        <p>We're happy to let you know that your deal <strong>${deal.dealName}</strong> has been marked as <strong>Closed Won</strong>.</p>
+        <p>Thank you for choosing ${companyName}. We look forward to working with you.</p>
+      </div>
+    `;
+    if (settings?.invoiceSenderEmail) {
+      await sendEmailWithAttachments(deal.email, subject, html, "", "", [], [], settings.invoiceSenderEmail);
+    } else {
+      await sendEmail({ to: deal.email, subject, html });
+    }
+  } catch (err) {
+    console.error("Closed Won email error:", err.message);
+  }
 };
 
 const mapFileToAttachment = (file) => ({
@@ -261,6 +293,7 @@ export default {
       if (stage === "Closed Won" && previousStage !== "Closed Won") {
         notifyDealClosedWonAndArchiveTask(getModels(req), { deal, actorId: req.user._id, isAdminActor: isAdmin })
           .catch(err => console.error("notifyDealClosedWonAndArchiveTask error:", err));
+        sendClosedWonEmail(req, deal).catch(err => console.error("sendClosedWonEmail error:", err));
       }
 
       // Notify admins + the assigned sales person so targets refresh live
@@ -405,6 +438,7 @@ export default {
       if (stage === "Closed Won" && deal.stage !== "Closed Won") {
         notifyDealClosedWonAndArchiveTask(getModels(req), { deal: updatedDeal, actorId: req.user._id, isAdminActor: req.user.role.name === "Admin" })
           .catch(err => console.error("notifyDealClosedWonAndArchiveTask error:", err));
+        sendClosedWonEmail(req, updatedDeal).catch(err => console.error("sendClosedWonEmail error:", err));
       }
 
       // Admin edited general details (not just stage/follow-up) — notify the assignee

@@ -3,6 +3,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { protect } from "../middlewares/auth.middleware.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 import {
   getContacts,
   getMessages,
@@ -36,6 +37,7 @@ const chatUpload = multer({
 const router = express.Router();
 
 router.use(protect);
+router.use(checkPlanFeature("messages"));
 
 router.get("/contacts",                getContacts);
 router.get("/messages/:userId",        getMessages);

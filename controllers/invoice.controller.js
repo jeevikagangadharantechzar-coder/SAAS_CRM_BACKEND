@@ -190,10 +190,14 @@ export default {
         .populate("assignTo", "firstName lastName email role")
         .populate("items.deal", "dealName value stage");
       res.status(200).json(updated);
-      notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(updated._id), action: "updated", status: updateData.status });
+      try {
+        notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(updated._id), action: "updated", status: updateData.status });
+      } catch (notifyErr) {
+        console.error("invoice_updated notify error:", notifyErr);
+      }
     } catch (error) {
       console.error("Error updating invoice:", error);
-      res.status(500).json({ error: "Internal server error" });
+      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
     }
   },
 

@@ -10,6 +10,7 @@ import upload from "../middlewares/upload.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import UserLegacy from "../models/user.model.js";
 import checkPlanLimit from "../middlewares/checkPlanLimit.js";
+import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
 
@@ -44,6 +45,7 @@ router.post(
   "/create",
   protect,
   adminCreateOnly,
+  checkPlanFeature("users_roles"),
   checkPlanLimit("max_users_per_tenant"),
   upload.single("profileImage"),
   indexControllers.usersController.createUser,
@@ -53,6 +55,7 @@ router.put(
   "/update-user/:id",
   protect,
   adminCreateOnly,
+  checkPlanFeature("users_roles"),
   upload.single("profileImage"),
   indexControllers.usersController.updateUser,
 );
@@ -61,6 +64,7 @@ router.delete(
   "/delete-user/:id",
   protect,
   adminCreateOnly,
+  checkPlanFeature("users_roles"),
   indexControllers.usersController.deleteUser,
 );
 
