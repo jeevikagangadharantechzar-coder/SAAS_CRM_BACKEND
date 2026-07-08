@@ -733,4 +733,143 @@ export default {
       res.status(200).json({ message: "Follow-up updated successfully", deal });
     } catch (error) { console.error("Update follow-up error:", error); res.status(500).json({ message: error.message }); }
   },
+
+  // Full, unpaginated dataset for the Export-to-Excel button — same
+  // visibility rules as getAllDeals (own deals only for non-admin, rejected
+  // deals always excluded) but ignores any active search/filter state.
+  exportDeals: async (req, res) => {
+    try {
+      const { Deal } = getModels(req);
+      const query = {};
+      if (req.user.role.name !== "Admin") query.assignedTo = req.user._id;
+
+      const hiddenStages = req.user.role.name !== "Admin" ? ["Rejected", "Closed Won"] : ["Rejected"];
+      query.stage = { $nin: hiddenStages };
+
+      // Optional date range filter (by createdAt) — omit either/both to
+      // export without that bound; omit both to export everything.
+      const { startDate, endDate } = req.query;
+      if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate) query.createdAt.$gte = new Date(startDate);
+        if (endDate) query.createdAt.$lte = new Date(endDate + "T23:59:59.999Z");
+      }
+
+      const deals = await Deal.find(query)
+        .populate("assignedTo", "firstName lastName email")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const data = deals.map((deal) => ({
+        dealName:        deal.dealName || "",
+        companyName:     deal.companyName || "",
+        phoneNumber:     deal.phoneNumber || "",
+        dealTitle:       deal.dealTitle || "",
+        assignedTo:      deal.assignedTo?.email || "",
+        value:           deal.value || "",
+        currency:        deal.currency || "",
+        clientType:      deal.clientType || "",
+        discountGiven:   deal.discountGiven ?? "",
+        stage:           deal.stage || "",
+        email:           deal.email || "",
+        source:          deal.source || "",
+        companySize:     deal.companySize || "",
+        industry:        deal.industry || "",
+        requirement:     deal.requirement || "",
+        address:         deal.address || "",
+        country:         deal.country || "",
+        notes:           deal.notes || "",
+        followUpDate:    deal.followUpDate ? new Date(deal.followUpDate).toISOString().slice(0, 10) : "",
+        followUpComment: deal.followUpComment || "",
+        createdAt:       deal.createdAt ? new Date(deal.createdAt).toISOString().slice(0, 10) : "",
+      }));
+
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      console.error("Error exporting deals:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  // Bulk-create deals parsed from an uploaded Excel template. Mirrors
+  // createManualDeal's defaults but never fails the whole batch for one bad
+  // row — each row succeeds or fails independently and is reported back.
+  bulkImportDeals: async (req, res) => {
+    try {
+      const { Deal, User } = getModels(req);
+      const rows = Array.isArray(req.body.deals) ? req.body.deals : [];
+      if (!rows.length) {
+        return res.status(400).json({ success: false, message: "No deal rows provided" });
+      }
+
+      const allowedStages = ["Qualification", "Proposal Sent-Negotiation", "Invoice Sent", "Closed Won", "Closed Lost"];
+      const results = { created: 0, failed: 0, errors: [] };
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] || {};
+        const rowNum = i + 2;
+
+        try {
+          const dealName    = String(row.dealName || "").trim();
+          const companyName = String(row.companyName || "").trim();
+          const phoneNumber = String(row.phoneNumber || "").trim();
+
+          if (!dealName || !phoneNumber || !companyName) {
+            results.failed++;
+            results.errors.push(`Row ${rowNum}: dealName, phoneNumber, and companyName are required`);
+            continue;
+          }
+
+          let assignedTo = null;
+          const assignedToEmail = String(row.assignedTo || "").trim();
+          if (assignedToEmail) {
+            const matchedUser = await User.findOne({ email: new RegExp(`^${assignedToEmail}$`, "i") });
+            assignedTo = matchedUser?._id || null;
+          }
+
+          const stage = allowedStages.includes(row.stage) ? row.stage : "Qualification";
+          const currency = String(row.currency || "INR").trim() || "INR";
+          const formattedValue = row.value && String(row.value).trim() !== "" ? formatDealValue(row.value, currency) : "0";
+          const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
+          const companySize = ["Small", "Medium", "Large", "Enterprise"].includes(row.companySize) ? row.companySize : undefined;
+          const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
+            ? new Date(row.followUpDate)
+            : null;
+
+          const deal = new Deal({
+            dealName, companyName, phoneNumber,
+            dealTitle:  String(row.dealTitle || "").trim(),
+            assignedTo,
+            value:      formattedValue,
+            currency,
+            clientType,
+            discountGiven: Number(row.discountGiven) || 0,
+            stage,
+            email:      String(row.email || "").trim(),
+            source:     String(row.source || "").trim(),
+            companySize,
+            industry:   String(row.industry || "").trim(),
+            requirement: String(row.requirement || "").trim(),
+            address:    String(row.address || "").trim(),
+            country:    String(row.country || "").trim(),
+            notes:      String(row.notes || "").trim(),
+            followUpDate,
+            followUpComment: String(row.followUpComment || "").trim(),
+            stageHistory: [{ stage, movedAt: new Date(), movedBy: req.user._id }],
+          });
+
+          await deal.save();
+          results.created++;
+        } catch (rowErr) {
+          results.failed++;
+          results.errors.push(`Row ${rowNum}: ${rowErr.message}`);
+        }
+      }
+
+      res.status(200).json({ success: true, ...results });
+    } catch (error) {
+      console.error("Error bulk-importing deals:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
 };

@@ -35,6 +35,12 @@ const planFeaturesSchema = new mongoose.Schema(
     zoom_meetings:       { type: Boolean, default: true },
     messages:            { type: Boolean, default: true },
     chatbot:             { type: Boolean, default: true },
+    integration_facebook:  { type: Boolean, default: true },
+    integration_linkedin:  { type: Boolean, default: true },
+    integration_justdial:  { type: Boolean, default: true },
+    integration_indiamart: { type: Boolean, default: true },
+    integration_99acres:   { type: Boolean, default: true },
+    integration_sulekha:   { type: Boolean, default: true },
   },
   { _id: false }
 );

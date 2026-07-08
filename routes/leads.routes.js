@@ -18,6 +18,10 @@ router.get("/missed-followups", indexControllers.leadsController.getMissedFollow
 router.get("/rejected", adminOnly, indexControllers.leadsController.getRejectedLeads);
 router.post("/rejected/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteRejectedLeads);
 
+//  IMPORT / EXPORT ROUTES
+router.get("/export", indexControllers.leadsController.exportLeads);
+router.post("/bulk-import", adminOrSales, indexControllers.leadsController.bulkImportLeads);
+
 //  CREATE ROUTE
 router.post(
   "/create",

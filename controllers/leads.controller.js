@@ -768,4 +768,130 @@ export default {
       return res.status(400).json({ message: error.message });
     }
   },
+
+  // Full, unpaginated dataset for the Export-to-Excel button — same
+  // visibility rules as getLeads (own leads only for non-admin, rejected
+  // leads always excluded) but without the list page's pagination/filters.
+  exportLeads: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const query = {};
+      if (req.user.role.name !== "Admin") query.assignTo = req.user._id;
+
+      const hiddenStatuses = req.user.role.name !== "Admin" ? ["Rejected", "Converted"] : ["Rejected"];
+      query.status = { $nin: hiddenStatuses };
+
+      // Optional date range filter (by createdAt) — omit either/both to
+      // export without that bound; omit both to export everything.
+      const { startDate, endDate } = req.query;
+      if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate) query.createdAt.$gte = new Date(startDate);
+        if (endDate) query.createdAt.$lte = new Date(endDate + "T23:59:59.999Z");
+      }
+
+      const leads = await Lead.find(query)
+        .populate("assignTo", "firstName lastName email")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const data = leads.map((lead) => ({
+        leadName:     lead.leadName || "",
+        companyName:  lead.companyName || "",
+        phoneNumber:  lead.phoneNumber || "",
+        email:        lead.email || "",
+        source:       lead.source || "",
+        clientType:   lead.clientType || "",
+        industry:     lead.industry || "",
+        requirement:  lead.requirement || "",
+        assignTo:     lead.assignTo?.email || "",
+        address:      lead.address || "",
+        country:      lead.country || "",
+        status:       lead.status || "",
+        notes:        lead.notes || "",
+        followUpDate: lead.followUpDate ? new Date(lead.followUpDate).toISOString().slice(0, 10) : "",
+        createdAt:    lead.createdAt ? new Date(lead.createdAt).toISOString().slice(0, 10) : "",
+      }));
+
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      console.error("Error exporting leads:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  // Bulk-create leads parsed from an uploaded Excel template. Mirrors
+  // createLead's defaults (auto-assign, default status/followUpDate) but
+  // never fails the whole batch for one bad row — each row succeeds or
+  // fails independently and is reported back to the admin.
+  bulkImportLeads: async (req, res) => {
+    try {
+      const { Lead, User } = getModels(req);
+      const rows = Array.isArray(req.body.leads) ? req.body.leads : [];
+      if (!rows.length) {
+        return res.status(400).json({ success: false, message: "No lead rows provided" });
+      }
+
+      const allowedStatuses = ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"];
+      const results = { created: 0, failed: 0, errors: [] };
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] || {};
+        const rowNum = i + 2; // +1 for header row, +1 for 1-indexing
+
+        try {
+          const leadName    = String(row.leadName || "").trim();
+          const companyName = String(row.companyName || "").trim();
+          const phoneNumber = String(row.phoneNumber || "").trim();
+
+          if (!leadName || !companyName || !phoneNumber) {
+            results.failed++;
+            results.errors.push(`Row ${rowNum}: leadName, companyName, and phoneNumber are required`);
+            continue;
+          }
+
+          let assignTo = null;
+          const assignToEmail = String(row.assignTo || "").trim();
+          if (assignToEmail) {
+            const matchedUser = await User.findOne({ email: new RegExp(`^${assignToEmail}$`, "i") });
+            assignTo = matchedUser?._id || null;
+          }
+          if (!assignTo) assignTo = await pickNextSalesUser(User, Lead);
+
+          const status = allowedStatuses.includes(row.status) ? row.status : "Cold";
+          const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
+            ? new Date(row.followUpDate)
+            : new Date();
+          const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
+
+          const lead = new Lead({
+            leadName, companyName, phoneNumber,
+            email:       String(row.email || "").trim(),
+            source:      String(row.source || "").trim(),
+            clientType,
+            industry:    String(row.industry || "").trim(),
+            requirement: String(row.requirement || "").trim(),
+            assignTo,
+            address:     String(row.address || "").trim(),
+            country:     String(row.country || "").trim(),
+            status,
+            notes:       String(row.notes || "").trim(),
+            followUpDate,
+            lastReminderAt: null,
+          });
+
+          await lead.save();
+          results.created++;
+        } catch (rowErr) {
+          results.failed++;
+          results.errors.push(`Row ${rowNum}: ${rowErr.message}`);
+        }
+      }
+
+      res.status(200).json({ success: true, ...results });
+    } catch (error) {
+      console.error("Error bulk-importing leads:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
 };
