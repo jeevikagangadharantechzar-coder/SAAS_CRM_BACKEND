@@ -13,6 +13,9 @@ const settingsSchema = new mongoose.Schema(
     email:       { type: String, default: "" },
     taxIdLabel:  { type: String, default: "Tax ID" }, // e.g. "GSTIN", "VAT No.", "EIN"
     taxId:       { type: String, default: "" },
+    // Seller's own state — compared against an invoice's clientState to decide
+    // CGST+SGST (same state) vs IGST (different state) for Indian GST invoices
+    state:       { type: String, default: "" },
 
     bankDetails: {
       accountName:   { type: String, default: "" },

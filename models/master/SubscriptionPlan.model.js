@@ -39,6 +39,16 @@ const planFeaturesSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const planTierSchema = new mongoose.Schema(
+  {
+    billing_cycle:   { type: String, enum: ["monthly", "half_yearly", "yearly"], required: true },
+    price:           { type: Number, default: 0, min: 0 },
+    duration_months: { type: Number, default: 1, min: 1 },
+    grace_days:      { type: Number, default: 0, min: 0 },
+  },
+  { _id: false }
+);
+
 const subscriptionPlanSchema = new mongoose.Schema(
   {
     plan_name:            { type: String, required: true, trim: true },
@@ -50,7 +60,8 @@ const subscriptionPlanSchema = new mongoose.Schema(
     price_monthly:        { type: Number, default: 0, min: 0 },
     price_yearly:         { type: Number, default: 0, min: 0 },
     currency:             { type: String, default: "USD", maxlength: 3 },
-    billing_cycle:        { type: String, enum: ["monthly", "yearly", "one_time"], required: true },
+    billing_cycle:        { type: String, enum: ["monthly", "half_yearly", "yearly", "one_time"], default: "monthly" },
+    tiers:                { type: [planTierSchema], default: [] },
 
    // max_tenants:          { type: Number, default: 0 },
     max_users_per_tenant: { type: Number, default: 0 },
@@ -67,7 +78,10 @@ const subscriptionPlanSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-subscriptionPlanSchema.index({ plan_code: 1 }, { unique: true });
+subscriptionPlanSchema.index(
+  { plan_code: 1 },
+  { unique: true, partialFilterExpression: { is_deleted: false } }
+);
 subscriptionPlanSchema.index({ status: 1, is_visible: 1 });
 
 subscriptionPlanSchema.statics.getActivePlans = function () {
