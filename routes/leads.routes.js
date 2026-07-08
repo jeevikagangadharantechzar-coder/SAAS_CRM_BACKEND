@@ -35,7 +35,7 @@ router.patch("/:id/convert", adminOrAssigned, indexControllers.leadsController.c
 router.patch("/:id/status", adminOrAssigned, indexControllers.leadsController.updateLeadStatus);
 router.patch("/:id/reject", adminOnly, indexControllers.leadsController.rejectLead);
 router.patch("/:id/followup", protect, indexControllers.leadsController.updateFollowUpDate);
-router.post("/:id/followup-notes", adminOrAssigned, indexControllers.leadsController.addFollowUpNote);
+router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);
 
 //  GENERIC ROUTE WITH :id LAST (catch-all for /:id)
 router.get("/getLead/:id", adminOrAssigned, indexControllers.leadsController.getLeadById);

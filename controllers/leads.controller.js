@@ -662,7 +662,13 @@ export default {
       const lead = await Lead.findById(req.params.id);
       if (!lead) return res.status(404).json({ message: "Lead not found" });
 
-      lead.followUpNotes.push({ note: note.trim(), createdAt: new Date() });
+      const newNote = { note: note.trim(), createdAt: new Date() };
+      if (req.file) {
+        newNote.audioPath = `/uploads/leads/${req.file.filename}`;
+        newNote.audioName = req.file.originalname;
+      }
+
+      lead.followUpNotes.push(newNote);
       await lead.save();
 
       // A logged follow-up note means this lead is no longer "missed" —
