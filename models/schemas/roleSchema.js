@@ -24,6 +24,12 @@ const permissionsSchema = new mongoose.Schema(
     assigned_tasks:      { type: Boolean, default: true },
     task_management:     { type: Boolean, default: false },
     target_management:   { type: Boolean, default: false },
+    my_targets:          { type: Boolean, default: true },
+    meetings:            { type: Boolean, default: false },
+    deal_analysis:       { type: Boolean, default: true },
+    won_analysis:        { type: Boolean, default: true },
+    loss_analysis:       { type: Boolean, default: true },
+    messages:            { type: Boolean, default: true },
   },
   { _id: false }
 );

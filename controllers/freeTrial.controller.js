@@ -7,6 +7,32 @@ import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
 import userService from "../services/user.service.js";
+import { getCalendarDaysLeft, formatExpiryDate } from "../utils/trialDate.util.js";
+
+// Live read of the tenant's actual plan_end_date — the frontend banner/modal
+// pulls this on mount and on socket reconnect instead of trusting only the
+// snapshot inside a push notification's meta, which can go stale if that
+// notification was queued while the browser was offline and gets replayed
+// after later DB edits changed the real date (see FreeTrialContext.jsx).
+export const getTrialStatus = async (req, res) => {
+  const tenant = req.tenant;
+  if (!tenant) return res.status(404).json({ success: false, message: "Tenant not found" });
+
+  const isTrial = tenant.plan_status === "trial";
+  const hasEndDate = !!tenant.plan_end_date;
+  const daysLeft = hasEndDate ? getCalendarDaysLeft(tenant.plan_end_date) : null;
+  const isExpired =
+    tenant.plan_status === "expired" || (hasEndDate && new Date() > new Date(tenant.plan_end_date));
+
+  return res.status(200).json({
+    success: true,
+    planStatus: tenant.plan_status,
+    isTrial,
+    isExpired,
+    daysLeft: isTrial ? daysLeft : null,
+    expiryDate: hasEndDate ? formatExpiryDate(tenant.plan_end_date) : null,
+  });
+};
 
 dotenv.config();
 
@@ -122,6 +148,68 @@ function trialWelcomeEmailHtml({ name, email, password, businessName, loginUrl, 
 </body>
 </html>`;
 }
+
+export const listFreeTrialSignups = async (req, res) => {
+  try {
+    const { search = "", period = "", startDate, endDate, page = 1, limit = 10 } = req.query;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
+
+    const filter = {};
+
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filter.$or = [{ name: regex }, { email: regex }, { businessName: regex }, { slug: regex }];
+    }
+
+    const now = new Date();
+    if (period === "weekly") {
+      filter.createdAt = { $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) };
+    } else if (period === "monthly") {
+      filter.createdAt = { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) };
+    } else if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(`${startDate}T00:00:00.000Z`);
+      if (endDate) filter.createdAt.$lte = new Date(`${endDate}T23:59:59.999Z`);
+    }
+
+    const [total, signups] = await Promise.all([
+      FreeTrialSignup.countDocuments(filter),
+      FreeTrialSignup.find(filter)
+        .populate("tenant", "isActive plan_status plan_end_date slug")
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum),
+    ]);
+
+    res.json({
+      success: true,
+      data: signups,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.max(Math.ceil(total / limitNum), 1),
+      },
+    });
+  } catch (err) {
+    console.error("List free trial signups error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
+export const deleteFreeTrialSignup = async (req, res) => {
+  try {
+    const signup = await FreeTrialSignup.findByIdAndDelete(req.params.id);
+    if (!signup) {
+      return res.status(404).json({ success: false, error: "Signup record not found" });
+    }
+    res.json({ success: true, message: "Free trial signup record deleted" });
+  } catch (err) {
+    console.error("Delete free trial signup error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
 
 export const validateFreeTrialSignup = (req, res, next) => {
   const { name, email, password, businessName } = req.body;

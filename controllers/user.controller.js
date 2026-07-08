@@ -201,10 +201,14 @@ const loginUser = async (req, res) => {
 
       if (tenant && (tenant.plan_status === "expired" || (tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)))) {
         const isTrial = tenant.plan_status === "trial";
+        const expiryDate = tenant.plan_end_date
+          ? new Date(tenant.plan_end_date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+          : null;
         return res.status(403).json({
           success: false,
           planExpired: true,
           trialExpired: isTrial,
+          expiryDate,
           message: isTrial
             ? "Your 14 days free trial has ended. Please upgrade your plan to continue using the CRM."
             : "Your subscription validity has expired. Please contact superadmin to renew."
