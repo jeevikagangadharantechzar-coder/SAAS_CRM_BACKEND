@@ -130,9 +130,9 @@ async function getFromAddress(settings) {
   return `"${fromName}" <${fromEmail}>`;
 }
 
-// Detect old plain-text default body so we can upgrade it automatically
+// Detect old or outdated body so we can upgrade it automatically
 function isOldPlainBody(body) {
-  return !body || body.trim().startsWith("<p>Hi {{adminName}},</p>");
+  return !body || body.trim().startsWith("<p>Hi {{adminName}},</p>") || !body.includes("{{slug}}");
 }
 
 /**
