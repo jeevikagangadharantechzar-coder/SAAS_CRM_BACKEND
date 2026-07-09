@@ -259,7 +259,7 @@ export const createTenant = async (req, res) => {
     // Send welcome email using dynamic template from SuperAdminSettings
     sendWelcomeEmail({
       to: adminEmail,
-      vars: { adminName, email: adminEmail, password: plainPassword, loginUrl },
+      vars: { adminName, email: adminEmail, password: plainPassword, loginUrl, slug },
     }).catch(err => console.error("Welcome email failed:", err.message));
 
     // Send plan details or trial info email
