@@ -30,6 +30,8 @@ import auditLogSchema from "../schemas/auditLogSchema.js";
 import meetingSchema             from "../schemas/meetingSchema.js";
 import googleIntegrationSchema   from "../schemas/googleIntegrationSchema.js";
 import zoomIntegrationSchema     from "../schemas/zoomIntegrationSchema.js";
+import deviceSessionSchema       from "../schemas/deviceSessionSchema.js";
+import userLocationSchema        from "../schemas/userLocationSchema.js";
 
 
 const MODEL_MAP = [
@@ -65,6 +67,8 @@ const MODEL_MAP = [
   ["Meeting",             meetingSchema],
   ["GoogleIntegration",  googleIntegrationSchema],
   ["ZoomIntegration",    zoomIntegrationSchema],
+  ["DeviceSession",      deviceSessionSchema],
+  ["UserLocation",       userLocationSchema],
 ];
 
 /**
@@ -118,5 +122,7 @@ export function getTenantModels(conn) {
     Meeting:             conn.model("Meeting"),
     GoogleIntegration:   conn.model("GoogleIntegration"),
     ZoomIntegration:     conn.model("ZoomIntegration"),
+    DeviceSession:       conn.model("DeviceSession"),
+    UserLocation:        conn.model("UserLocation"),
   };
 }
