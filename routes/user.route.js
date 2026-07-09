@@ -24,9 +24,9 @@ router.post("/reset-password/:token", indexControllers.usersController.resetPass
 router.get("/device-request/:id/status", indexControllers.usersController.getDeviceRequestStatus);
 
 // Admin-only device login approval queue
-router.get("/device-requests", protect, adminCreateOnly, indexControllers.usersController.listDeviceRequests);
-router.patch("/device-requests/:id/approve", protect, adminCreateOnly, indexControllers.usersController.approveDeviceRequest);
-router.patch("/device-requests/:id/reject", protect, adminCreateOnly, indexControllers.usersController.rejectDeviceRequest);
+router.get("/device-requests", protect, adminCreateOnly, checkPlanFeature("device_login_requests"), indexControllers.usersController.listDeviceRequests);
+router.patch("/device-requests/:id/approve", protect, adminCreateOnly, checkPlanFeature("device_login_requests"), indexControllers.usersController.approveDeviceRequest);
+router.patch("/device-requests/:id/reject", protect, adminCreateOnly, checkPlanFeature("device_login_requests"), indexControllers.usersController.rejectDeviceRequest);
 
 router.get("/me", protect, indexControllers.usersController.getMe);
 
