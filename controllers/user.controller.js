@@ -6,10 +6,13 @@ import crypto from "crypto";
 import userService from "../services/user.service.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import { sendNotificationToAdmins } from "../services/notificationService.js";
+import { buildWelcomeEmail, sendWelcomeEmail } from "../utils/dynamicEmail.js";
+import { sendEmailWithAttachments } from "../utils/gmailService.js";
 
 // Legacy fallback for non-tenant routes
 import UserLegacy from "../models/user.model.js";
 import StreakLegacy from "../models/streak.model.js";
+import SettingsLegacy from "../models/Settings.js";
 import Tenant from "../models/master/Tenant.js";
 import { getTenantDB } from "../config/tenantDB.js";
 
@@ -102,6 +105,35 @@ const resolveDeviceSlot = async (req, user, tenantDB) => {
 };
 
 
+// Sends login credentials to a newly created user. If the tenant has connected
+// their own Gmail (Settings.invoiceSenderEmail — same account used for invoices),
+// the email is sent as that account via the Gmail API; otherwise it falls back
+// to the platform's shared mailbox (same template used for tenant welcome emails).
+const sendNewUserWelcomeEmail = async ({ req, firstName, lastName, email, password }) => {
+  const Settings = req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
+  const settings = await Settings.findOne();
+
+  const loginUrl = req.tenant?.slug
+    ? `${process.env.FRONTEND_URL}/${req.tenant.slug}/login`
+    : `${process.env.FRONTEND_URL}/login`;
+
+  const vars = {
+    adminName: `${firstName} ${lastName}`.trim(),
+    email,
+    password,
+    loginUrl,
+    slug: req.tenant?.slug || "",
+    brandName: settings?.companyName || undefined,
+  };
+
+  if (settings?.invoiceSenderEmail) {
+    const { subject, html } = await buildWelcomeEmail({ vars });
+    await sendEmailWithAttachments(email, subject, html, "", "", [], [], settings.invoiceSenderEmail);
+  } else {
+    await sendWelcomeEmail({ to: email, vars });
+  }
+};
+
 const createUser = async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
@@ -130,6 +162,14 @@ const createUser = async (req, res) => {
         return res.status(400).json({ success: false, message: "Date of birth must be valid. User must be between 18 and 100 years old" });
       }
 
+      if (email) {
+        const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+        if (existingUser) {
+          if (req.file) fs.unlinkSync(req.file.path);
+          return res.status(400).json({ success: false, message: "Email already exists" });
+        }
+      }
+
       const hashedPassword = await userService.hashPassword(password);
       const profileImage = req.file ? req.file.filename : null;
       const user = await User.create({
@@ -137,6 +177,15 @@ const createUser = async (req, res) => {
         role, status, gender, address, dateOfBirth, profileImage,
       });
       res.status(201).json(user);
+
+      // Email the new user their login credentials — the password they/the admin
+      // typed in the form, not a generated one. Fire-and-forget so a mail failure
+      // never fails user creation. Email is optional on this form, so skip silently
+      // if none was given.
+      if (email) {
+        sendNewUserWelcomeEmail({ req, firstName, lastName, email, password })
+          .catch((err) => console.error("New user welcome email failed:", err.message));
+      }
     } catch (err) {
       if (req.file) fs.unlinkSync(req.file.path);
       res.status(500).json({ message: err.message });

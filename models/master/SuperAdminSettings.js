@@ -4,7 +4,7 @@ import { masterConn } from "../../config/masterDB.js";
 const superAdminSettingsSchema = new mongoose.Schema(
   {
     // Tenant-facing branding (shown in emails and tenant login page)
-    platformName: { type: String, default: "TZI CRM SaaS Platform" },
+    platformName: { type: String, default: "TZI CRM " },
     platformLogo: { type: String, default: "" },
     supportEmail: { type: String, default: "" },
 
