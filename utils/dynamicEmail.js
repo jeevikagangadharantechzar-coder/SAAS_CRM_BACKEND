@@ -57,7 +57,7 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
                         </td>
                       </tr>
                       <tr>
-                        <td style="padding:6px 0;color:#666;font-size:14px;">Slug</td>
+                        <td style="padding:8px 0;color:#666;font-size:14px;width:90px;">WorkSpace</td>
                         <td style="padding:6px 0;">
                           <span style="background:#fff;border:1px solid #d0dcff;border-radius:4px;padding:4px 12px;font-family:monospace;font-size:15px;color:#1a73e8;font-weight:700;letter-spacing:1px;">{{slug}}</span>
                         </td>
