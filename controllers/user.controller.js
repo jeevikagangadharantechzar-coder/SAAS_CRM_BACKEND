@@ -5,6 +5,7 @@ import sendEmail from "../utils/sendEmail.js";
 import crypto from "crypto";
 import userService from "../services/user.service.js";
 import { getTenantModels } from "../models/tenant/index.js";
+import { sendNotificationToAdmins } from "../services/notificationService.js";
 
 // Legacy fallback for non-tenant routes
 import UserLegacy from "../models/user.model.js";
@@ -14,11 +15,12 @@ import { getTenantDB } from "../config/tenantDB.js";
 
 dotenv.config();
 
-const generateToken = (id, tenant = null, tokenVersion = 0) =>
+const generateToken = (id, tenant = null, tokenVersion = 0, sessionId = null) =>
   jwt.sign(
     {
       id,
       tokenVersion,
+      ...(sessionId ? { sessionId } : {}),
       ...(tenant
         ? { dbName: tenant.dbName, slug: tenant.slug, tenantId: tenant._id }
         : {}),
@@ -26,6 +28,78 @@ const generateToken = (id, tenant = null, tokenVersion = 0) =>
     process.env.SECRET_KEY,
     { expiresIn: "1d" }
   );
+
+/**
+ * Enforces "one web + one mobile device at a time" for Sales users only.
+ * Returns:
+ *   { ok: true, sessionId }                — slot free or same device, proceed with login
+ *   { ok: false, pendingId, message }       — a session of this deviceType is already
+ *                                             active elsewhere; admin approval required
+ * Admins and any role other than Sales are completely unaffected (returns
+ * { ok: true, sessionId: null } immediately) — this only ever runs for Sales,
+ * and only when the caller actually provides deviceType/deviceId.
+ */
+const resolveDeviceSlot = async (req, user, tenantDB) => {
+  const roleName = (user.role?.name || "").toLowerCase();
+  const { deviceType, deviceId, deviceLabel } = req.body;
+
+  if (roleName !== "sales" || !tenantDB || !deviceType || !deviceId) {
+    return { ok: true, sessionId: null };
+  }
+
+  const { DeviceSession } = getTenantModels(tenantDB);
+
+  // Same device re-authenticating (token expired, manual re-login, etc.) —
+  // always allowed, just rotate the session id.
+  const existingForDevice = await DeviceSession.findOne({
+    userId: user._id, deviceId, status: "active",
+  });
+  if (existingForDevice) {
+    const sessionId = crypto.randomUUID();
+    existingForDevice.sessionId = sessionId;
+    existingForDevice.lastActiveAt = new Date();
+    existingForDevice.deviceLabel = deviceLabel || existingForDevice.deviceLabel;
+    await existingForDevice.save();
+    return { ok: true, sessionId };
+  }
+
+  // Is the slot for this deviceType (web/mobile) already occupied by a
+  // different device?
+  const activeOfType = await DeviceSession.findOne({
+    userId: user._id, deviceType, status: "active",
+  });
+
+  if (!activeOfType) {
+    const sessionId = crypto.randomUUID();
+    await DeviceSession.create({
+      userId: user._id, deviceType, deviceId, deviceLabel: deviceLabel || "",
+      sessionId, status: "active", requestedAt: new Date(), decidedAt: new Date(),
+      lastActiveAt: new Date(), ipAddress: req.ip || "",
+    });
+    return { ok: true, sessionId };
+  }
+
+  // Slot occupied by another device — needs admin approval.
+  const pending = await DeviceSession.create({
+    userId: user._id, deviceType, deviceId, deviceLabel: deviceLabel || "",
+    sessionId: null, status: "pending", requestedAt: new Date(), ipAddress: req.ip || "",
+  });
+
+  sendNotificationToAdmins(
+    `${user.firstName} ${user.lastName} is requesting to log in from a new ${deviceType} device (${deviceLabel || "unknown device"}).`,
+    "device_login_request",
+    { deviceRequestId: String(pending._id), userId: String(user._id), deviceType },
+    { title: "Device Login Request", referenceId: String(pending._id) },
+    [],
+    tenantDB
+  ).catch((err) => console.error("Device login request notification error:", err));
+
+  return {
+    ok: false,
+    pendingId: pending._id,
+    message: `You're already logged in on another ${deviceType}. Waiting for admin approval to continue here.`,
+  };
+};
 
 
 const createUser = async (req, res) => {
@@ -215,6 +289,18 @@ const loginUser = async (req, res) => {
         });
       }
 
+      // One web + one mobile device at a time for Sales — a third device
+      // waits on admin approval instead of logging straight in.
+      const deviceSlot = await resolveDeviceSlot(req, user, req.tenantDB);
+      if (!deviceSlot.ok) {
+        return res.status(202).json({
+          success: false,
+          requiresApproval: true,
+          requestId: deviceSlot.pendingId,
+          message: deviceSlot.message,
+        });
+      }
+
       let isDbRefreshed = false;
       if (tenant) {
         isDbRefreshed = tenant.isDbRefreshed || false;
@@ -260,7 +346,7 @@ const loginUser = async (req, res) => {
         profileImage: user.profileImage,
         role: user.role,
         isDbRefreshed,
-        token: generateToken(user._id, tenant, user.tokenVersion || 0),
+        token: generateToken(user._id, tenant, user.tokenVersion || 0, deviceSlot.sessionId),
       });
     } catch (error) {
       console.error("Login error:", error);
@@ -274,8 +360,21 @@ const logoutUser = async (req, res) => {
       const user = await User.findById(req.user.id);
       if (!user) return res.status(404).json({ message: "User not found" });
 
-      // Invalidate current token by incrementing version
-      user.tokenVersion = (user.tokenVersion || 0) + 1;
+      // Sales users on a device-tracked session (req.sessionId set by protect())
+      // only end THIS device's session — bumping tokenVersion here would also
+      // kill their other still-legitimate device (web + mobile can both be
+      // active at once). Every other role keeps the original "logout
+      // everywhere" behavior via tokenVersion.
+      if (req.sessionId && req.tenantDB) {
+        const { DeviceSession } = getTenantModels(req.tenantDB);
+        await DeviceSession.findOneAndUpdate(
+          { sessionId: req.sessionId },
+          { status: "revoked" }
+        );
+      } else {
+        // Invalidate current token by incrementing version
+        user.tokenVersion = (user.tokenVersion || 0) + 1;
+      }
 
       if (!user.loginHistory) user.loginHistory = [];
       const latestEntry = [...user.loginHistory].reverse().find((e) => !e.logout);
@@ -373,6 +472,106 @@ const resetPassword = async (req, res) => {
 };
 
 
+// Polled by the waiting client (no token yet, so this route is public) once
+// it receives a 202 "requiresApproval" response from loginUser.
+const getDeviceRequestStatus = async (req, res) => {
+  try {
+    if (!req.tenantDB) return res.status(404).json({ success: false, message: "Workspace not found" });
+    const { DeviceSession, User } = getTenantModels(req.tenantDB);
+
+    const session = await DeviceSession.findById(req.params.id);
+    if (!session) return res.status(404).json({ success: false, message: "Request not found" });
+
+    if (session.status === "pending") {
+      return res.status(200).json({ success: true, status: "pending" });
+    }
+    if (session.status === "rejected" || session.status === "revoked") {
+      return res.status(200).json({ success: true, status: "rejected" });
+    }
+
+    // Approved — mint the token now, same shape loginUser returns so the
+    // client can complete login exactly as if it had succeeded immediately.
+    const user = await User.findById(session.userId).populate("role");
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    return res.status(200).json({
+      success: true,
+      status: "active",
+      _id: user._id,
+      name: `${user.firstName} ${user.lastName}`,
+      email: user.email,
+      profileImage: user.profileImage,
+      role: user.role,
+      token: generateToken(user._id, req.tenant, user.tokenVersion || 0, session.sessionId),
+    });
+  } catch (error) {
+    console.error("Get device request status error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin-only — list every device login request still awaiting a decision.
+const listDeviceRequests = async (req, res) => {
+  try {
+    const { DeviceSession } = getTenantModels(req.tenantDB);
+    const requests = await DeviceSession.find({ status: "pending" })
+      .populate("userId", "firstName lastName email")
+      .sort({ requestedAt: -1 });
+    res.status(200).json({ success: true, requests });
+  } catch (error) {
+    console.error("List device requests error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin-only — approve a pending device request. Revokes whatever device of
+// the same type was previously active, since only one of each is allowed.
+const approveDeviceRequest = async (req, res) => {
+  try {
+    const { DeviceSession } = getTenantModels(req.tenantDB);
+    const pending = await DeviceSession.findById(req.params.id);
+    if (!pending || pending.status !== "pending")
+      return res.status(404).json({ success: false, message: "Request not found or already decided" });
+
+    await DeviceSession.updateMany(
+      { userId: pending.userId, deviceType: pending.deviceType, status: "active" },
+      { status: "revoked" }
+    );
+
+    pending.status = "active";
+    pending.sessionId = crypto.randomUUID();
+    pending.decidedAt = new Date();
+    pending.decidedBy = req.user._id;
+    pending.lastActiveAt = new Date();
+    await pending.save();
+
+    res.status(200).json({ success: true, message: "Device approved" });
+  } catch (error) {
+    console.error("Approve device request error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin-only — reject a pending device request.
+const rejectDeviceRequest = async (req, res) => {
+  try {
+    const { DeviceSession } = getTenantModels(req.tenantDB);
+    const pending = await DeviceSession.findById(req.params.id);
+    if (!pending || pending.status !== "pending")
+      return res.status(404).json({ success: false, message: "Request not found or already decided" });
+
+    pending.status = "rejected";
+    pending.decidedAt = new Date();
+    pending.decidedBy = req.user._id;
+    await pending.save();
+
+    res.status(200).json({ success: true, message: "Device rejected" });
+  } catch (error) {
+    console.error("Reject device request error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export default {
   createUser,
   getUsers,
@@ -383,5 +582,9 @@ export default {
   logoutUser,
   updatePassword,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  getDeviceRequestStatus,
+  listDeviceRequests,
+  approveDeviceRequest,
+  rejectDeviceRequest,
 };

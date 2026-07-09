@@ -18,6 +18,16 @@ router.post("/login", indexControllers.usersController.loginUser);
 router.post("/forgot-password", indexControllers.usersController.forgotPassword);
 router.post("/reset-password/:token", indexControllers.usersController.resetPassword);
 
+// Polled by a client waiting on device-login approval — no token exists yet
+// at this point, so this stays public (tenant is still resolved via the URL
+// slug by the resolveTenant middleware applied ahead of this router).
+router.get("/device-request/:id/status", indexControllers.usersController.getDeviceRequestStatus);
+
+// Admin-only device login approval queue
+router.get("/device-requests", protect, adminCreateOnly, indexControllers.usersController.listDeviceRequests);
+router.patch("/device-requests/:id/approve", protect, adminCreateOnly, indexControllers.usersController.approveDeviceRequest);
+router.patch("/device-requests/:id/reject", protect, adminCreateOnly, indexControllers.usersController.rejectDeviceRequest);
+
 router.get("/me", protect, indexControllers.usersController.getMe);
 
 router.get("/", protect, adminOrSales, indexControllers.usersController.getUsers);
