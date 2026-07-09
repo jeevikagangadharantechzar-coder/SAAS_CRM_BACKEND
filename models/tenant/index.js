@@ -12,7 +12,6 @@ import whatsappMsgSchema   from "../schemas/whatsappMessageSchema.js";
 import clientLTVSchema     from "../schemas/clientLTVSchema.js";
 import supportTicketSchema from "../schemas/supportTicketSchema.js";
 import clientReviewSchema  from "../schemas/clientReviewSchema.js";
-import renewalSchema       from "../schemas/renewalSchema.js";
 import streakSchema        from "../schemas/streakSchema.js";
 import settingsSchema      from "../schemas/settingsSchema.js";
 import emailTemplateSchema from "../schemas/emailTemplateSchema.js";
@@ -48,7 +47,6 @@ const MODEL_MAP = [
   ["ClientLTV",        clientLTVSchema],
   ["SupportTicket",    supportTicketSchema],
   ["ClientReview",     clientReviewSchema],
-  ["Renewal",          renewalSchema],
   ["Streak",           streakSchema],
   ["Settings",         settingsSchema],
   ["EmailTemplate",    emailTemplateSchema],
@@ -102,7 +100,6 @@ export function getTenantModels(conn) {
     ClientLTV:       conn.model("ClientLTV"),
     SupportTicket:   conn.model("SupportTicket"),
     ClientReview:    conn.model("ClientReview"),
-    Renewal:         conn.model("Renewal"),
     Streak:          conn.model("Streak"),
     Settings:        conn.model("Settings"),
     EmailTemplate:   conn.model("EmailTemplate"),

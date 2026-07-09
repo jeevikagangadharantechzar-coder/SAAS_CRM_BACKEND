@@ -73,21 +73,62 @@ const DEAL_POPULATE_SUBFIELDS = [
   { path: "stageHistory.movedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } },
 ];
 
+const LEAD_SELECT_FIELDS = "leadName companyName status convertedBy phoneNumber email createdAt statusHistory";
+const LEAD_POPULATE_SUBFIELDS = { path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+
 export const LEAD_DEAL_POPULATE = [
   { path: "assignedTo", select: "firstName lastName email profileImage" },
   { path: "createdBy", select: "firstName lastName email" },
   {
     path: "leadRef",
-    select: "leadName companyName status convertedBy phoneNumber email createdAt",
-    populate: { path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } },
+    select: LEAD_SELECT_FIELDS,
+    populate: LEAD_POPULATE_SUBFIELDS,
   },
   {
     path: "dealRef",
     select: DEAL_SELECT_FIELDS,
     populate: DEAL_POPULATE_SUBFIELDS,
   },
+  // Full multi-link history — populated the same way as the singular
+  // primary fields above so the frontend can render every linked item,
+  // not just the most-recently-linked one.
+  {
+    path: "leadRefs",
+    select: LEAD_SELECT_FIELDS,
+    populate: LEAD_POPULATE_SUBFIELDS,
+  },
+  {
+    path: "dealRefs",
+    select: DEAL_SELECT_FIELDS,
+    populate: DEAL_POPULATE_SUBFIELDS,
+  },
   { path: "history.by", select: "firstName lastName" },
 ];
+
+// Backward-compat derived array for tasks created before the leadRefs/
+// dealRefs migration — they only ever set the singular leadRef/dealRef.
+// Called on every lean task object returned to the frontend so leadRefs/
+// dealRefs are ALWAYS present, regardless of when the task was created.
+// Never touches leadRef/dealRef themselves — those stay exactly as read by
+// every existing Progress Card / cron / badge computation.
+// Mongoose Map-typed fields (leadDueDates/dealDueDates) come back as a native
+// Map instance from a hydrated document's .toObject() (e.g. after
+// findByIdAndUpdate), but as a plain object from a .lean() query — JSON.stringify
+// silently drops a Map's contents (res.json would send "{}"), so every read
+// path is normalized here to guarantee a plain { id: isoDateString } object.
+function toPlainDateMap(mapField) {
+  if (!mapField) return {};
+  if (mapField instanceof Map) return Object.fromEntries(mapField);
+  return mapField;
+}
+
+export function attachLinkedArrays(taskObj) {
+  taskObj.leadRefs = (taskObj.leadRefs && taskObj.leadRefs.length) ? taskObj.leadRefs : (taskObj.leadRef ? [taskObj.leadRef] : []);
+  taskObj.dealRefs = (taskObj.dealRefs && taskObj.dealRefs.length) ? taskObj.dealRefs : (taskObj.dealRef ? [taskObj.dealRef] : []);
+  taskObj.leadDueDates = toPlainDateMap(taskObj.leadDueDates);
+  taskObj.dealDueDates = toPlainDateMap(taskObj.dealDueDates);
+  return taskObj;
+}
 
 // A task can be linked to a Lead that has SINCE been converted into a Deal —
 // nobody goes back and re-points task.dealRef at the resulting deal, so the
@@ -96,23 +137,48 @@ export const LEAD_DEAL_POPULATE = [
 // partial) status history and never the deal-stage portion of the journey
 // (Qualification → ... → Closed Won) that happened after conversion — this
 // is why the full Stage Journey appeared to "not show" for those tasks.
-// Batch-resolves the corresponding Deal (by leadId) for every such task and
-// attaches it as `convertedDealRef`, so the frontend can render the SAME full
-// DealStageJourney it already shows for directly deal-linked tasks.
+// Batch-resolves the corresponding Deal (by leadId) for every converted lead
+// across the task's FULL multi-link array (leadRefs), not just the single
+// primary leadRef. A task can hold several converted leads at once (e.g. one
+// already Closed Won, another just added during an edit) — each needs its
+// own resolved deal journey, independent of which lead happens to be primary
+// right now. Without this, adding a new lead/deal on edit re-points
+// task.leadRef (task.controller.js updateTask always sets it to the
+// LAST-added id) — demoting a previously-primary, already-converted/won lead
+// to non-primary, which silently dropped its whole Stage Journey and made it
+// render as a bare "Converted" lead card instead of its full Won deal card.
+// `convertedDealRefsByLeadId` (keyed by lead id, plain object) is the new,
+// complete lookup every card should use. `convertedDealRef` (singular) is
+// still set for the primary lead too, purely for backward compatibility with
+// any other existing reader of that single field.
 export async function attachConvertedDealJourney(Deal, tasks) {
-  const needsLookup = tasks.filter((t) => t.leadRef && t.leadRef.status === "Converted" && !t.dealRef);
-  if (!needsLookup.length) return tasks;
+  const leadIdToEntries = new Map(); // leadId -> [{ task, isPrimary }]
+  tasks.forEach((t) => {
+    const leadItems = (t.leadRefs && t.leadRefs.length) ? t.leadRefs : (t.leadRef ? [t.leadRef] : []);
+    const primaryLeadId = t.leadRef?._id ? String(t.leadRef._id) : (t.leadRef ? String(t.leadRef) : null);
+    leadItems.forEach((lead) => {
+      if (!lead || lead.status !== "Converted") return;
+      const leadId = String(lead._id);
+      if (!leadIdToEntries.has(leadId)) leadIdToEntries.set(leadId, []);
+      leadIdToEntries.get(leadId).push({ task: t, isPrimary: leadId === primaryLeadId });
+    });
+  });
+  if (!leadIdToEntries.size) return tasks;
 
-  const leadIds = needsLookup.map((t) => t.leadRef._id);
+  const leadIds = [...leadIdToEntries.keys()];
   const deals = await Deal.find({ leadId: { $in: leadIds } })
     .select(DEAL_SELECT_FIELDS)
     .populate(DEAL_POPULATE_SUBFIELDS)
     .lean();
   const dealByLeadId = new Map(deals.map((d) => [String(d.leadId), d]));
 
-  needsLookup.forEach((t) => {
-    const deal = dealByLeadId.get(String(t.leadRef._id));
-    if (deal) t.convertedDealRef = deal;
+  leadIdToEntries.forEach((entries, leadId) => {
+    const deal = dealByLeadId.get(leadId);
+    if (!deal) return;
+    entries.forEach(({ task: t, isPrimary }) => {
+      t.convertedDealRefsByLeadId = { ...(t.convertedDealRefsByLeadId || {}), [leadId]: deal };
+      if (isPrimary && !t.dealRef) t.convertedDealRef = deal;
+    });
   });
   return tasks;
 }

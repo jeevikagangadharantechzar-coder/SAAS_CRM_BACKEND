@@ -2,16 +2,15 @@ import { getTenantModels } from "../models/tenant/index.js";
 import ClientLTVLegacy     from "../models/ClientLTV.js";
 import DealLegacy          from "../models/deals.model.js";
 import SupportTicketLegacy from "../models/SupportTicket.js";
-import RenewalLegacy       from "../models/Renewal.js";
 import ClientReviewLegacy  from "../models/ClientReview.js";
 import PricingRisk         from "../models/PricingRisk.js"; // not a tenant model
 
 const getLTVModels = (req) => {
   if (req?.tenantDB) {
-    const { ClientLTV, Deal, SupportTicket, Renewal, ClientReview } = getTenantModels(req.tenantDB);
-    return { ClientLTV, Deal, SupportTicket, Renewal, ClientReview, PricingRisk };
+    const { ClientLTV, Deal, SupportTicket, ClientReview } = getTenantModels(req.tenantDB);
+    return { ClientLTV, Deal, SupportTicket, ClientReview, PricingRisk };
   }
-  return { ClientLTV: ClientLTVLegacy, Deal: DealLegacy, SupportTicket: SupportTicketLegacy, Renewal: RenewalLegacy, ClientReview: ClientReviewLegacy, PricingRisk };
+  return { ClientLTV: ClientLTVLegacy, Deal: DealLegacy, SupportTicket: SupportTicketLegacy, ClientReview: ClientReviewLegacy, PricingRisk };
 };
 
 // ── Internal helpers (accept models as last param) ──────────────────────────
@@ -104,21 +103,23 @@ async function recalculateMetricsFromDeal(companyId, companyName, models) {
   const progress       = latestReview?.progress || "Average";
   const clientHealthScore = latestReview?.clientHealthScore || 50;
   const delivered      = latestReview?.delivered || false;
+  const manualTickets  = latestReview?.supportTickets || 0;
+  const totalTickets   = manualTickets + supportMetrics.total;
 
-  const metrics = { totalRevenue, supportTickets: supportMetrics.total, clientHealthScore, daysSinceFollowUp: followUpM.daysSince, progress };
+  const metrics = { totalRevenue, supportTickets: totalTickets, clientHealthScore, daysSinceFollowUp: followUpM.daysSince, progress };
   const classification = classifyDeal(metrics);
   const riskFactors = [];
   if (followUpM.daysSince > 60) riskFactors.push(`No follow-up for ${followUpM.daysSince} days`);
-  if (supportMetrics.total > 10) riskFactors.push(`${supportMetrics.total} support tickets`);
+  if (totalTickets > 10) riskFactors.push(`${totalTickets} support tickets`);
   if (clientHealthScore < 50) riskFactors.push(`Low health score: ${clientHealthScore}`);
   const reason = buildReason(classification, { ...metrics }, riskFactors);
-  const pricing = calcPricing({ progress, supportTickets: supportMetrics.total, clientHealthScore, totalRevenue, delivered });
+  const pricing = calcPricing({ progress, supportTickets: totalTickets, clientHealthScore, totalRevenue, delivered });
 
   let ltv = await ClientLTV.findOne({ companyId });
   if (!ltv) ltv = new ClientLTV({ companyId, companyName });
   Object.assign(ltv, {
     totalRevenue, totalDeals: 1, lastFollowUpDate: followUpM.lastDate, daysSinceFollowUp: followUpM.daysSince,
-    totalSupportTickets: supportMetrics.total, supportPoints: supportMetrics.supportPoints, followUpCount: followUpM.count,
+    totalSupportTickets: totalTickets, supportPoints: supportMetrics.supportPoints, followUpCount: followUpM.count,
     openSupportTickets: supportMetrics.open, lastSupportDate: supportMetrics.lastSupportDate, riskFactors,
     classification, classificationReason: reason, valueCategory: getValueCategory(totalRevenue),
     customerLifetimeValue: totalRevenue, clientHealthScore, delivered, progress,
@@ -136,23 +137,24 @@ async function calculateMetricsFromReview(companyId, companyName, reviewData, mo
   if (!deal) return null;
   const numericMatch   = deal.value?.toString().match(/\d+/g);
   const totalRevenue   = numericMatch ? parseInt(numericMatch.join("")) : 0;
-  const supportTickets = reviewData.supportTickets !== undefined ? reviewData.supportTickets : 0;
+  const supportTicketsFromReview = reviewData.supportTickets !== undefined ? reviewData.supportTickets : 0;
   const supportMetrics = await getSupportMetrics(companyId, SupportTicket);
+  const totalTickets = supportTicketsFromReview + supportMetrics.total;
   const followUpM      = await getFollowUpMetrics(companyId, Deal);
-  const metrics = { totalRevenue, supportTickets, clientHealthScore: reviewData.clientHealthScore || 50, daysSinceFollowUp: followUpM.daysSince, progress: reviewData.progress };
+  const metrics = { totalRevenue, supportTickets: totalTickets, clientHealthScore: reviewData.clientHealthScore || 50, daysSinceFollowUp: followUpM.daysSince, progress: reviewData.progress };
   const classification = classifyDeal(metrics);
   const riskFactors = [];
   if (followUpM.daysSince > 60) riskFactors.push(`No follow-up for ${followUpM.daysSince} days`);
-  if (supportTickets > 10) riskFactors.push(`${supportTickets} support tickets`);
+  if (totalTickets > 10) riskFactors.push(`${totalTickets} support tickets`);
   if (reviewData.clientHealthScore < 50) riskFactors.push(`Low health score: ${reviewData.clientHealthScore}`);
   const reason = buildReason(classification, metrics, riskFactors);
-  const pricing = calcPricing({ progress: reviewData.progress, supportTickets, clientHealthScore: reviewData.clientHealthScore, totalRevenue, delivered: reviewData.delivered });
+  const pricing = calcPricing({ progress: reviewData.progress, supportTickets: totalTickets, clientHealthScore: reviewData.clientHealthScore, totalRevenue, delivered: reviewData.delivered });
 
   let ltv = await ClientLTV.findOne({ companyId });
   if (!ltv) ltv = new ClientLTV({ companyId, companyName });
   Object.assign(ltv, {
     totalRevenue, totalDeals: 1, lastFollowUpDate: followUpM.lastDate, daysSinceFollowUp: followUpM.daysSince,
-    totalSupportTickets: supportTickets, supportPoints: supportMetrics.supportPoints, followUpCount: followUpM.count,
+    totalSupportTickets: totalTickets, supportPoints: supportMetrics.supportPoints, followUpCount: followUpM.count,
     openSupportTickets: supportMetrics.open, lastSupportDate: supportMetrics.lastSupportDate, riskFactors,
     classification, classificationReason: reason, valueCategory: getValueCategory(totalRevenue),
     customerLifetimeValue: totalRevenue, clientHealthScore: reviewData.clientHealthScore,
@@ -365,7 +367,7 @@ export default {
 
   getClientCLV: async (req, res) => {
     try {
-      const { ClientLTV, Deal, SupportTicket, Renewal, ClientReview } = getLTVModels(req);
+      const { ClientLTV, Deal, SupportTicket, ClientReview } = getLTVModels(req);
       const decoded = decodeURIComponent(req.params.companyName);
       const { dealId } = req.query;
       let client = dealId
@@ -374,17 +376,16 @@ export default {
       if (!client) {
         const deals = await Deal.find({ companyName: decoded, stage:"Closed Won" }).populate("assignedTo","firstName lastName").sort({ wonAt:-1, createdAt:-1 }).lean();
         if (!deals.length) return res.status(404).json({ success:false, message:"Client not found" });
-        return res.json({ success:true, data:{ client:{ companyName:decoded, totalRevenue:0, daysSinceFollowUp:0, supportPoints:0 }, deals, tickets:[], renewals:[], reviews:[], pricingRisk:null, supportAnalysis:{ totalTickets:0, openTickets:0, lastSupportDate:null, ticketsPerMonth:0, avgResolutionDays:0, supportToRevenueRatio:0, supportPoints:0 } } });
+        return res.json({ success:true, data:{ client:{ companyName:decoded, totalRevenue:0, daysSinceFollowUp:0, supportPoints:0 }, deals, tickets:[], reviews:[], pricingRisk:null, supportAnalysis:{ totalTickets:0, openTickets:0, lastSupportDate:null, ticketsPerMonth:0, avgResolutionDays:0, supportToRevenueRatio:0, supportPoints:0 } } });
       }
       const dynamicDays = client.lastFollowUpDate ? calcDaysSince(client.lastFollowUpDate) : 365;
       const clientWithDays = { ...client, daysSinceFollowUp: dynamicDays };
       const activeDeal = client.companyId ? await Deal.findOne({ _id: client.companyId, stage:"Closed Won" }).lean() : null;
-      if (!activeDeal) return res.json({ success:true, data:{ client:clientWithDays, deals:[], tickets:[], renewals:[], reviews:[], pricingRisk:null, supportAnalysis:{ totalTickets:0, openTickets:0, lastSupportDate:null, ticketsPerMonth:0, avgResolutionDays:0, supportToRevenueRatio:0, supportPoints:client.supportPoints||0 } } });
+      if (!activeDeal) return res.json({ success:true, data:{ client:clientWithDays, deals:[], tickets:[], reviews:[], pricingRisk:null, supportAnalysis:{ totalTickets:0, openTickets:0, lastSupportDate:null, ticketsPerMonth:0, avgResolutionDays:0, supportToRevenueRatio:0, supportPoints:client.supportPoints||0 } } });
 
-      const [deals, tickets, renewals, reviews, pricingRisk] = await Promise.all([
+      const [deals, tickets, reviews, pricingRisk] = await Promise.all([
         Deal.find({ companyName:decoded, stage:"Closed Won" }).populate("assignedTo","firstName lastName").sort({ wonAt:-1, createdAt:-1 }).lean(),
         client.companyId ? SupportTicket.find({ companyId: client.companyId }).sort({ openedAt:-1 }).lean() : [],
-        Renewal.find({ companyName: decoded }).sort({ renewalDate:-1 }).lean(),
         client.companyId ? ClientReview.find({ companyId: client.companyId }).sort({ reviewedAt:-1 }).lean() : [],
         client.companyId ? PricingRisk.findOne({ companyId: client.companyId, status:"Active" }).lean() : null,
       ]);
@@ -397,7 +398,7 @@ export default {
       const avgResolutionDays = closed.length>0 ? (closed.reduce((s,t)=>s+(t.resolutionTimeHours||0),0)/24/closed.length) : 0;
       const supportToRevenueRatio = client.totalRevenue>0 ? (totalTickets/client.totalRevenue)*1000000 : 0;
 
-      res.json({ success:true, data:{ client:clientWithDays, deals, tickets, renewals, reviews, pricingRisk, supportAnalysis:{ totalTickets, openTickets, lastSupportDate, ticketsPerMonth:ticketsPerMonth.toFixed(1), avgResolutionDays:avgResolutionDays.toFixed(1), supportToRevenueRatio:supportToRevenueRatio.toFixed(2), supportPoints:client.supportPoints||0 } } });
+      res.json({ success:true, data:{ client:clientWithDays, deals, tickets, reviews, pricingRisk, supportAnalysis:{ totalTickets, openTickets, lastSupportDate, ticketsPerMonth:ticketsPerMonth.toFixed(1), avgResolutionDays:avgResolutionDays.toFixed(1), supportToRevenueRatio:supportToRevenueRatio.toFixed(2), supportPoints:client.supportPoints||0 } } });
     } catch (error) {
       console.error("Get client error:", error);
       res.status(500).json({ success:false, message:error.message });
@@ -443,19 +444,7 @@ export default {
     }
   },
 
-  createRenewal: async (req, res) => {
-    try {
-      const { Renewal } = getLTVModels(req);
-      const { dealId, companyName, renewalDate, renewalValue, currency } = req.body;
-      if (!dealId || !companyName || !renewalDate || !renewalValue) return res.status(400).json({ success:false, message:"Missing required fields" });
-      const renewal = new Renewal({ dealId, companyName, renewalDate, renewalValue: parseFloat(String(renewalValue).replace(/[^0-9.-]+/g,""))||0, currency:currency||"INR", assignedTo:req.user?._id||req.user?.id });
-      await renewal.save();
-      res.status(201).json({ success:true, data:renewal });
-    } catch (error) {
-      console.error("Create renewal error:", error);
-      res.status(500).json({ success:false, message:error.message });
-    }
-  },
+
 
   getPricingRisks: async (req, res) => {
     try {

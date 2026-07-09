@@ -6,6 +6,8 @@ const router = express.Router();
 
 router.get("/", protect, taskController.getTasks);
 router.post("/", protect, taskController.createTask);
+router.get("/progress/mine", protect, taskController.getMyTaskProgress);
+router.get("/progress/all", protect, taskController.getTaskProgressAll);
 router.get("/admin-activity", protect, taskController.getAdminActivity);
 router.post("/admin-activity/dismiss", protect, taskController.dismissAdminActivity);
 router.get("/reason-notes/all", protect, taskController.getAllReasonNotes);

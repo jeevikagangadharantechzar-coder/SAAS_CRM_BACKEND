@@ -17,6 +17,7 @@
 import axios  from "axios";
 import crypto from "crypto";
 import { getTenantModels } from "../models/tenant/index.js";
+import { isFeatureEnabled } from "../utils/planFeatures.js";
 
 const GRAPH_API  = "https://graph.facebook.com/v21.0";
 const APP_ID     = process.env.META_APP_ID;
@@ -459,7 +460,7 @@ const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
     const { registerTenantModels, getTenantModels } = await import("../models/tenant/index.js");
 
     // Find all active tenants
-    const tenants = await TenantMaster.find({ status: "active" });
+    const tenants = await TenantMaster.find({ status: "active" }).populate("plan_id");
 
     for (const tenant of tenants) {
       const conn = await getTenantDB(tenant.slug);
@@ -473,6 +474,13 @@ const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
       });
 
       if (!integration) continue;
+
+      // The tenant may have connected this page before their plan dropped
+      // Facebook integration — stop ingesting leads for them going forward.
+      if (!isFeatureEnabled(tenant.plan_id?.features, "integration_facebook")) {
+        console.log(`⏭️  Skipping Meta lead for tenant ${tenant.slug} — integration_facebook disabled on plan`);
+        break;
+      }
 
       // Found the tenant — fetch lead details from Graph API
       let leadData;

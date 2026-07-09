@@ -5,6 +5,7 @@ import LinkedInMapping from "../models/master/LinkedInMapping.js";
 import LinkedInWebhookLog from "../models/master/LinkedInWebhookLog.js";
 import Tenant from "../models/master/Tenant.js";
 import { getTenantDB } from "../config/tenantDB.js";
+import { isFeatureEnabled } from "../utils/planFeatures.js";
 
 const LINKEDIN_API = "https://api.linkedin.com/v2";
 
@@ -567,6 +568,19 @@ export const processLinkedInLeadWebhook = async (req, res) => {
         leadFormUrn,
         status: "failed",
         error: "Tenant integration inactive or not found",
+      });
+      return;
+    }
+
+    // The tenant may have connected LinkedIn before their plan dropped this
+    // integration — stop ingesting leads for them going forward.
+    const tenantMaster = await Tenant.findOne({ dbName: mapping.dbName }).populate("plan_id");
+    if (!isFeatureEnabled(tenantMaster?.plan_id?.features, "integration_linkedin")) {
+      await LinkedInWebhookLog.create({
+        payload,
+        leadFormUrn,
+        status: "ignored",
+        error: "integration_linkedin disabled on tenant's plan",
       });
       return;
     }
