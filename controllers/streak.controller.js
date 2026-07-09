@@ -39,10 +39,13 @@ function calcWorkHours(loginHistory) {
   const todayLogs = (loginHistory || []).filter(l => l?.login && new Date(l.login).toDateString() === todayStr);
   if (!todayLogs.length) return "—";
   const earliest = todayLogs.reduce((e, l) => new Date(l.login) < new Date(e.login) ? l : e);
+  const latestSession = todayLogs.reduce((e, l) => new Date(l.login) > new Date(e.login) ? l : e);
+  if (!latestSession.logout) {
+    return `${formatTime(earliest.login)} - Ongoing`;
+  }
   const logouts = todayLogs.filter(l => l.logout);
-  if (!logouts.length) return `${formatTime(earliest.login)} - Ongoing`;
-  const latest = logouts.reduce((e, l) => new Date(l.logout) > new Date(e.logout) ? l : e);
-  return `${formatTime(earliest.login)} - ${formatTime(latest.logout)}`;
+  const latestLogout = logouts.reduce((e, l) => new Date(l.logout) > new Date(e.logout) ? l : e);
+  return `${formatTime(earliest.login)} - ${formatTime(latestLogout.logout)}`;
 }
 
 function getStatus(rate) {
