@@ -676,6 +676,7 @@ export const approveUpgradeRequest = async (req, res) => {
     // 3. Update Tenant fields
     tenant.plan_id = plan._id;
     tenant.plan_status = "active";
+    tenant.plan_billing_cycle = request.billing_cycle || plan.billing_cycle || "";
     tenant.plan_start_date = new Date();
     tenant.plan_end_date = new Date(Date.now() + request.login_days * 24 * 60 * 60 * 1000);
     tenant.isDbRefreshed = true;
