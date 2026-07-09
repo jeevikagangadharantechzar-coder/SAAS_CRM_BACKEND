@@ -32,7 +32,7 @@ const broadcastStatus = (userId, dbName, isOnline) => {
   for (const [uid, sockets] of Object.entries(connectedUsers)) {
     if (uid === String(userId) || !sockets?.length) continue;
     sockets.forEach((s) => {
-      if (!dbName || s.handshake.auth.dbName === dbName) {
+      if (!dbName || !s.handshake.auth.dbName || s.handshake.auth.dbName === dbName) {
         s.emit("chat:user_status", { userId, isOnline, name: info?.name || "" });
       }
     });
@@ -42,7 +42,7 @@ const broadcastStatus = (userId, dbName, isOnline) => {
 const getOnlineUsersList = (dbName) => {
   const entries = Array.from(onlineUsers.entries());
   const filtered = dbName
-    ? entries.filter(([, info]) => info?.dbName === dbName)
+    ? entries.filter(([, info]) => !info?.dbName || info.dbName === dbName)
     : entries;
   return filtered.map(([userId, info]) => ({ userId, name: info?.name || "" }));
 };

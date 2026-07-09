@@ -76,6 +76,21 @@ export const protect = async (req, res, next) => {
       return res.status(401).json({ message: "Token expired or invalidated" });
     }
 
+    // Per-device session check — only present on tokens issued through the
+    // Sales device-approval flow (see user.controller.js loginUser). Tokens
+    // without a sessionId (Admin, other roles, pre-existing sessions) skip
+    // this entirely and behave exactly as before.
+    if (decoded.sessionId) {
+      req.sessionId = decoded.sessionId;
+      if (req.tenantDB) {
+        const { DeviceSession } = getTenantModels(req.tenantDB);
+        const session = await DeviceSession.findOne({ sessionId: decoded.sessionId });
+        if (!session || session.status !== "active") {
+          return res.status(401).json({ message: "This session was ended. Please sign in again.", sessionRevoked: true });
+        }
+      }
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({ message: "Token failed" });
