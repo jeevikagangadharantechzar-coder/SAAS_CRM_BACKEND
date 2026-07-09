@@ -241,6 +241,23 @@ export async function getLabelCounts(email) {
   return counts;
 }
 
+// ─── HELPER: base64-wrap a MIME body ──────────────────────────────────────────
+// Used instead of a claimed-but-not-actually-applied "quoted-printable" encoding,
+// which corrupts any literal "=" in the body (e.g. every style="..." attribute).
+function toBase64Lines(str) {
+  return Buffer.from(str, "utf8").toString("base64").match(/.{1,76}/g)?.join("\r\n") || "";
+}
+
+// ─── HELPER: RFC 2047-encode a header value ───────────────────────────────────
+// Headers (Subject, etc.) are supposed to be 7-bit ASCII; raw UTF-8 bytes dropped
+// in directly (e.g. an em dash "—") get misread by mail clients as Latin-1,
+// producing mojibake like "Ã¢Â€Â”". Non-ASCII values must be wrapped as an
+// RFC 2047 encoded-word instead.
+function encodeMimeHeader(str) {
+  if (!str || /^[\x00-\x7F]*$/.test(str)) return str || "";
+  return `=?UTF-8?B?${Buffer.from(str, "utf8").toString("base64")}?=`;
+}
+
 // ─── HELPER: case-insensitive header lookup ───────────────────────────────────
 function getHeader(headers, name) {
   if (!headers || !Array.isArray(headers)) return "";
@@ -514,7 +531,7 @@ export async function sendEmailWithAttachments(to, subject, message, cc = "", bc
     "MIME-Version: 1.0",
     `To: ${emailList.join(", ")}`,
     `From: ${fromEmail}`,
-    `Subject: ${subject || "(No Subject)"}`,
+    `Subject: ${encodeMimeHeader(subject || "(No Subject)")}`,
   ];
   if (ccList) parts.push(`Cc: ${ccList}`);
   if (bccList) parts.push(`Bcc: ${bccList}`);
@@ -523,9 +540,15 @@ export async function sendEmailWithAttachments(to, subject, message, cc = "", bc
   // text/plain and text/html must be alternatives of each other (client renders
   // only one), not siblings in multipart/mixed — otherwise clients like Gmail
   // display both, showing the raw HTML source above the rendered version.
+  //
+  // Bodies are base64-encoded (not left raw under a claimed "quoted-printable"
+  // encoding) because HTML full of style="..." attributes is packed with literal
+  // "=" characters — the quoted-printable escape char — which Gmail's decoder
+  // then mangles, silently stripping every inline style and leaving only
+  // unstyled default tag rendering.
   parts.push(`--${boundary}`, `Content-Type: multipart/alternative; boundary="${altBoundary}"`, "");
-  parts.push(`--${altBoundary}`, `Content-Type: text/plain; charset="UTF-8"`, "Content-Transfer-Encoding: quoted-printable", "", (message || " ").replace(/<[^>]*>/g, ""), "");
-  parts.push(`--${altBoundary}`, `Content-Type: text/html; charset="UTF-8"`, "Content-Transfer-Encoding: quoted-printable", "", message || " ", "");
+  parts.push(`--${altBoundary}`, `Content-Type: text/plain; charset="UTF-8"`, "Content-Transfer-Encoding: base64", "", toBase64Lines((message || " ").replace(/<[^>]*>/g, "")), "");
+  parts.push(`--${altBoundary}`, `Content-Type: text/html; charset="UTF-8"`, "Content-Transfer-Encoding: base64", "", toBase64Lines(message || " "), "");
   parts.push(`--${altBoundary}--`, "");
 
   for (const att of allAttachments) {
@@ -592,11 +615,11 @@ export async function saveDraft(to, subject, message, cc = "", bcc = "", attachm
 
   const boundary = `gmailbnd_${Date.now()}`;
   const nl = "\r\n";
-  const parts = ["MIME-Version: 1.0", `To: ${to}`, `From: ${email}`, `Subject: ${subject || "(No Subject)"}`];
+  const parts = ["MIME-Version: 1.0", `To: ${to}`, `From: ${email}`, `Subject: ${encodeMimeHeader(subject || "(No Subject)")}`];
   if (cc) parts.push(`Cc: ${cc}`);
   if (bcc) parts.push(`Bcc: ${bcc}`);
   parts.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, "");
-  parts.push(`--${boundary}`, `Content-Type: text/plain; charset="UTF-8"`, "Content-Transfer-Encoding: quoted-printable", "", message || " ", "");
+  parts.push(`--${boundary}`, `Content-Type: text/plain; charset="UTF-8"`, "Content-Transfer-Encoding: base64", "", toBase64Lines(message || " "), "");
 
   for (const att of allAtts) {
     const b64 = att.content.replace(/\s/g, "").match(/.{1,76}/g)?.join(nl) || att.content;

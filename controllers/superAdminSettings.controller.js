@@ -16,7 +16,9 @@ async function getOrCreate() {
     const isDefaultMissingLogo =
       settings.welcomeBody.includes("© {{year}} {{platformName}}") &&
       !settings.welcomeBody.includes("{{logoImgTag}}");
-    if (isOldPlain || isDefaultMissingLogo) {
+    // Any cached body predating the {{brandName}} template revision is stale too
+    const isMissingBrandName = !settings.welcomeBody.includes("{{brandName}}");
+    if (isOldPlain || isDefaultMissingLogo || isMissingBrandName) {
       settings.welcomeBody = BEAUTIFUL_WELCOME_BODY;
       dirty = true;
     }
