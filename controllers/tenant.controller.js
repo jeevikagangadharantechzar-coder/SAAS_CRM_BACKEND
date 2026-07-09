@@ -25,7 +25,7 @@ function generatePassword(length = 12) {
     .join("");
 }
 
-function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantName }) {
+function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantName, slug }) {
   const firstName = adminName.split(" ")[0];
   return `
 <!DOCTYPE html>
@@ -74,6 +74,10 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
                         <td style="padding:6px 0;">
                           <span style="background:#fff;border:1px solid #d0dcff;border-radius:4px;padding:4px 12px;font-family:monospace;font-size:15px;color:#1a73e8;font-weight:700;letter-spacing:1px;">${password}</span>
                         </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0;color:#666;font-size:14px;">Slug</td>
+                        <td style="padding:6px 0;color:#111;font-size:14px;font-weight:600;">${slug}</td>
                       </tr>
                     </table>
                   </td>
@@ -676,6 +680,7 @@ export const approveUpgradeRequest = async (req, res) => {
     // 3. Update Tenant fields
     tenant.plan_id = plan._id;
     tenant.plan_status = "active";
+    tenant.plan_billing_cycle = request.billing_cycle || plan.billing_cycle || "";
     tenant.plan_start_date = new Date();
     tenant.plan_end_date = new Date(Date.now() + request.login_days * 24 * 60 * 60 * 1000);
     tenant.isDbRefreshed = true;
@@ -702,16 +707,18 @@ export const approveUpgradeRequest = async (req, res) => {
 
     // Send plan summary email with start/end dates
     const fmt = (d) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
-    const price = plan.billing_cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
+    const approvedCycle = request.billing_cycle || plan.billing_cycle || "monthly";
+    const approvedTier  = plan.tiers?.find((t) => t.billing_cycle === approvedCycle);
+    const approvedPrice = approvedTier?.price ?? (approvedCycle === "yearly" ? plan.price_yearly : approvedCycle === "half_yearly" ? 0 : plan.price_monthly) ?? 0;
     sendPlanEmail({
       to: tenant.adminEmail,
       vars: {
         adminName: tenant.adminName,
         planName: plan.plan_name,
         planType: plan.plan_type,
-        price,
+        price: approvedPrice,
         currency: plan.currency,
-        billingCycle: plan.billing_cycle,
+        billingCycle: approvedCycle,
         maxUsers: plan.max_users_per_tenant,
         description: plan.description,
         startDate: fmt(tenant.plan_start_date),
