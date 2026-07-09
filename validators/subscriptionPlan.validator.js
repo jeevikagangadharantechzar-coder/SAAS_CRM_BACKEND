@@ -11,6 +11,7 @@ const VALID_FEATURE_KEYS = [
   "target_management", "meetings", "google_meet_sync", "zoom_meetings", "messages", "chatbot",
   "integration_facebook", "integration_linkedin", "integration_justdial",
   "integration_indiamart", "integration_99acres", "integration_sulekha",
+  "live_tracking", "device_login_requests",
 ];
 
 const fail = (res, message) =>

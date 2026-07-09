@@ -15,6 +15,7 @@ import StreakLegacy from "../models/streak.model.js";
 import SettingsLegacy from "../models/Settings.js";
 import Tenant from "../models/master/Tenant.js";
 import { getTenantDB } from "../config/tenantDB.js";
+import { isFeatureEnabled } from "../utils/planFeatures.js";
 
 dotenv.config();
 
@@ -42,12 +43,21 @@ const generateToken = (id, tenant = null, tokenVersion = 0, sessionId = null) =>
  * { ok: true, sessionId: null } immediately) — this only ever runs for Sales,
  * and only when the caller actually provides deviceType/deviceId.
  */
-const resolveDeviceSlot = async (req, user, tenantDB) => {
+const resolveDeviceSlot = async (req, user, tenantDB, tenant) => {
   const roleName = (user.role?.name || "").toLowerCase();
   const { deviceType, deviceId, deviceLabel } = req.body;
 
   if (roleName !== "sales" || !tenantDB || !deviceType || !deviceId) {
     return { ok: true, sessionId: null };
+  }
+
+  if (tenant) {
+    const tenantWithPlan = tenant.plan_id?.features
+      ? tenant
+      : await Tenant.findById(tenant._id).populate("plan_id");
+    if (!isFeatureEnabled(tenantWithPlan?.plan_id?.features, "device_login_requests")) {
+      return { ok: true, sessionId: null };
+    }
   }
 
   const { DeviceSession } = getTenantModels(tenantDB);
@@ -340,7 +350,7 @@ const loginUser = async (req, res) => {
 
       // One web + one mobile device at a time for Sales — a third device
       // waits on admin approval instead of logging straight in.
-      const deviceSlot = await resolveDeviceSlot(req, user, req.tenantDB);
+      const deviceSlot = await resolveDeviceSlot(req, user, req.tenantDB, tenant);
       if (!deviceSlot.ok) {
         return res.status(202).json({
           success: false,
@@ -394,6 +404,7 @@ const loginUser = async (req, res) => {
         email: user.email,
         profileImage: user.profileImage,
         role: user.role,
+        slug: tenant?.slug || null,
         isDbRefreshed,
         token: generateToken(user._id, tenant, user.tokenVersion || 0, deviceSlot.sessionId),
       });
@@ -525,6 +536,17 @@ const resetPassword = async (req, res) => {
 // it receives a 202 "requiresApproval" response from loginUser.
 const getDeviceRequestStatus = async (req, res) => {
   try {
+    // Mirrors loginUser's "mobile unified endpoint" tenant resolution — this
+    // runs in the same pre-token phase as login, so a mobile client that
+    // hasn't hit a /:tenantSlug/api/... URL yet can still poll by passing
+    // ?tenantSlug=... instead.
+    let tenant = req.tenant || null;
+    if (!req.tenantDB && req.query.tenantSlug) {
+      tenant = await Tenant.findOne({ slug: req.query.tenantSlug.toLowerCase().trim() });
+      if (!tenant) return res.status(404).json({ success: false, message: "Workspace not found" });
+      req.tenantDB = await getTenantDB(tenant.dbName);
+      req.tenant = tenant;
+    }
     if (!req.tenantDB) return res.status(404).json({ success: false, message: "Workspace not found" });
     const { DeviceSession, User } = getTenantModels(req.tenantDB);
 
@@ -551,6 +573,7 @@ const getDeviceRequestStatus = async (req, res) => {
       email: user.email,
       profileImage: user.profileImage,
       role: user.role,
+      slug: req.tenant?.slug || null,
       token: generateToken(user._id, req.tenant, user.tokenVersion || 0, session.sessionId),
     });
   } catch (error) {
