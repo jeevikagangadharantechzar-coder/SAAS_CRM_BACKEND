@@ -56,6 +56,10 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
                           <span style="background:#fff;border:1px solid #d0dcff;border-radius:4px;padding:4px 12px;font-family:monospace;font-size:15px;color:#1a73e8;font-weight:700;letter-spacing:1px;">{{password}}</span>
                         </td>
                       </tr>
+                      <tr>
+                        <td style="padding:6px 0;color:#666;font-size:14px;">Slug</td>
+                        <td style="padding:6px 0;color:#111;font-size:14px;font-weight:600;">{{slug}}</td>
+                      </tr>
                     </table>
                   </td>
                 </tr>
