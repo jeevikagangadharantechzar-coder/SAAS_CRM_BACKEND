@@ -703,16 +703,18 @@ export const approveUpgradeRequest = async (req, res) => {
 
     // Send plan summary email with start/end dates
     const fmt = (d) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
-    const price = plan.billing_cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
+    const approvedCycle = request.billing_cycle || plan.billing_cycle || "monthly";
+    const approvedTier  = plan.tiers?.find((t) => t.billing_cycle === approvedCycle);
+    const approvedPrice = approvedTier?.price ?? (approvedCycle === "yearly" ? plan.price_yearly : approvedCycle === "half_yearly" ? 0 : plan.price_monthly) ?? 0;
     sendPlanEmail({
       to: tenant.adminEmail,
       vars: {
         adminName: tenant.adminName,
         planName: plan.plan_name,
         planType: plan.plan_type,
-        price,
+        price: approvedPrice,
         currency: plan.currency,
-        billingCycle: plan.billing_cycle,
+        billingCycle: approvedCycle,
         maxUsers: plan.max_users_per_tenant,
         description: plan.description,
         startDate: fmt(tenant.plan_start_date),
