@@ -25,7 +25,7 @@ function generatePassword(length = 12) {
     .join("");
 }
 
-function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantName }) {
+function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantName, slug }) {
   const firstName = adminName.split(" ")[0];
   return `
 <!DOCTYPE html>
@@ -74,6 +74,10 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
                         <td style="padding:6px 0;">
                           <span style="background:#fff;border:1px solid #d0dcff;border-radius:4px;padding:4px 12px;font-family:monospace;font-size:15px;color:#1a73e8;font-weight:700;letter-spacing:1px;">${password}</span>
                         </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0;color:#666;font-size:14px;">Slug</td>
+                        <td style="padding:6px 0;color:#111;font-size:14px;font-weight:600;">${slug}</td>
                       </tr>
                     </table>
                   </td>
@@ -259,7 +263,7 @@ export const createTenant = async (req, res) => {
     // Send welcome email using dynamic template from SuperAdminSettings
     sendWelcomeEmail({
       to: adminEmail,
-      vars: { adminName, email: adminEmail, password: plainPassword, loginUrl },
+      vars: { adminName, email: adminEmail, password: plainPassword, loginUrl, slug },
     }).catch(err => console.error("Welcome email failed:", err.message));
 
     // Send plan details or trial info email
