@@ -13,7 +13,7 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Welcome to {{platformName}}</title>
+  <title>Welcome to {{brandName}}</title>
 </head>
 <body style="margin:0;padding:0;background:#f4f6fb;font-family:'Segoe UI',Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:40px 0;">
@@ -26,7 +26,7 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
             <td style="background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);padding:36px 40px;text-align:center;">
               {{logoImgTag}}
               <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">
-                Welcome to {{platformName}}
+                Welcome to {{brandName}}
               </h1>
               <p style="margin:8px 0 0;color:#c8dcff;font-size:14px;">Your workspace is ready</p>
             </td>
@@ -37,7 +37,7 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
             <td style="padding:36px 40px;">
               <p style="margin:0 0 20px;color:#333;font-size:16px;">Hi <strong>{{adminName}}</strong>,</p>
               <p style="margin:0 0 28px;color:#555;font-size:15px;line-height:1.6;">
-                Your CRM account has been created successfully. Below are your login credentials — please keep them safe and change your password after your first login.
+                Your CRM account has been created successfully.
               </p>
 
               <!-- Credentials box -->
@@ -58,7 +58,9 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
                       </tr>
                       <tr>
                         <td style="padding:6px 0;color:#666;font-size:14px;">Slug</td>
-                        <td style="padding:6px 0;color:#111;font-size:14px;font-weight:600;">{{slug}}</td>
+                        <td style="padding:6px 0;">
+                          <span style="background:#fff;border:1px solid #d0dcff;border-radius:4px;padding:4px 12px;font-family:monospace;font-size:15px;color:#1a73e8;font-weight:700;letter-spacing:1px;">{{slug}}</span>
+                        </td>
                       </tr>
                     </table>
                   </td>
@@ -68,7 +70,7 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
               <!-- CTA Button -->
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
-                  <td align="center" style="padding-bottom:28px;">
+                  <td align="center" style="padding-bottom:8px;">
                     <a href="{{loginUrl}}" target="_blank"
                        style="display:inline-block;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 44px;border-radius:8px;letter-spacing:0.3px;box-shadow:0 4px 12px rgba(26,115,232,0.35);">
                       Login to Dashboard →
@@ -76,18 +78,13 @@ const BEAUTIFUL_WELCOME_BODY = `<!DOCTYPE html>
                   </td>
                 </tr>
               </table>
-
-              <p style="margin:0;color:#888;font-size:13px;line-height:1.6;border-top:1px solid #eee;padding-top:20px;">
-                For security, please change your password immediately after logging in.<br/>
-                If you did not request this account, please contact your administrator.
-              </p>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
             <td style="background:#f9fafc;padding:20px 40px;text-align:center;border-top:1px solid #eee;">
-              <p style="margin:0;color:#aaa;font-size:12px;">© {{year}} {{platformName}}. All rights reserved.</p>
+              <p style="margin:0;color:#aaa;font-size:12px;">© {{year}} {{brandName}}. All rights reserved.</p>
             </td>
           </tr>
 
@@ -130,31 +127,51 @@ async function getFromAddress(settings) {
   return `"${fromName}" <${fromEmail}>`;
 }
 
-// Detect old or outdated body so we can upgrade it automatically
+// Detect a stale/old default body (either the original plain-text format, or a
+// cached copy of a previous BEAUTIFUL_WELCOME_BODY revision that predates the
+// current template's placeholders) so we can regenerate it from the current
+// source automatically instead of serving a stuck snapshot forever.
 function isOldPlainBody(body) {
-  return !body || body.trim().startsWith("<p>Hi {{adminName}},</p>") || !body.includes("{{slug}}");
+  return !body || body.trim().startsWith("<p>Hi {{adminName}},</p>") || !body.includes("{{brandName}}");
+}
+
+// A stored welcomeSubject that still references the old {{platformName}} token
+// predates the {{brandName}} switch below — treat it as unset so the fresh
+// default (with the tenant's own company name) is used instead.
+function isStaleSubject(subject) {
+  return !subject || /\{\{platformName\}\}/.test(subject);
 }
 
 /**
- * Send welcome email to a new tenant admin.
- * vars: { adminName, email, password, loginUrl }
+ * Build the welcome email subject + HTML without sending it, so callers that
+ * need to dispatch through a different transport (e.g. a tenant's own
+ * connected Gmail) can reuse the same template/branding.
+ * vars: { adminName, email, password, loginUrl, brandName? }
+ *   brandName — the tenant's own Company Name (from their Settings page), shown
+ *   instead of the platform's own branding. Falls back to the super admin's
+ *   platformName (with any "SaaS Platform" suffix stripped) if not supplied.
  */
-export async function sendWelcomeEmail({ to, vars }) {
+export async function buildWelcomeEmail({ vars }) {
   let settings = null;
   try {
     settings = await SuperAdminSettings.findOne();
   } catch (_) {}
 
-  const platformName = settings?.platformName || "TZI CRM SaaS Platform";
+  const platformName = settings?.platformName || "TZI CRM";
+  const brandName =
+    vars.brandName ||
+    platformName.replace(/\s*SaaS Platform\s*$/i, "").trim() ||
+    "TZI CRM";
   const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
   const logoImgTag = settings?.platformLogo
-    ? `<img src="${backendUrl}/${settings.platformLogo}" alt="${platformName}" style="height:48px;width:auto;object-fit:contain;margin:0 auto 16px;display:block;" />`
+    ? `<img src="${backendUrl}/${settings.platformLogo}" alt="${brandName}" style="height:48px;width:auto;object-fit:contain;margin:0 auto 16px;display:block;" />`
     : "";
-  const allVars = { ...vars, platformName, year: new Date().getFullYear(), logoImgTag };
+  const allVars = { ...vars, platformName, brandName, year: new Date().getFullYear(), logoImgTag };
 
   const subject = interpolate(
-    settings?.welcomeSubject ||
-      "Welcome to {{platformName}} — Your Login Credentials",
+    isStaleSubject(settings?.welcomeSubject)
+      ? "Welcome to {{brandName}} — Your Login Credentials"
+      : settings.welcomeSubject,
     allVars
   );
 
@@ -163,6 +180,21 @@ export async function sendWelcomeEmail({ to, vars }) {
     : settings.welcomeBody;
 
   const html = interpolate(bodyTemplate, allVars);
+
+  return { subject, html };
+}
+
+/**
+ * Send welcome email to a new tenant admin via the platform's shared/SMTP mailbox.
+ * vars: { adminName, email, password, loginUrl }
+ */
+export async function sendWelcomeEmail({ to, vars }) {
+  let settings = null;
+  try {
+    settings = await SuperAdminSettings.findOne();
+  } catch (_) {}
+
+  const { subject, html } = await buildWelcomeEmail({ vars });
 
   const transporter = await getTransporter();
   const from = await getFromAddress(settings);
@@ -189,7 +221,7 @@ export async function sendUpgradeAlertEmail({ vars }) {
 
   if (!to) return;
 
-  const platformName = settings?.platformName || "TZI CRM SaaS Platform";
+  const platformName = settings?.platformName || "TZI CRM ";
   const allVars = { ...vars, platformName };
 
   const subject = interpolate(
@@ -388,7 +420,7 @@ export async function sendPlanEmail({ to, vars }) {
     settings = await SuperAdminSettings.findOne();
   } catch (_) {}
 
-  const platformName = settings?.platformName || "TZI CRM SaaS Platform";
+  const platformName = settings?.platformName || "TZI CRM ";
 
   let subject, html;
 
@@ -504,7 +536,7 @@ export async function sendPlanExpiryReminderEmail({ to, vars }) {
     settings = await SuperAdminSettings.findOne();
   } catch (_) {}
 
-  const platformName = settings?.platformName || "TZI CRM SaaS Platform";
+  const platformName = settings?.platformName || "TZI CRM ";
   const isUrgent = !!vars.isUrgent;
 
   const subject = isUrgent
