@@ -51,16 +51,31 @@ const dealSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
-  notes: { 
-    type: String 
+  notes: {
+    type: String
   },
-  phoneNumber: { 
-    type: String 
+  notesUpdatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null
   },
-  email: { 
-    type: String 
+  notesUpdatedAt: {
+    type: Date,
+    default: null
   },
-  source: { 
+  phoneNumber: {
+    type: String
+  },
+  email: {
+    type: String
+  },
+  alternativeNumber: {
+    type: String
+  },
+  alternativeEmail: {
+    type: String
+  },
+  source: {
     type: String 
   },
   companyName: { 
