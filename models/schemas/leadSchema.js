@@ -54,6 +54,8 @@ const leadSchema = new mongoose.Schema(
     lastReminderAt:  { type: Date, default: null },
 
     notes: { type: String },
+    notesUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    notesUpdatedAt: { type: Date, default: null },
 
     followUpNotes: [
       {

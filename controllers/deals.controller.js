@@ -119,6 +119,7 @@ export default {
       const tDB = req.tenantDB || null;
       const {
         dealName, assignTo, dealValue, currency, stage, notes, phoneNumber, email,
+        alternativeNumber, alternativeEmail,
         source, companyName, companyId, industry, requirement, address, country,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
         preferredCurrency, preferredCurrencyValue,
@@ -147,8 +148,11 @@ export default {
         currency: currency || "INR",
         stage: dealStage,
         notes: notes || "",
+        ...(notes && notes.trim() !== "" && { notesUpdatedBy: req.user._id, notesUpdatedAt: new Date() }),
         phoneNumber,
         email: email || "",
+        alternativeNumber: alternativeNumber || "",
+        alternativeEmail: alternativeEmail || "",
         source: source || "",
         companyName: companyName || "",
         companyId: companyId || null,
@@ -265,6 +269,7 @@ export default {
       const { Deal } = getModels(req);
       const deal = await Deal.findById(req.params.id)
         .populate("assignedTo", "firstName lastName email")
+        .populate("notesUpdatedBy", "firstName lastName")
         .populate("followUpHistory.changedBy", "firstName lastName email")
         .populate({ path: "leadId", populate: { path: "assignTo", select: "firstName lastName email" } });
 
@@ -370,6 +375,7 @@ export default {
       const tDB = req.tenantDB || null;
       const {
         dealName, dealValue, currency, stage, assignTo, notes, phoneNumber, email, source,
+        alternativeNumber, alternativeEmail,
         companyName, companyId, industry, requirement, address, country, existingAttachments,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
       } = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
@@ -393,6 +399,8 @@ export default {
         ...(notes       !== undefined && { notes }),
         ...(phoneNumber && { phoneNumber }),
         ...(email       !== undefined && { email }),
+        ...(alternativeNumber !== undefined && { alternativeNumber }),
+        ...(alternativeEmail  !== undefined && { alternativeEmail }),
         ...(source      !== undefined && { source }),
         ...(companyName && { companyName }),
         ...(companyId   !== undefined && { companyId }),
@@ -405,6 +413,13 @@ export default {
         ...(clientType  !== undefined && { clientType }),
         updatedAt: new Date(),
       };
+
+      // Track who last wrote/changed the notes, and when — only stamped when
+      // the text actually changes, not on every save that happens to include it.
+      if (notes !== undefined && notes !== (deal.notes || "")) {
+        updateFields.notesUpdatedBy = req.user._id;
+        updateFields.notesUpdatedAt = new Date();
+      }
 
       if (stage === "Closed Lost" && deal.stage !== "Closed Lost") { updateFields.stageLostAt = deal.stage; updateFields.lostDate = new Date(); }
       if (deal.stage === "Closed Lost" && stage && stage !== "Closed Lost") { updateFields.stageLostAt = null; updateFields.lostDate = null; }
@@ -451,6 +466,7 @@ export default {
 
       const updatedDeal = await Deal.findByIdAndUpdate(req.params.id, updateFields, { new: true })
         .populate("assignedTo", "firstName lastName email")
+        .populate("notesUpdatedBy", "firstName lastName")
         .populate("followUpHistory.changedBy", "firstName lastName email");
 
       if (followUpChanged) {
@@ -866,6 +882,8 @@ export default {
         discountGiven:   deal.discountGiven ?? "",
         stage:           deal.stage || "",
         email:           deal.email || "",
+        alternativeNumber: deal.alternativeNumber || "",
+        alternativeEmail:  deal.alternativeEmail || "",
         source:          deal.source || "",
         companySize:     deal.companySize || "",
         industry:        deal.industry || "",
@@ -940,6 +958,8 @@ export default {
             discountGiven: Number(row.discountGiven) || 0,
             stage,
             email:      String(row.email || "").trim(),
+            alternativeNumber: String(row.alternativeNumber || "").trim(),
+            alternativeEmail:  String(row.alternativeEmail || "").trim(),
             source:     String(row.source || "").trim(),
             companySize,
             industry:   String(row.industry || "").trim(),

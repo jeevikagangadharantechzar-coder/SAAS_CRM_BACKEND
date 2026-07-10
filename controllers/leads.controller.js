@@ -318,7 +318,9 @@ export default {
   getLeadById: async (req, res) => {
     try {
       const { Lead } = getModels(req);
-      const lead = await Lead.findById(req.params.id).populate("assignTo", "firstName lastName email role");
+      const lead = await Lead.findById(req.params.id)
+        .populate("assignTo", "firstName lastName email role")
+        .populate("notesUpdatedBy", "firstName lastName");
       if (!lead) return res.status(404).json({ message: "Lead not found" });
       res.status(200).json(lead);
     } catch (error) {
@@ -344,6 +346,13 @@ export default {
       }
       if ("clientType" in patch && (!patch.clientType || patch.clientType === "")) {
         patch.clientType = null;
+      }
+
+      // Track who last wrote/changed the notes, and when — only stamped when
+      // the text actually changes, not on every save that happens to include it.
+      if ("notes" in patch && patch.notes !== (before.notes || "")) {
+        patch.notesUpdatedBy = req.user._id;
+        patch.notesUpdatedAt = new Date();
       }
 
       let existingAttachments = [];
@@ -375,7 +384,8 @@ export default {
       const { $push, ...patchWithoutPush } = patch;
       const updateOp = $push ? { ...patchWithoutPush, $push } : patchWithoutPush;
       const updated = await Lead.findByIdAndUpdate(req.params.id, updateOp, { new: true })
-        .populate("assignTo", "firstName lastName email profileImage");
+        .populate("assignTo", "firstName lastName email profileImage")
+        .populate("notesUpdatedBy", "firstName lastName");
 
       if (followUpChanged) {
         await deleteAllNotificationsByEntity("lead", req.params.id, tDB);
