@@ -83,7 +83,9 @@ const allowedOrigins = [
   "https://uenjoytours.cloud",
   "https://crm.stagingzar.com",
   "https://sales.stagingzar.com",
-  "https://crm.techzarinfo.cloud"
+  "https://crm.techzarinfo.cloud",
+  "https://tzicrm.com",
+  "https://www.tzicrm.com"
 ];
 
 if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
