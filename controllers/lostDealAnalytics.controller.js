@@ -14,6 +14,13 @@ const parseValue = (valueString) => {
   const numericValue = valueString.toString().replace(/[^0-9]/g, "");
   return parseInt(numericValue, 10) || 0;
 };
+// The frozen preferredCurrencyValue is only valid if it was actually converted
+// to the currency the requesting user currently has set — otherwise it's a
+// stale conversion into some other currency and must not be trusted.
+const getPreferredValue = (deal, userCurrency) =>
+  deal.preferredCurrency === userCurrency && deal.preferredCurrencyValue != null
+    ? deal.preferredCurrencyValue
+    : deal.parsedValue || 0;
 // Aggregate lost deals into monthly trend data
 const aggregateMonthlyTrend = (deals, timeframe) => {
   const trend = [];
@@ -42,6 +49,7 @@ const aggregateMonthlyTrend = (deals, timeframe) => {
       _id: monthKey,
       count: monthDeals.length,
       value: monthDeals.reduce((sum, deal) => sum + (deal.parsedValue || 0), 0),
+      preferredValue: monthDeals.reduce((sum, deal) => sum + deal.preferredValueForUser, 0),
     });
   }
 
@@ -92,10 +100,11 @@ const aggregateIndustryAnalysis = (deals) => {
   deals.forEach(deal => {
     const industry = deal.industry || "Other";
     if (!industryStats[industry]) {
-      industryStats[industry] = { _id: industry, count: 0, value: 0 };
+      industryStats[industry] = { _id: industry, count: 0, value: 0, preferredValue: 0 };
     }
     industryStats[industry].count++;
     industryStats[industry].value += deal.parsedValue || 0;
+    industryStats[industry].preferredValue += deal.preferredValueForUser;
   });
   return Object.values(industryStats).sort((a, b) => b.value - a.value);
 };
@@ -206,6 +215,7 @@ export default {
       const { timeframe = "month", startDate, endDate, reason, assignedTo, industry } = req.query;
       const userId = req.user?._id;
       const userRole = req.user?.role?.name;
+      const userCurrency = req.user?.currency || "USD";
 
       let dateFilter = {};
       if (startDate || endDate) {
@@ -239,9 +249,16 @@ export default {
       const enhancedLostDeals = lostDeals.map(d => {
         const dealObj = d.toObject();
         const parsedValue = parseValue(dealObj.value);
+        const preferredValueForUser = getPreferredValue(
+          { parsedValue, preferredCurrency: dealObj.preferredCurrency, preferredCurrencyValue: dealObj.preferredCurrencyValue },
+          userCurrency
+        );
         return {
           ...dealObj,
           parsedValue,
+          preferredCurrency: dealObj.preferredCurrency || null,
+          preferredCurrencyValue: dealObj.preferredCurrencyValue ?? null,
+          preferredValueForUser,
           stageLostAt: dealObj.stageLostAt || dealObj.stage || "Unknown",
           daysInPipeline: Math.round((new Date(dealObj.updatedAt) - new Date(dealObj.createdAt)) / (1000 * 60 * 60 * 24)) || 0,
         };
@@ -256,8 +273,12 @@ export default {
       );
       const invoiceSentCount = invoiceSentDeals.length;
       const invoiceSentValue = invoiceSentDeals.reduce((sum, deal) => sum + deal.parsedValue, 0);
+      const invoiceSentPreferredValue = invoiceSentDeals.reduce(
+        (sum, deal) => sum + deal.preferredValueForUser,
+        0
+      );
       const invoiceSentPercentage = totalLostDeals > 0 ? Math.round((invoiceSentCount / totalLostDeals) * 100) : 0;
-      
+
       const monthlyTrend = aggregateMonthlyTrend(enhancedLostDeals, timeframe);
       const reasonDistribution = aggregateReasonDistribution(enhancedLostDeals);
       const topLostUsers = aggregateTopLostUsers(enhancedLostDeals);
@@ -276,6 +297,7 @@ export default {
           invoiceSentDeals: {
             count: invoiceSentCount,
             value: invoiceSentValue,
+            preferredValue: invoiceSentPreferredValue,
             percentage: invoiceSentPercentage
           },
           monthlyTrend,
