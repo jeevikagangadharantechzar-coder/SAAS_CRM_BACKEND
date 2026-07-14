@@ -63,6 +63,34 @@ const classifyDeal = ({ totalRevenue=0, supportTickets=0, clientHealthScore=50, 
   return "Top Value";
 };
 
+// Converts each client's raw CLV (in its underlying deal's currency) into the
+// logged-in user's preferred currency using only what's already stored in the
+// DB — no live exchange-rate lookups. same currency -> raw value; matching
+// frozen deal.preferredCurrency -> deal.preferredCurrencyValue; otherwise no
+// stored conversion exists, so the raw (un-converted) value is used as-is.
+async function attachConvertedCLV(withDays, userCurrency, Deal) {
+  const companyIds = [...new Set(withDays.map(c => c.companyId?.toString()).filter(Boolean))];
+  const deals = await Deal.find({ _id: { $in: companyIds } })
+    .select("_id currency preferredCurrency preferredCurrencyValue").lean();
+  const dealMap = {};
+  deals.forEach(d => { dealMap[d._id.toString()] = d; });
+
+  return withDays.map(c => {
+    const deal = dealMap[c.companyId?.toString()];
+    const fromCurrency = deal?.currency || "INR";
+    const raw = c.customerLifetimeValue || 0;
+    let convertedCLV;
+    if (fromCurrency === userCurrency) {
+      convertedCLV = raw;
+    } else if (deal?.preferredCurrency === userCurrency && deal?.preferredCurrencyValue != null) {
+      convertedCLV = deal.preferredCurrencyValue;
+    } else {
+      convertedCLV = raw;
+    }
+    return { ...c, convertedCLV };
+  });
+}
+
 const getValueCategory = (amount) => {
   if (amount > 500000) return "High Value";
   if (amount >= 100000) return "Medium Value";
@@ -203,7 +231,7 @@ export default {
 
       // Fetch every matching deal (not just the current page) so classification/unreviewed
       // filters run against the full result set instead of whatever happened to land on this page.
-      const deals = await Deal.find(searchQuery).select("_id dealName companyName value assignedTo wonAt createdAt followUpDate followUpHistory")
+      const deals = await Deal.find(searchQuery).select("_id dealName companyName value assignedTo wonAt createdAt followUpDate followUpHistory preferredCurrencyValue preferredCurrency currency")
         .populate("assignedTo","firstName lastName").lean();
       const dealIds = deals.map(d => d._id.toString());
       const [reviews, clvData] = await Promise.all([
@@ -223,6 +251,7 @@ export default {
           if (s[0]?.date) daysSince = calcDays(s[0].date);
         }
         return { _id: deal._id, clientName: deal.dealName||"Unnamed", companyName: deal.companyName||"Unknown", companyId: deal._id, dealId: deal._id, dealValue: deal.value||"0",
+          preferredCurrencyValue: deal.preferredCurrencyValue||"0", preferredCurrency: deal.preferredCurrency||"USD", wonAt: deal.wonAt,currency: deal.currency||"USD",
           delivered: clvEntry?.delivered===true, assignedTo: deal.assignedTo ? `${deal.assignedTo.firstName||""} ${deal.assignedTo.lastName||""}`.trim() : "Unassigned",
           salespersonId: deal.assignedTo?._id, supportTicketCount: clvEntry?.totalSupportTickets||0, daysSinceFollowUp: daysSince,
           reviewProgress: clvEntry?.progress||null, classification: clvEntry?.classification||"At Risk", clientHealthScore: clvEntry?.clientHealthScore||50,
@@ -306,30 +335,35 @@ export default {
       if (cleaned.deletedCount > 0) console.log(`Cleaned up ${cleaned.deletedCount} invalid clients`);
 
       const clients = await ClientLTV.find().populate("latestReview").lean();
-      const withDays = clients.map(c => {
+      const withDaysRaw = clients.map(c => {
         const days = c.lastFollowUpDate ? calcDaysSince(c.lastFollowUpDate) : 365;
         return { ...c, daysSinceFollowUp: days, classification: classifyDeal({ totalRevenue: c.customerLifetimeValue||0, supportTickets: c.totalSupportTickets||0, clientHealthScore: c.clientHealthScore||50, daysSinceFollowUp: days, progress: c.progress||"Average" }) };
       });
+
+      // Every client's CLV lives in its underlying deal's currency — normalize
+      // to the logged-in user's preferred currency before summing/displaying.
+      const userCurrency = req.user?.currency || "USD";
+      const withDays = await attachConvertedCLV(withDaysRaw, userCurrency, Deal);
 
       const cc = { "Upsell":0,"Top Value":0,"Dormant":0,"At Risk":0 };
       const vc = { "High Value":0,"Medium Value":0,"Low Value":0 };
       withDays.forEach(c => { if (c.classification) cc[c.classification]=(cc[c.classification]||0)+1; if (c.valueCategory) vc[c.valueCategory]=(vc[c.valueCategory]||0)+1; });
 
-      const totalCLV = withDays.reduce((s,c)=>s+(c.customerLifetimeValue||0),0);
+      const totalCLV = withDays.reduce((s,c)=>s+(c.convertedCLV||0),0);
       const avgCLV   = withDays.length ? totalCLV/withDays.length : 0;
       const totalRisky = (cc["At Risk"]||0)+(cc["Dormant"]||0);
       const atRiskPct = withDays.length>0 ? Math.round((totalRisky/withDays.length)*100) : 0;
 
       const mapClient = (c, fields) => { const r={}; fields.forEach(f=>r[f]=c[f]); return r; };
-      const topClients = withDays.filter(c=>c.classification==="Top Value").sort((a,b)=>(b.customerLifetimeValue||0)-(a.customerLifetimeValue||0)).slice(0,50)
-        .map(c=>({companyName:c.companyName,clv:c.customerLifetimeValue,classification:c.classification,valueCategory:c.valueCategory,daysSinceFollowUp:c.daysSinceFollowUp,lastActivity:c.lastFollowUpDate,progress:c.latestReview?.progress,supportPoints:c.supportPoints,supportTickets:c.totalSupportTickets,followUpCount:c.followUpCount,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
+      const topClients = withDays.filter(c=>c.classification==="Top Value").sort((a,b)=>(b.convertedCLV||0)-(a.convertedCLV||0)).slice(0,50)
+        .map(c=>({companyName:c.companyName,clv:c.convertedCLV,classification:c.classification,valueCategory:c.valueCategory,daysSinceFollowUp:c.daysSinceFollowUp,lastActivity:c.lastFollowUpDate,progress:c.latestReview?.progress,supportPoints:c.supportPoints,supportTickets:c.totalSupportTickets,followUpCount:c.followUpCount,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
       const riskyClients = withDays.filter(c=>c.classification==="At Risk").sort((a,b)=>(b.daysSinceFollowUp||0)-(a.daysSinceFollowUp||0)).slice(0,50)
         .map(c=>({companyName:c.companyName,daysSinceFollowUp:c.daysSinceFollowUp,supportTickets:c.totalSupportTickets,progress:c.progress,supportPoints:c.supportPoints,classificationReason:c.classificationReason,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
       const dormantClients = withDays.filter(c=>c.classification==="Dormant").sort((a,b)=>(b.daysSinceFollowUp||0)-(a.daysSinceFollowUp||0)).slice(0,50)
         .map(c=>({companyName:c.companyName,daysSinceFollowUp:c.daysSinceFollowUp,lastFollowUp:c.lastFollowUpDate,classificationReason:c.classificationReason,supportTickets:c.totalSupportTickets,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
-      const upsellClients = withDays.filter(c=>c.classification==="Upsell").sort((a,b)=>(b.customerLifetimeValue||0)-(a.customerLifetimeValue||0)).slice(0,50)
-        .map(c=>({companyName:c.companyName,clv:c.customerLifetimeValue,classification:c.classification,progress:c.latestReview?.progress,supportTickets:c.totalSupportTickets,delivered:c.delivered,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
-      const allClientsList = withDays.slice(0,100).map(c=>({companyName:c.companyName,dealValue:c.customerLifetimeValue,progress:c.progress,supportPoints:c.supportPoints,followUpCount:c.followUpCount,classification:c.classification,classificationReason:c.classificationReason,delivered:c.delivered,supportTickets:c.totalSupportTickets,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
+      const upsellClients = withDays.filter(c=>c.classification==="Upsell").sort((a,b)=>(b.convertedCLV||0)-(a.convertedCLV||0)).slice(0,50)
+        .map(c=>({companyName:c.companyName,clv:c.convertedCLV,classification:c.classification,progress:c.latestReview?.progress,supportTickets:c.totalSupportTickets,delivered:c.delivered,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
+      const allClientsList = withDays.slice(0,100).map(c=>({companyName:c.companyName,dealValue:c.convertedCLV,progress:c.progress,supportPoints:c.supportPoints,followUpCount:c.followUpCount,classification:c.classification,classificationReason:c.classificationReason,delivered:c.delivered,supportTickets:c.totalSupportTickets,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
       const recentReviews = await ClientReview.find().sort({ reviewedAt: -1 }).limit(5).populate("reviewedBy","firstName lastName").lean();
 
       const sixMonthsAgo = new Date(); sixMonthsAgo.setMonth(sixMonthsAgo.getMonth()-6);
@@ -358,7 +392,7 @@ export default {
       const now = new Date();
       const allMonths = Array.from({length:6},(_,i)=>{ const d=new Date(now.getFullYear(),now.getMonth()-5+i,1); const ms=`${months[d.getMonth()]} ${d.getFullYear()}`; const ex=revenueTrends.find(t=>t._id.year===d.getFullYear()&&t._id.month===d.getMonth()+1); return ex?{month:ms,revenue:ex.revenue||0,count:ex.count||0}:{month:ms,revenue:0,count:0}; });
 
-      res.json({ success:true, data:{ summary:{ totalClients:withDays.length, totalCLV, avgCLV, clientsAtRiskPercent:atRiskPct, upsellCount:cc["Upsell"]||0, topValueCount:cc["Top Value"]||0, dormantCount:cc["Dormant"]||0, atRiskCount:cc["At Risk"]||0 }, valueCategories:vc, classificationDistribution:cc, topClients, riskyClients, dormantClients, upsellClients, allClientsList, recentReviews, revenueTrends:allMonths, pricingRiskAlerts:[] } });
+      res.json({ success:true, data:{ summary:{ totalClients:withDays.length, totalCLV, avgCLV, currency:userCurrency, clientsAtRiskPercent:atRiskPct, upsellCount:cc["Upsell"]||0, topValueCount:cc["Top Value"]||0, dormantCount:cc["Dormant"]||0, atRiskCount:cc["At Risk"]||0 }, valueCategories:vc, classificationDistribution:cc, topClients, riskyClients, dormantClients, upsellClients, allClientsList, recentReviews, revenueTrends:allMonths, pricingRiskAlerts:[] } });
     } catch (error) {
       console.error("Dashboard error:", error);
       res.status(500).json({ success: false, message: error.message });
