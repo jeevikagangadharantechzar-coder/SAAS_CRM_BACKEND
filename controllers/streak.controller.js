@@ -34,17 +34,43 @@ function formatTime(date) {
   return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
-function calcWorkHours(loginHistory) {
-  const todayStr = new Date().toDateString();
-  const todayLogs = (loginHistory || []).filter(l => l?.login && new Date(l.login).toDateString() === todayStr);
-  if (!todayLogs.length) return "—";
-  const earliest = todayLogs.reduce((e, l) => new Date(l.login) < new Date(e.login) ? l : e);
-  const latestSession = todayLogs.reduce((e, l) => new Date(l.login) > new Date(e.login) ? l : e);
-  if (!latestSession.logout) {
+function calcWorkHours(loginHistory, rangeStart, rangeEnd) {
+  let logsToConsider = loginHistory || [];
+  
+  if (rangeStart && rangeEnd) {
+    // Option 4: Only show for a single day, hide (—) for multiple days
+    if (rangeStart.toDateString() !== rangeEnd.toDateString()) {
+      return "—";
+    }
+
+    logsToConsider = logsToConsider.filter(l => {
+      if (!l?.login) return false;
+      const d = new Date(l.login);
+      return d >= rangeStart && d <= rangeEnd;
+    });
+  } else {
+    const todayStr = new Date().toDateString();
+    logsToConsider = logsToConsider.filter(l => l?.login && new Date(l.login).toDateString() === todayStr);
+  }
+
+  if (!logsToConsider.length) return "—";
+  const earliest = logsToConsider.reduce((e, l) => new Date(l.login) < new Date(e.login) ? l : e);
+  const latestSession = logsToConsider.reduce((e, l) => new Date(l.login) > new Date(e.login) ? l : e);
+  
+  const logouts = logsToConsider.filter(l => l.logout);
+  let latestLogout = null;
+  if (logouts.length > 0) {
+    latestLogout = logouts.reduce((e, l) => new Date(l.logout) > new Date(e.logout) ? l : e);
+  }
+
+  if (!latestSession.logout && (!latestLogout || new Date(latestSession.login) > new Date(latestLogout.logout))) {
     return `${formatTime(earliest.login)} - Ongoing`;
   }
-  const logouts = todayLogs.filter(l => l.logout);
-  const latestLogout = logouts.reduce((e, l) => new Date(l.logout) > new Date(e.logout) ? l : e);
+  
+  if (!latestLogout) {
+      return `${formatTime(earliest.login)} - Ongoing`;
+  }
+
   return `${formatTime(earliest.login)} - ${formatTime(latestLogout.logout)}`;
 }
 
@@ -211,7 +237,7 @@ export default {
           totalLeads: rangeTotalLeads, rawLeads: lm.range, qualificationDeals: dm.rangeQ, convertedLeads: dm.rangeC,
           conversionRate: Number(rangeConvRate.toFixed(1)), conversionDisplay: `${rangeConvRate.toFixed(1)}%`,
           cumulativeTotalLeads: cumTotalLeads, cumulativeConvertedLeads: dm.cumC, cumulativeConversionRate: Number(cumConvRate.toFixed(1)), cumulativeDisplay: `${cumConvRate.toFixed(1)}%`,
-          streak: calcStreak(loginHistory), productiveDays: rangeLoginDays.size, workHours: calcWorkHours(loginHistory),
+          streak: calcStreak(loginHistory), productiveDays: rangeLoginDays.size, workHours: calcWorkHours(loginHistory, rangeStart, rangeEnd),
           status, statusIcon, statusColor, performanceScore: Math.min(Math.round(rangeConvRate), 100), isCurrentUser: id === currentUserId,
         };
       });
