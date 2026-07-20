@@ -46,6 +46,7 @@ import meetingRoutes            from "./meeting.routes.js";
 import googleIntegrationRoutes  from "./googleIntegration.routes.js";
 import zoomIntegrationRoutes    from "./zoomIntegration.routes.js";
 import locationRoutes           from "./location.routes.js";
+import supportRoutes            from "./support.routes.js";
 
 
 import publicRoutes from "./public.routes.js";
@@ -100,6 +101,7 @@ router.use("/meetings",           meetingRoutes);
 router.use("/google-integration", googleIntegrationRoutes);
 router.use("/zoom-integration",   zoomIntegrationRoutes);
 router.use("/location",           locationRoutes);
+router.use("/support",            supportRoutes);
 
 
 export default router;
