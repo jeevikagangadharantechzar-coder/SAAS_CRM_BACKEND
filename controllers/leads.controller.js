@@ -600,7 +600,8 @@ export default {
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const query = {
         followUpDate: { $lt: startOfToday },
-        status: { $nin: ["Converted", "Junk"] },
+        status: { $nin: ["Converted", "Junk", "Rejected"] },
+        rejectionReason: "",
         $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }],
       };
       if (req.user.role.name !== "Admin") query.assignTo = req.user._id;
