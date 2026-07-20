@@ -68,6 +68,10 @@ export default {
         }
       }
 
+      invoiceFields.statusHistory = [
+        { status, amountPaid: invoiceFields.amountPaid || 0, changedAt: new Date(), changedBy: req.user._id },
+      ];
+
       const newInvoice = new Invoice(invoiceFields);
       await newInvoice.save();
       res.status(201).json({ message: "Invoice created successfully", invoice: newInvoice });
@@ -141,6 +145,7 @@ export default {
         discountValue: Number(discountValue) || Number(discount) || 0, discountType: discountType || "fixed",
         tax: Number(tax) || 0, taxType: taxType || "fixed", taxAmount: Number(taxAmount.toFixed(2)),
         total: Number(finalTotal.toFixed(2)),
+        lastUpdatedBy: req.user._id,
       };
 
       const currentStatus = invoice.status;
@@ -187,6 +192,22 @@ export default {
           updateData.inrAmount              = null;
           updateData.exchangeRate           = null;
         }
+      }
+
+      // Log a transition whenever the status itself changed, or — since
+      // partially_paid can be hit multiple times as more payments come in —
+      // whenever the amount collected changed even with the status held the
+      // same, so the payment journey isn't lost between two partial payments.
+      const amountChanged = updateData.amountPaid !== undefined && updateData.amountPaid !== (Number(invoice.amountPaid) || 0);
+      if (newStatus !== currentStatus || amountChanged) {
+        updateData.$push = {
+          statusHistory: {
+            status: newStatus,
+            amountPaid: updateData.amountPaid ?? invoice.amountPaid ?? 0,
+            changedAt: new Date(),
+            changedBy: req.user._id,
+          },
+        };
       }
 
       const updated = await Invoice.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })

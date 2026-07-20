@@ -8,11 +8,21 @@ const invoiceSchema = new mongoose.Schema({
     default: () => `TZI-${Math.floor(Math.random() * 1000000)}`,
   },
   assignTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   issueDate: { type: Date, required: true },
   dueDate: { type: Date, required: true },
   status: { type: String, enum: ["paid", "unpaid", "partially_paid"], required: true },
   // Cumulative amount actually collected so far (grows as partial payments come in)
   amountPaid: { type: Number, default: 0 },
+  statusHistory: [
+    {
+      status:     { type: String, enum: ["paid", "unpaid", "partially_paid"] },
+      amountPaid: { type: Number },
+      changedAt:  { type: Date, default: Date.now },
+      changedBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    },
+  ],
 
   items: [
     {

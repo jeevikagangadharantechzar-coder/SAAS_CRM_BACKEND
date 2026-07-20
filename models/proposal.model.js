@@ -3,6 +3,8 @@ import mongoose from "mongoose";
 const ProposalSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
+    createdBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     deal: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Deal",
@@ -21,6 +23,13 @@ const ProposalSchema = new mongoose.Schema(
       enum: ["draft", "sent", "no reply", "rejection", "success"],
       default: "draft",
     },
+    statusHistory: [
+      {
+        status:    { type: String, enum: ["draft", "sent", "no reply", "rejection", "success"] },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      },
+    ],
 
     followUpDate: { type: Date, default: Date.now }, // follow-up date
     followUpComment: { type: String, default: "" }, // comment

@@ -32,7 +32,7 @@ const massEmailSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "scheduled", "processing", "sent", "failed"],
+      enum: ["pending", "scheduled", "processing", "sent", "failed", "cancelled"],
       default: "pending",
     },
     createdBy: {
@@ -40,7 +40,8 @@ const massEmailSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    cancelledAt: { type: Date, default: null },
 
   },
   { timestamps: true }

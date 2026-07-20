@@ -32,6 +32,11 @@ router.put(
   indexControllers.massEmailController.updateScheduledEmail
 );
 
+// PATCH /api/email/cancel/:id — soft-cancel a scheduled email (status ->
+// "cancelled"), keeping the record so it's still visible in things like a
+// Deal's Activity Log, unlike DELETE /delete/:id below which removes it entirely.
+router.patch("/cancel/:id", protect, indexControllers.massEmailController.cancelScheduledEmail);
+
 // DELETE /api/email/delete/:id
 router.delete("/delete/:id", protect, indexControllers.massEmailController.deleteEmail);
 

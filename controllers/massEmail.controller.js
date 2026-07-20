@@ -305,6 +305,8 @@ cancelScheduledEmail : async (req, res) => {
     }
 
     email.status = "cancelled";
+    email.cancelledBy = req.user._id;
+    email.cancelledAt = new Date();
     await email.save();
 
     res.json({

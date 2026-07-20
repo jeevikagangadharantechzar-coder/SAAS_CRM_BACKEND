@@ -57,10 +57,10 @@ const sendClosedWonEmail = async (req, deal) => {
   }
 };
 
-const mapFileToAttachment = (file) => ({
+const mapFileToAttachment = (file, uploadedBy = null) => ({
   name: file.originalname,
   path: file.path.replace(/\\/g, "/").replace(/^\/+/, ""),
-  type: file.mimetype, size: file.size, uploadedAt: new Date(),
+  type: file.mimetype, size: file.size, uploadedAt: new Date(), uploadedBy,
 });
 
 const normalizeAttachment = (att) => {
@@ -71,7 +71,7 @@ const normalizeAttachment = (att) => {
   }
   return { _id: att._id, name: att.name || att.path?.split("/").pop() || "file",
     path: (att.path || "").replace(/^\/+/, ""), type: att.type || "application/octet-stream",
-    size: att.size || 0, uploadedAt: att.uploadedAt || new Date() };
+    size: att.size || 0, uploadedAt: att.uploadedAt || new Date(), uploadedBy: att.uploadedBy || null };
 };
 
 const formatDealValue = (dealValue, currency = "INR") => {
@@ -140,7 +140,7 @@ export default {
         followUpHistory = [{ date: new Date(), followUpDate: parsedFollowUpDate, followUpComment: followUpComment || "", changedBy: req.user._id, action: "Created" }];
       }
 
-      const attachments = (req.files || []).map(mapFileToAttachment);
+      const attachments = (req.files || []).map((f) => mapFileToAttachment(f, req.user._id));
       const deal = new Deal({
         dealName,
         assignedTo: assignTo || null,
@@ -425,10 +425,20 @@ export default {
       if (deal.stage === "Closed Lost" && stage && stage !== "Closed Lost") { updateFields.stageLostAt = null; updateFields.lostDate = null; }
       if (stage === "Closed Won" && deal.stage !== "Closed Won") { updateFields.wonAt = new Date(); updateFields.wonBy = req.user._id; }
       if (deal.stage === "Closed Won" && stage && stage !== "Closed Won") { updateFields.wonAt = null; updateFields.wonBy = null; }
+
+      // Both pushes merge into one $push object — setting updateFields.$push
+      // twice (once here, once for reassignment below) would silently
+      // overwrite the first instead of applying both.
+      const pushFields = {};
       if (stage && stage !== deal.stage) {
         // Always record stage moves for full journey tracking (admin + salesperson)
-        updateFields.$push = { stageHistory: { stage, movedAt: new Date(), movedBy: req.user._id } };
+        pushFields.stageHistory = { stage, movedAt: new Date(), movedBy: req.user._id };
       }
+      const oldAssignedToId = deal.assignedTo?._id?.toString() || deal.assignedTo?.toString() || null;
+      if (assignTo && String(assignTo) !== oldAssignedToId) {
+        pushFields.assignmentHistory = { assignedTo: assignTo, assignedAt: new Date(), assignedBy: req.user._id };
+      }
+      if (Object.keys(pushFields).length > 0) updateFields.$push = pushFields;
       if (dealValue !== undefined && dealValue !== null && String(dealValue).trim() !== "") {
         updateFields.value = formatDealValue(dealValue, currency || deal.currency || "INR");
         updateFields.currency = currency || deal.currency || "INR";
@@ -462,7 +472,7 @@ export default {
       } else {
         keptAttachments = (deal.attachments || []).map(normalizeAttachment).filter(Boolean);
       }
-      updateFields.attachments = [...keptAttachments, ...(req.files || []).map(mapFileToAttachment)];
+      updateFields.attachments = [...keptAttachments, ...(req.files || []).map((f) => mapFileToAttachment(f, req.user._id))];
 
       const updatedDeal = await Deal.findByIdAndUpdate(req.params.id, updateFields, { new: true })
         .populate("assignedTo", "firstName lastName email")

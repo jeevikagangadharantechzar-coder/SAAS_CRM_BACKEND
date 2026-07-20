@@ -58,6 +58,7 @@ const dealSchema = new mongoose.Schema({
       type:       { type: String, default: "application/octet-stream" },
       size:       { type: Number, default: 0 },
       uploadedAt: { type: Date, default: Date.now },
+      uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     },
   ],
   lossReason:    { type: String, default: "" },
@@ -74,6 +75,17 @@ const dealSchema = new mongoose.Schema({
   ],
   wonBy:         { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   convertedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  // Every reassignment, oldest first — same reasoning as stageHistory: who
+  // a deal is assigned to today doesn't show who it was reassigned from/to
+  // and by whom, which is exactly what an admin auditing another user's
+  // work needs to see in the Activity Log.
+  assignmentHistory: [
+    {
+      assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      assignedAt: { type: Date, default: Date.now },
+      assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    },
+  ],
   // Hides this deal from the Task Management / Target Management "Admin
   // Completed" activity feeds once Admin dismisses it there — purely a
   // feed-declutter flag, the deal record itself is untouched. Two independent

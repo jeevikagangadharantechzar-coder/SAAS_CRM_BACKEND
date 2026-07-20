@@ -4,6 +4,7 @@ const meetingSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
+    dealId: { type: mongoose.Schema.Types.ObjectId, ref: "Deal", default: null, index: true },
     startDateTime: { type: Date, required: true },
     endDateTime: { type: Date, required: true },
     attendees: [{ type: String, trim: true }],
@@ -26,6 +27,11 @@ const meetingSchema = new mongoose.Schema(
     },
     creatorEmail: { type: String },
     reminderSentAt: { type: Date, default: null },
+    // Who cancelled it and when — needed to show a proper attributed
+    // "meeting cancelled" entry in the Deal Activity Log instead of it
+    // silently disappearing from view.
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    cancelledAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
