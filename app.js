@@ -26,7 +26,6 @@ import { resolveTenant } from "./middlewares/resolveTenant.js";
 import { checkTrialExpiry } from "./middlewares/checkTrialExpiry.js";
 
 // Routes
-import { startFollowUpCron } from "./controllers/followups.cron.js";
 import gmailRoutes from "./routes/gmailRoutes.js";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
 import zoomAuthRoutes from "./routes/zoomAuthRoutes.js";

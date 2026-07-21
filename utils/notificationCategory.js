@@ -8,6 +8,7 @@ export const NOTIFICATION_CATEGORIES = {
   DEAL: "deal",
   FOLLOWUP: "followup",
   SCHEDULED_EMAIL: "scheduled_email",
+  INVOICE: "invoice",
   OTHER: "other",
 };
 
@@ -29,6 +30,8 @@ const TYPE_TO_CATEGORY = {
   followup: NOTIFICATION_CATEGORIES.FOLLOWUP,
 
   scheduled_email: NOTIFICATION_CATEGORIES.SCHEDULED_EMAIL,
+
+  invoice: NOTIFICATION_CATEGORIES.INVOICE,
 };
 
 export const getNotificationCategory = (type) =>
