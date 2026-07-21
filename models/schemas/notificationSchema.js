@@ -25,6 +25,7 @@ const notificationSchema = new mongoose.Schema(
         "trial_reminder",
         "trial_expired",
         "scheduled_email",
+        "invoice",
       ],
       default: "followup",
     },
