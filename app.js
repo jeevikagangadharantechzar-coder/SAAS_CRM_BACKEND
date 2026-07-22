@@ -24,6 +24,7 @@ import freeTrialRoutes from "./routes/freeTrial.routes.js";
 import tenantApiRouter from "./routes/tenantRouter.js";
 import { resolveTenant } from "./middlewares/resolveTenant.js";
 import { checkTrialExpiry } from "./middlewares/checkTrialExpiry.js";
+import { activityLogger } from "./middlewares/activityLogger.middleware.js";
 
 // Routes
 import gmailRoutes from "./routes/gmailRoutes.js";
@@ -174,7 +175,7 @@ app.use("/superadmin", superAdminRoutes);
 app.use("/api/superadmin/subscription-plans", subscriptionPlanRoutes);
 app.use("/api/superadmin/support-tickets", supportTicketRoutes);
 app.use("/api/free-trial", freeTrialRoutes);
-app.use("/:tenantSlug/api", resolveTenant, checkTrialExpiry, tenantApiRouter);
+app.use("/:tenantSlug/api", resolveTenant, checkTrialExpiry, activityLogger(), tenantApiRouter);
 
 // ─────────────────────────────────────────────
 // Legacy / existing API Routes (single-tenant, kept for backward compat)
