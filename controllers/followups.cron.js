@@ -3,6 +3,7 @@ import { sendNotification } from "../services/notificationService.js";
 import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import Tenant from "../models/master/Tenant.js";
+import { logActivity } from "../services/tenantActivityLog.service.js";
 
 // Legacy models (for /api/ non-tenant routes)
 import LeadLegacy         from "../models/leads.model.js";
@@ -80,11 +81,22 @@ export function startFollowUpCron() {
       catch (e) { console.warn("FollowUpCron: could not load tenants:", e.message); }
 
       for (const tenant of tenants) {
+        let tenantDB;
         try {
-          const tenantDB = await getTenantDB(tenant.dbName);
-          const models   = getTenantModels(tenantDB);
+          tenantDB = await getTenantDB(tenant.dbName);
+          const models = getTenantModels(tenantDB);
           await runFollowUpForModels(models, tenantDB, tenant.slug);
-        } catch (e) { console.error(`FollowUpCron error for tenant ${tenant.slug}:`, e.message); }
+        } catch (e) {
+          console.error(`FollowUpCron error for tenant ${tenant.slug}:`, e.message);
+          if (tenantDB) {
+            logActivity(tenantDB, {
+              module: "Leads",
+              action: "Lead Follow-up Reminder Cron",
+              status: "Failed",
+              errorMessage: e.message,
+            });
+          }
+        }
       }
     } catch (err) {
       console.error("FollowUp cron error:", err.message);

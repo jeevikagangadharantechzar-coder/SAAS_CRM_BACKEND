@@ -4,6 +4,7 @@ import { sendNotification } from "../services/notificationService.js";
 import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import Tenant from "../models/master/Tenant.js";
+import { logActivity } from "../services/tenantActivityLog.service.js";
 
 // Legacy models
 import DealLegacy from "../models/deals.model.js";
@@ -73,11 +74,22 @@ export default {
         catch (e) { console.warn("DealFollowUpCron: could not load tenants:", e.message); }
 
         for (const tenant of tenants) {
+          let tenantDB;
           try {
-            const tenantDB = await getTenantDB(tenant.dbName);
-            const models   = getTenantModels(tenantDB);
+            tenantDB = await getTenantDB(tenant.dbName);
+            const models = getTenantModels(tenantDB);
             await runDealFollowUpForModels(models, tenantDB, tenant.slug);
-          } catch (e) { console.error(`DealFollowUpCron error for tenant ${tenant.slug}:`, e.message); }
+          } catch (e) {
+            console.error(`DealFollowUpCron error for tenant ${tenant.slug}:`, e.message);
+            if (tenantDB) {
+              logActivity(tenantDB, {
+                module: "Deals",
+                action: "Deal Follow-up Reminder Cron",
+                status: "Failed",
+                errorMessage: e.message,
+              });
+            }
+          }
         }
       } catch (error) {
         console.error("Deal follow-up cron error:", error);

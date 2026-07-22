@@ -27,6 +27,7 @@ import {
 import uploadPlatformLogoMiddleware from "../middlewares/uploadPlatformLogo.js";
 import { listFreeTrialSignups, deleteFreeTrialSignup } from "../controllers/freeTrial.controller.js";
 import { runFreeTrialCron } from "../cron/freeTrialCron.js";
+import { getTenantActivityLogs } from "../controllers/tenantActivityLog.controller.js";
 
 const router = express.Router();
 
@@ -62,6 +63,9 @@ router.post("/api/settings/favicon", superAdminAuth, uploadPlatformLogoMiddlewar
 // Free trial signup log
 router.get("/api/free-trials",             superAdminAuth, listFreeTrialSignups);
 router.delete("/api/free-trials/:id",      superAdminAuth, deleteFreeTrialSignup);
+
+// Tenant Activity Logs — stored in the tenant's own database, viewed per-tenant
+router.get("/api/tenants/:id/activity-logs", superAdminAuth, getTenantActivityLogs);
 
 // Manually fires the free-trial reminder/expiry cron on demand — the
 // scheduled job only runs hourly (cron/freeTrialCron.js), so this lets an

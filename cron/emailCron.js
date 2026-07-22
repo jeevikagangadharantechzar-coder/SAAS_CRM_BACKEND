@@ -6,6 +6,7 @@ import { getTenantModels } from "../models/tenant/index.js";
 import Tenant from "../models/master/Tenant.js";
 import mongoose from "mongoose";
 import { sendNotification } from "../services/notificationService.js";
+import { logActivity } from "../services/tenantActivityLog.service.js";
 
 // Legacy model
 import MassEmailLegacy from "../models/massEmail.model.js";
@@ -87,9 +88,22 @@ const processScheduledEmails = async (MassEmail, label = "legacy", tenantDB = nu
 
       console.log(` [${label}] Scheduled email sent: ${emailDoc._id}`);
       await notifyScheduledEmailOutcome(emailDoc, "sent", tenantDB);
+      logActivity(tenantDB, {
+        module: "Email",
+        action: "Scheduled Email Sent",
+        status: "Success",
+        metadata: { massEmailId: String(emailDoc._id), subject: emailDoc.subject, recipients: emailDoc.recipients?.length },
+      });
     } catch (err) {
       console.error(` [${label}] Scheduled email failed: ${emailDoc._id}`, err.message);
       await notifyScheduledEmailOutcome(emailDoc, "failed", tenantDB, err.message);
+      logActivity(tenantDB, {
+        module: "Email",
+        action: "Scheduled Email Failed",
+        status: "Failed",
+        errorMessage: err.message,
+        metadata: { massEmailId: String(emailDoc._id), subject: emailDoc.subject },
+      });
     }
   }
 };
@@ -116,12 +130,21 @@ cron.schedule("* * * * *", async () => {
     }
 
     for (const tenant of tenants) {
+      let tenantDB;
       try {
-        const tenantDB = await getTenantDB(tenant.dbName);
+        tenantDB = await getTenantDB(tenant.dbName);
         const { MassEmail } = getTenantModels(tenantDB);
         await processScheduledEmails(MassEmail, tenant.slug, tenantDB);
       } catch (e) {
         console.error(`EmailCron error for tenant ${tenant.slug}:`, e.message);
+        if (tenantDB) {
+          logActivity(tenantDB, {
+            module: "Email",
+            action: "Scheduled Email Cron",
+            status: "Failed",
+            errorMessage: e.message,
+          });
+        }
       }
     }
   } catch (error) {
