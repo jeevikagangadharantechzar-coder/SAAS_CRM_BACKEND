@@ -5,10 +5,10 @@ const PLAN_CODE_REGEX    = /^[a-z0-9_]+$/;
 
 const VALID_FEATURE_KEYS = [
   "dashboard", "leads", "create_lead", "deals_all", "create_deal", "deals_pipeline",
-  "invoices", "proposal", "activities", "activities_calendar", "activities_list",
+  "invoices", "proposal", "documents", "activities", "activities_calendar", "activities_list",
   "users_roles", "admin_access", "email_chat", "email_campaigns", "whatsapp_chat",
   "reports", "analytics", "settings", "streak_leaderboard", "assigned_tasks", "task_management",
-  "target_management", "meetings", "google_meet_sync", "zoom_meetings", "messages", "chatbot",
+  "target_management", "meetings", "schedule_view", "google_meet_sync", "zoom_meetings", "messages", "chatbot",
   "integration_facebook", "integration_linkedin", "integration_justdial",
   "integration_indiamart", "integration_99acres", "integration_sulekha",
   "live_tracking", "device_login_requests",
