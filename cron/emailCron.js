@@ -5,11 +5,30 @@ import { getTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import Tenant from "../models/master/Tenant.js";
 import mongoose from "mongoose";
+import { sendNotification } from "../services/notificationService.js";
 
 // Legacy model
 import MassEmailLegacy from "../models/massEmail.model.js";
 
-const processScheduledEmails = async (MassEmail, label = "legacy") => {
+const notifyScheduledEmailOutcome = async (emailDoc, outcome, tenantDB, errorMessage) => {
+  if (!emailDoc.createdBy) return;
+  try {
+    await sendNotification(
+      emailDoc.createdBy,
+      outcome === "sent"
+        ? `Your scheduled email "${emailDoc.subject}" was sent to ${emailDoc.recipients.length} recipient(s).`
+        : `Your scheduled email "${emailDoc.subject}" failed to send${errorMessage ? `: ${errorMessage}` : "."}`,
+      "scheduled_email",
+      { massEmailId: String(emailDoc._id), outcome },
+      { referenceId: `${emailDoc._id}:${outcome}`, title: outcome === "sent" ? "Scheduled Email Sent" : "Scheduled Email Failed" },
+      tenantDB
+    );
+  } catch (notifyErr) {
+    console.error("EmailCron: failed to create scheduled_email notification:", notifyErr.message);
+  }
+};
+
+const processScheduledEmails = async (MassEmail, label = "legacy", tenantDB = null) => {
   const now = new Date();
 
   const pendingEmails = await MassEmail.find({
@@ -18,54 +37,60 @@ const processScheduledEmails = async (MassEmail, label = "legacy") => {
   });
 
   for (const emailDoc of pendingEmails) {
-    const logoUrl =
-      "https://res.cloudinary.com/djpljugqo/image/upload/v1771404424/TZI_Logo-04_-_Copy-removebg-preview_o6ocur.png";
+    try {
+      const logoUrl =
+        "https://res.cloudinary.com/djpljugqo/image/upload/v1771404424/TZI_Logo-04_-_Copy-removebg-preview_o6ocur.png";
 
-    const finalHTML = `
-      <div style="background-color:#f4f6f8; padding:40px 0;">
-        <div style="max-width:600px; margin:auto; background:white; padding:30px; border-radius:8px;">
+      const finalHTML = `
+        <div style="background-color:#f4f6f8; padding:40px 0;">
+          <div style="max-width:600px; margin:auto; background:white; padding:30px; border-radius:8px;">
 
-          <div style="text-align:center; margin-bottom:25px;">
-            <img src="${logoUrl}" alt="TZI Logo" width="180" />
+            <div style="text-align:center; margin-bottom:25px;">
+              <img src="${logoUrl}" alt="TZI Logo" width="180" />
+            </div>
+
+            <div style="font-size:14px; line-height:1.6; color:#333;">
+              ${emailDoc.content}
+            </div>
+
+            <hr style="margin:30px 0; border:none; border-top:1px solid #eee;" />
+
+            <div style="text-align:center; font-size:12px; color:#888;">
+              © ${new Date().getFullYear()} TZI. All rights reserved.
+            </div>
+
           </div>
-
-          <div style="font-size:14px; line-height:1.6; color:#333;">
-            ${emailDoc.content}
-          </div>
-
-          <hr style="margin:30px 0; border:none; border-top:1px solid #eee;" />
-
-          <div style="text-align:center; font-size:12px; color:#888;">
-            © ${new Date().getFullYear()} TZI. All rights reserved.
-          </div>
-
         </div>
-      </div>
-    `;
+      `;
 
-    for (const recipient of emailDoc.recipients) {
-      await sendEmail({
-        to: recipient,
-        subject: emailDoc.subject,
-        html: finalHTML,
-        attachments: emailDoc.attachments,
-      });
-    }
-
-    // Update status to sent
-    emailDoc.status = "sent";
-    await emailDoc.save();
-
-    //  Delete attachment files after sending
-    if (emailDoc.attachments && emailDoc.attachments.length > 0) {
-      emailDoc.attachments.forEach((file) => {
-        fs.unlink(file.path, (err) => {
-          if (err) console.error("File delete error:", err);
+      for (const recipient of emailDoc.recipients) {
+        await sendEmail({
+          to: recipient,
+          subject: emailDoc.subject,
+          html: finalHTML,
+          attachments: emailDoc.attachments,
         });
-      });
-    }
+      }
 
-    console.log(` [${label}] Scheduled email sent: ${emailDoc._id}`);
+      // Update status to sent
+      emailDoc.status = "sent";
+      await emailDoc.save();
+
+      //  Delete attachment files after sending
+      if (emailDoc.attachments && emailDoc.attachments.length > 0) {
+        emailDoc.attachments.forEach((file) => {
+          fs.unlink(file.path, (err) => {
+            if (err) console.error("File delete error:", err);
+          });
+        });
+      }
+
+      console.log(` [${label}] Scheduled email sent: ${emailDoc._id}`);
+      await notifyScheduledEmailOutcome(emailDoc, "sent", tenantDB);
+    } catch (err) {
+      console.error(` [${label}] Scheduled email failed: ${emailDoc._id}`, err.message);
+      await notifyScheduledEmailOutcome(emailDoc, "failed", tenantDB, err.message);
+    }
   }
 };
 
@@ -94,7 +119,7 @@ cron.schedule("* * * * *", async () => {
       try {
         const tenantDB = await getTenantDB(tenant.dbName);
         const { MassEmail } = getTenantModels(tenantDB);
-        await processScheduledEmails(MassEmail, tenant.slug);
+        await processScheduledEmails(MassEmail, tenant.slug, tenantDB);
       } catch (e) {
         console.error(`EmailCron error for tenant ${tenant.slug}:`, e.message);
       }

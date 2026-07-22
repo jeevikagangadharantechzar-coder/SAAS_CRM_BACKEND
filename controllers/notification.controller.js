@@ -4,6 +4,7 @@ import UserLegacy         from "../models/user.model.js";
 import LeadLegacy         from "../models/leads.model.js";
 import DealLegacy         from "../models/deals.model.js";
 import ProposalLegacy     from "../models/proposal.model.js";
+import { getNotificationCategory, getTypesForCategory } from "../utils/notificationCategory.js";
 
 const getModels = (req) =>
   req.tenantDB
@@ -11,6 +12,47 @@ const getModels = (req) =>
     : { Notification: NotificationLegacy, User: UserLegacy, Lead: LeadLegacy, Deal: DealLegacy, Proposal: ProposalLegacy };
 
 export default {
+  // GET /notifications — identity-derived (req.user, set by `protect`), not a trusted URL param.
+  // Admin/Sales roles get different scoping: Admin sees every notification in the tenant,
+  // Sales sees only notifications addressed to them. Supports optional ?category= filtering.
+  getNotificationsForCurrentUser: async (req, res) => {
+    try {
+      const { Notification } = getModels(req);
+      const now = new Date();
+      const isAdmin = req.user?.role?.name?.toLowerCase() === "admin";
+
+      const query = {
+        $or: [{ expiresAt: { $exists: false } }, { expiresAt: { $gte: now } }],
+      };
+      if (!isAdmin) {
+        query.userId = req.user._id;
+      }
+
+      const { category } = req.query;
+      if (category && category !== "all") {
+        const types = getTypesForCategory(category);
+        query.type = types.length ? { $in: types } : category;
+      }
+
+      await Notification.deleteMany({ expiresAt: { $lt: now } });
+
+      const notifications = await Notification.find(query)
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .lean();
+
+      const withCategory = notifications.map((n) => ({
+        ...n,
+        category: getNotificationCategory(n.type),
+      }));
+
+      res.status(200).json(withCategory);
+    } catch (err) {
+      console.error("getNotificationsForCurrentUser error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  },
+
   createNotification: async (req, res) => {
     try {
       const { Notification } = getModels(req);
@@ -44,6 +86,10 @@ export default {
     try {
       const { Notification, Lead, Deal, Proposal } = getModels(req);
       const { userId } = req.params;
+      const isAdmin = req.user?.role?.name?.toLowerCase() === "admin";
+      if (!isAdmin && String(req.user?._id) !== String(userId)) {
+        return res.status(403).json({ message: "Not authorized to view these notifications" });
+      }
       const now = new Date();
 
       await Notification.deleteMany({ userId, expiresAt: { $lt: now } });
@@ -85,7 +131,9 @@ export default {
   markAsRead: async (req, res) => {
     try {
       const { Notification } = getModels(req);
-      const notif = await Notification.findByIdAndUpdate(req.params.id, { read: true }, { new: true });
+      const isAdmin = req.user?.role?.name?.toLowerCase() === "admin";
+      const filter = isAdmin ? { _id: req.params.id } : { _id: req.params.id, userId: req.user._id };
+      const notif = await Notification.findOneAndUpdate(filter, { read: true, isRead: true }, { new: true });
       if (!notif) return res.status(404).json({ message: "Notification not found" });
       res.status(200).json({ message: "Notification marked as read", notif });
     } catch (err) { res.status(500).json({ message: err.message }); }
@@ -94,7 +142,9 @@ export default {
   deleteNotification: async (req, res) => {
     try {
       const { Notification } = getModels(req);
-      const notif = await Notification.findByIdAndDelete(req.params.id);
+      const isAdmin = req.user?.role?.name?.toLowerCase() === "admin";
+      const filter = isAdmin ? { _id: req.params.id } : { _id: req.params.id, userId: req.user._id };
+      const notif = await Notification.findOneAndDelete(filter);
       if (!notif) return res.status(404).json({ message: "Not found" });
       res.json({ success: true });
     } catch (err) { res.status(500).json({ message: err.message }); }
@@ -106,8 +156,10 @@ export default {
       if (!ids || !Array.isArray(ids) || ids.length === 0)
         return res.status(400).json({ message: "No IDs provided" });
       const { Notification } = getModels(req);
-      await Notification.deleteMany({ _id: { $in: ids } });
-      res.status(200).json({ success: true, deletedCount: ids.length });
+      const isAdmin = req.user?.role?.name?.toLowerCase() === "admin";
+      const filter = isAdmin ? { _id: { $in: ids } } : { _id: { $in: ids }, userId: req.user._id };
+      const result = await Notification.deleteMany(filter);
+      res.status(200).json({ success: true, deletedCount: result.deletedCount });
     } catch (err) { res.status(500).json({ message: err.message }); }
   },
 };

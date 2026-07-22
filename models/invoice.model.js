@@ -60,6 +60,7 @@ const invoiceSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  lastReminderAt: { type: Date, default: null },
   inrAmount: { 
     type: Number, 
     default: null 
