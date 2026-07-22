@@ -58,14 +58,23 @@ export default {
         content: content || "", image: image || "", status, attachments,
         companyName: dealInfo?.companyName || "", value: dealInfo?.value || 0,
         followUpDate: status === "draft" ? null : new Date(), lastReminderAt: null,
+        lastUpdatedBy: req.user._id,
       };
+
+      const statusHistoryEntry = { status, changedAt: new Date(), changedBy: req.user._id };
 
       let proposal;
       if (id) {
-        proposal = await Proposal.findByIdAndUpdate(id, proposalData, { new: true, runValidators: true });
+        const existing = await Proposal.findById(id).select("status");
+        const statusChanged = !existing || existing.status !== status;
+        proposal = await Proposal.findByIdAndUpdate(
+          id,
+          statusChanged ? { ...proposalData, $push: { statusHistory: statusHistoryEntry } } : proposalData,
+          { new: true, runValidators: true }
+        );
         if (!proposal) return res.status(404).json({ error: "Proposal not found" });
       } else {
-        proposal = new Proposal(proposalData);
+        proposal = new Proposal({ ...proposalData, createdBy: req.user._id, statusHistory: [statusHistoryEntry] });
         await proposal.save();
       }
 
@@ -212,7 +221,15 @@ export default {
     const { status } = req.body;
     try {
       const { Proposal } = getModels(req);
-      const updated = await Proposal.findByIdAndUpdate(id, { status }, { new: true });
+      const updated = await Proposal.findByIdAndUpdate(
+        id,
+        {
+          status,
+          lastUpdatedBy: req.user._id,
+          $push: { statusHistory: { status, changedAt: new Date(), changedBy: req.user._id } },
+        },
+        { new: true }
+      );
       if (!updated) return res.status(404).json({ error: "Proposal not found" });
       res.json({ message: "Status updated", proposal: updated });
     } catch (error) {
@@ -234,10 +251,13 @@ export default {
       const newFollowUpDate = followUpDate ? new Date(followUpDate) : null;
       const followUpChanged = oldFollowUpDate?.toDateString() !== newFollowUpDate?.toDateString();
 
-      const updateData = { title, dealTitle, email, content, image, status, followUpDate: newFollowUpDate, followUpComment, lastReminderAt: null };
+      const updateData = { title, dealTitle, email, content, image, status, followUpDate: newFollowUpDate, followUpComment, lastReminderAt: null, lastUpdatedBy: req.user._id };
       if (req.files?.length > 0) {
         const newAttachments = req.files.map(f => ({ name: f.originalname, path: f.path, type: f.mimetype, size: f.size, uploadedAt: new Date() }));
         updateData.attachments = [...(original.attachments || []), ...newAttachments];
+      }
+      if (status && status !== original.status) {
+        updateData.$push = { statusHistory: { status, changedAt: new Date(), changedBy: req.user._id } };
       }
 
       const updated = await Proposal.findByIdAndUpdate(id, updateData, { new: true, runValidators: true })

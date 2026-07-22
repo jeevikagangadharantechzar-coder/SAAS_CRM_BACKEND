@@ -105,4 +105,18 @@ router.get(
 );
 router.get("/pending", indexControllers.dealsController.pendingDeals);
 router.get("/:id", adminOrAssignedToDeal, indexControllers.dealsController.getDealById);
+
+// Deal Details page — one tab per route, each a live read against its own
+// module's collection (Proposal/Invoice/Meeting/MassEmail/Task/Target), so
+// nothing here can ever fall out of sync with those modules.
+router.get("/:id/activity",   adminOrAssignedToDeal, indexControllers.dealDetailController.getActivityLog);
+router.get("/:id/notes",      adminOrAssignedToDeal, indexControllers.dealDetailController.getNotes);
+router.post("/:id/notes",     adminOrAssignedToDeal, indexControllers.dealDetailController.addNote);
+router.get("/:id/highlights", adminOrAssignedToDeal, indexControllers.dealDetailController.getHighlights);
+router.get("/:id/proposals",  adminOrAssignedToDeal, indexControllers.dealDetailController.getDealProposals);
+router.get("/:id/invoices",   adminOrAssignedToDeal, indexControllers.dealDetailController.getDealInvoices);
+router.get("/:id/meetings",   adminOrAssignedToDeal, indexControllers.dealDetailController.getDealMeetings);
+router.get("/:id/emails",     adminOrAssignedToDeal, indexControllers.dealDetailController.getDealEmails);
+router.get("/:id/score",      adminOrAssignedToDeal, indexControllers.dealDetailController.getDealScore);
+
 export default router;

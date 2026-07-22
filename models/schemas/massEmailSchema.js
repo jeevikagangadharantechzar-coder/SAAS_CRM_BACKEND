@@ -32,7 +32,7 @@ const massEmailSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "scheduled", "processing", "sent", "failed"],
+      enum: ["pending", "scheduled", "processing", "sent", "failed", "cancelled"],
       default: "pending",
     },
     createdBy: {
@@ -40,6 +40,11 @@ const massEmailSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    // Who cancelled it and when — completes cancelScheduledEmail (previously
+    // unwired to any route and would have failed validation anyway, since
+    // "cancelled" wasn't a valid status value until now).
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    cancelledAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

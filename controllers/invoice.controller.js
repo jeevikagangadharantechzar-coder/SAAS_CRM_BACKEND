@@ -11,6 +11,7 @@ import { notifyUser } from "../realtime/socket.js";
 import InvoiceLegacy from "../models/invoice.model.js";
 import SettingsLegacy from "../models/Settings.js";
 import { sendEmailWithAttachments } from "../utils/gmailService.js";
+import { sendNotification, sendNotificationToAdmins } from "../services/notificationService.js";
 
 const getInvoice = (req) => req.tenantDB ? getTenantModels(req.tenantDB).Invoice : InvoiceLegacy;
 
@@ -68,10 +69,26 @@ export default {
         }
       }
 
+      invoiceFields.statusHistory = [
+        { status, amountPaid: invoiceFields.amountPaid || 0, changedAt: new Date(), changedBy: req.user._id },
+      ];
+
       const newInvoice = new Invoice(invoiceFields);
       await newInvoice.save();
       res.status(201).json({ message: "Invoice created successfully", invoice: newInvoice });
       notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(newInvoice._id), action: "created" });
+
+      try {
+        if (assignTo) {
+          await sendNotification(assignTo, `Invoice #${newInvoice.invoicenumber} created and assigned to you`, "invoice",
+            { invoiceId: String(newInvoice._id), event: "created" }, { title: "Invoice Assigned" }, req.tenantDB);
+        }
+        await sendNotificationToAdmins(`Invoice #${newInvoice.invoicenumber} was created`, "invoice",
+          { invoiceId: String(newInvoice._id), event: "created" }, { title: "Invoice Created" },
+          [req.user._id], req.tenantDB);
+      } catch (notifyErr) {
+        console.error("invoice created notification error:", notifyErr);
+      }
     } catch (error) {
       console.error("Error creating invoice:", error);
       res.status(500).json({ error: error.message || "Internal server error" });
@@ -141,6 +158,7 @@ export default {
         discountValue: Number(discountValue) || Number(discount) || 0, discountType: discountType || "fixed",
         tax: Number(tax) || 0, taxType: taxType || "fixed", taxAmount: Number(taxAmount.toFixed(2)),
         total: Number(finalTotal.toFixed(2)),
+        lastUpdatedBy: req.user._id,
       };
 
       const currentStatus = invoice.status;
@@ -189,6 +207,22 @@ export default {
         }
       }
 
+      // Log a transition whenever the status itself changed, or — since
+      // partially_paid can be hit multiple times as more payments come in —
+      // whenever the amount collected changed even with the status held the
+      // same, so the payment journey isn't lost between two partial payments.
+      const amountChanged = updateData.amountPaid !== undefined && updateData.amountPaid !== (Number(invoice.amountPaid) || 0);
+      if (newStatus !== currentStatus || amountChanged) {
+        updateData.$push = {
+          statusHistory: {
+            status: newStatus,
+            amountPaid: updateData.amountPaid ?? invoice.amountPaid ?? 0,
+            changedAt: new Date(),
+            changedBy: req.user._id,
+          },
+        };
+      }
+
       const updated = await Invoice.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
         .populate("assignTo", "firstName lastName email role")
         .populate("items.deal", "dealName value stage");
@@ -197,6 +231,22 @@ export default {
         notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(updated._id), action: "updated", status: updateData.status });
       } catch (notifyErr) {
         console.error("invoice_updated notify error:", notifyErr);
+      }
+
+      if (newStatus !== currentStatus) {
+        try {
+          const statusLabel = newStatus === "paid" ? "paid" : newStatus === "partially_paid" ? "partially paid" : "unpaid";
+          const message = `Invoice #${updated.invoicenumber} marked as ${statusLabel}`;
+          const meta = { invoiceId: String(updated._id), event: "status_change", status: newStatus };
+          const assignedToId = updated.assignTo?._id;
+          if (assignedToId) {
+            await sendNotification(assignedToId, message, "invoice", meta, { title: "Invoice Payment Update" }, req.tenantDB);
+          }
+          await sendNotificationToAdmins(message, "invoice", meta, { title: "Invoice Payment Update" },
+            assignedToId ? [assignedToId] : [], req.tenantDB);
+        } catch (notifyErr) {
+          console.error("invoice status change notification error:", notifyErr);
+        }
       }
     } catch (error) {
       console.error("Error updating invoice:", error);

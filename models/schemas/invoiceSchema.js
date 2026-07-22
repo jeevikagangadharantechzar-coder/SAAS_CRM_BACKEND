@@ -9,11 +9,26 @@ const invoiceSchema = new mongoose.Schema(
       default: () => `TZI-${Math.floor(Math.random() * 1000000)}`,
     },
     assignTo:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     issueDate: { type: Date, required: true },
     dueDate:   { type: Date, required: true },
     status:    { type: String, enum: ["paid", "unpaid", "partially_paid"], required: true },
     // Cumulative amount actually collected so far (grows as partial payments come in)
     amountPaid: { type: Number, default: 0 },
+    // Every status transition, oldest first — same reasoning as
+    // Proposal.statusHistory: status alone only shows the current value, so
+    // unpaid → partially_paid → paid would otherwise collapse into just
+    // "paid" in the Activity Log, hiding the actual payment journey from
+    // whoever (e.g. an admin) is reviewing what another user did.
+    statusHistory: [
+      {
+        status:     { type: String, enum: ["paid", "unpaid", "partially_paid"] },
+        amountPaid: { type: Number },
+        changedAt:  { type: Date, default: Date.now },
+        changedBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      },
+    ],
 
     items: [
       {
@@ -38,6 +53,7 @@ const invoiceSchema = new mongoose.Schema(
     currency:              { type: String, default: "USD" },
     paidAt:                { type: Date, default: null },
     emailSentAt:           { type: Date, default: null },
+    lastReminderAt:        { type: Date, default: null },
     inrAmount:             { type: Number, default: null },
     exchangeRate:          { type: Number, default: null },
     preferredCurrency:     { type: String, default: null },

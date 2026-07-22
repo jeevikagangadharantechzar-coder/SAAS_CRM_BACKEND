@@ -33,6 +33,8 @@ import googleIntegrationSchema   from "../schemas/googleIntegrationSchema.js";
 import zoomIntegrationSchema     from "../schemas/zoomIntegrationSchema.js";
 import deviceSessionSchema       from "../schemas/deviceSessionSchema.js";
 import userLocationSchema        from "../schemas/userLocationSchema.js";
+import dealNoteSchema            from "../schemas/dealNoteSchema.js";
+import calendarNoteSchema        from "../schemas/calendarNoteSchema.js";
 
 
 const MODEL_MAP = [
@@ -71,6 +73,8 @@ const MODEL_MAP = [
   ["ZoomIntegration",    zoomIntegrationSchema],
   ["DeviceSession",      deviceSessionSchema],
   ["UserLocation",       userLocationSchema],
+  ["DealNote",           dealNoteSchema],
+  ["CalendarNote",       calendarNoteSchema],
 ];
 
 /**
@@ -127,5 +131,7 @@ export function getTenantModels(conn) {
     ZoomIntegration:     conn.model("ZoomIntegration"),
     DeviceSession:       conn.model("DeviceSession"),
     UserLocation:        conn.model("UserLocation"),
+    DealNote:            conn.model("DealNote"),
+    CalendarNote:        conn.model("CalendarNote"),
   };
 }

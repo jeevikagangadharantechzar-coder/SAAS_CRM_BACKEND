@@ -9,6 +9,7 @@ import mongoose from "mongoose";
 import DealLegacy         from "../models/deals.model.js";
 import LeadLegacy         from "../models/leads.model.js";
 import ProposalLegacy     from "../models/proposal.model.js";
+import InvoiceLegacy      from "../models/invoice.model.js";
 import NotificationLegacy from "../models/notification.model.js";
 import UserLegacy         from "../models/user.model.js";
 import RoleLegacy         from "../models/role.model.js";
@@ -35,7 +36,7 @@ const getAdminUserIds = async (Role, User) => {
   }
 };
 
-const runForModels = async ({ Deal, Lead, Proposal, Notification, User, Role }, tenantDB = null, label = "legacy") => {
+const runForModels = async ({ Deal, Lead, Proposal, Invoice, Notification, User, Role }, tenantDB = null, label = "legacy") => {
   const now = new Date();
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
 
@@ -79,8 +80,14 @@ const runForModels = async ({ Deal, Lead, Proposal, Notification, User, Role }, 
       status: { $nin: ["Converted", "Junk"] },
       $and: [
         { $or: [{ lastReminderAt: { $exists: false } }, { lastReminderAt: null }, { lastReminderAt: { $lt: todayStart } }] },
-        // A logged follow-up note means the lead isn't "missed" — skip it
-        { $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }] },
+        // Only skip if the most recent note was logged after the current followUpDate —
+        // i.e. the salesperson has already acted since this due date was set.
+        { $expr: {
+            $or: [
+              { $eq: [{ $size: { $ifNull: ["$followUpNotes", []] } }, 0] },
+              { $lt: [{ $max: "$followUpNotes.createdAt" }, "$followUpDate"] },
+            ],
+        } },
       ],
     }).populate("assignTo", "_id firstName lastName email profileImage");
 
@@ -123,6 +130,33 @@ const runForModels = async ({ Deal, Lead, Proposal, Notification, User, Role }, 
       } catch (e) { console.error(`[${label}] Error processing proposal ${proposal._id}:`, e.message); }
     }
   } catch (e) { console.error(`[${label}] Error in proposals section:`, e.message); }
+
+  // ── Invoices ─────────────────────────────────────────────────────────────
+  try {
+    const dueInvoices = await Invoice.find({
+      dueDate: { $lte: now },
+      status: { $in: ["unpaid", "partially_paid"] },
+      $or: [{ lastReminderAt: { $exists: false } }, { lastReminderAt: null }, { lastReminderAt: { $lt: todayStart } }],
+    }).populate("assignTo", "_id firstName lastName email profileImage");
+
+    for (const invoice of dueInvoices) {
+      try {
+        const assignedTo = invoice.assignTo;
+        const message = `Invoice #${invoice.invoicenumber} is overdue`;
+        const meta = { invoiceId: invoice._id, invoiceNumber: invoice.invoicenumber, event: "overdue", profileImage: assignedTo?.profileImage };
+
+        if (assignedTo?._id) {
+          await sendNotification(assignedTo._id, message, "invoice", meta, { title: "Invoice Overdue", followUpDate: invoice.dueDate }, tenantDB);
+        }
+        for (const adminId of adminIds) {
+          if (!assignedTo?._id || String(adminId) !== String(assignedTo._id))
+            await sendNotification(adminId, message, "invoice", meta, { title: "Invoice Overdue", followUpDate: invoice.dueDate }, tenantDB);
+        }
+        invoice.lastReminderAt = new Date();
+        await invoice.save();
+      } catch (e) { console.error(`[${label}] Error processing invoice ${invoice._id}:`, e.message); }
+    }
+  } catch (e) { console.error(`[${label}] Error in invoices section:`, e.message); }
 };
 
 // Target management deadline reminders/auto-expiry now live in cron/targetCron.js
@@ -138,7 +172,7 @@ const runNotificationCron = async () => {
     console.log(`Notification Cron Started: ${new Date().toISOString()}`);
 
     // 1. Legacy connection
-    await runForModels({ Deal: DealLegacy, Lead: LeadLegacy, Proposal: ProposalLegacy, Notification: NotificationLegacy, User: UserLegacy, Role: RoleLegacy }, null, "legacy");
+    await runForModels({ Deal: DealLegacy, Lead: LeadLegacy, Proposal: ProposalLegacy, Invoice: InvoiceLegacy, Notification: NotificationLegacy, User: UserLegacy, Role: RoleLegacy }, null, "legacy");
 
     // 2. Per-tenant
     let tenants = [];

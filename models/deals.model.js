@@ -112,6 +112,7 @@ const dealSchema = new mongoose.Schema({
     type: { type: String, default: "application/octet-stream" },
     size: { type: Number, default: 0 },
     uploadedAt: { type: Date, default: Date.now },
+    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
 ],
   // Lost deal fields

@@ -43,9 +43,11 @@ import indiamartRoutes      from "./indiamart.routes.js";
 import ninetyNineAcresRoutes from "./99acres.routes.js";
 import sulekhaRoutes       from "./sulekha.routes.js";
 import meetingRoutes            from "./meeting.routes.js";
+import calendarRoutes           from "./calendar.routes.js";
 import googleIntegrationRoutes  from "./googleIntegration.routes.js";
 import zoomIntegrationRoutes    from "./zoomIntegration.routes.js";
 import locationRoutes           from "./location.routes.js";
+import supportRoutes            from "./support.routes.js";
 
 
 import publicRoutes from "./public.routes.js";
@@ -97,9 +99,11 @@ router.use("/indiamart",        indiamartRoutes);
 router.use("/99acres",         ninetyNineAcresRoutes);
 router.use("/sulekha",         sulekhaRoutes);
 router.use("/meetings",           meetingRoutes);
+router.use("/calendar",           calendarRoutes);
 router.use("/google-integration", googleIntegrationRoutes);
 router.use("/zoom-integration",   zoomIntegrationRoutes);
 router.use("/location",           locationRoutes);
+router.use("/support",            supportRoutes);
 
 
 export default router;

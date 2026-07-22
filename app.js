@@ -19,6 +19,7 @@ import linkedinWebhookRoutes    from "./routes/linkedinWebhook.routes.js";
 // Multi-tenant SaaS imports
 import superAdminRoutes from "./routes/superAdmin.js";
 import subscriptionPlanRoutes from "./routes/superadmin/subscriptionPlan.routes.js";
+import supportTicketRoutes from "./routes/superadmin/supportTicket.routes.js";
 import freeTrialRoutes from "./routes/freeTrial.routes.js";
 import tenantApiRouter from "./routes/tenantRouter.js";
 import { resolveTenant } from "./middlewares/resolveTenant.js";
@@ -26,7 +27,6 @@ import { checkTrialExpiry } from "./middlewares/checkTrialExpiry.js";
 import { activityLogger } from "./middlewares/activityLogger.middleware.js";
 
 // Routes
-import { startFollowUpCron } from "./controllers/followups.cron.js";
 import gmailRoutes from "./routes/gmailRoutes.js";
 import googleAuthRoutes from "./routes/googleAuthRoutes.js";
 import zoomAuthRoutes from "./routes/zoomAuthRoutes.js";
@@ -173,6 +173,7 @@ app.use("/webhooks/linkedin", linkedinWebhookRoutes);
 // ─────────────────────────────────────────────
 app.use("/superadmin", superAdminRoutes);
 app.use("/api/superadmin/subscription-plans", subscriptionPlanRoutes);
+app.use("/api/superadmin/support-tickets", supportTicketRoutes);
 app.use("/api/free-trial", freeTrialRoutes);
 app.use("/:tenantSlug/api", resolveTenant, checkTrialExpiry, activityLogger(), tenantApiRouter);
 

@@ -10,6 +10,12 @@ const permissionsSchema = new mongoose.Schema(
     deals_pipeline:      { type: Boolean, default: false },
     invoices:            { type: Boolean, default: false },
     proposal:            { type: Boolean, default: false },
+    // Independent permission for the Document module (deals-document /
+    // lead-document pages) — previously had no dedicated key at all and was
+    // just implicitly available to anyone with deals_all/deals_pipeline/leads.
+    // Defaults true so existing roles (which already had that implicit
+    // access) don't silently lose it now that it's a real, separate toggle.
+    documents:           { type: Boolean, default: true },
     activities:          { type: Boolean, default: false },
     activities_calendar: { type: Boolean, default: false },
     activities_list:     { type: Boolean, default: false },
@@ -26,6 +32,7 @@ const permissionsSchema = new mongoose.Schema(
     target_management:   { type: Boolean, default: false },
     my_targets:          { type: Boolean, default: true },
     meetings:            { type: Boolean, default: false },
+    schedule_view:       { type: Boolean, default: true },
     deal_analysis:       { type: Boolean, default: true },
     won_analysis:        { type: Boolean, default: true },
     loss_analysis:       { type: Boolean, default: true },

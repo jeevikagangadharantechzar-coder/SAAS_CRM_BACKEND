@@ -141,7 +141,7 @@ export default {
 
   createMeeting: async (req, res) => {
     try {
-      const { title, description, startDateTime, endDateTime, attendees, reminderMinutes, provider } = req.body;
+      const { title, description, startDateTime, endDateTime, attendees, reminderMinutes, provider, dealId } = req.body;
       const { Meeting, User } = getModels(req);
       const meetingProvider = provider === "zoom" ? "zoom" : "google_meet";
 
@@ -246,6 +246,7 @@ export default {
         reminderMinutes: reminderMinutes || 10,
         createdBy:       req.user._id,
         creatorEmail:    user.email,
+        dealId:          dealId || null,
       });
 
       // Google Calendar already emails attendees itself (sendUpdates: "all"
@@ -317,9 +318,15 @@ export default {
         }
       }
 
+      const updateFields = { title, description, startDateTime, endDateTime, attendees, reminderMinutes, status };
+      if (status === "cancelled" && meeting.status !== "cancelled") {
+        updateFields.cancelledBy = req.user._id;
+        updateFields.cancelledAt = new Date();
+      }
+
       const updated = await Meeting.findByIdAndUpdate(
         req.params.id,
-        { title, description, startDateTime, endDateTime, attendees, reminderMinutes, status },
+        updateFields,
         { new: true, omitUndefined: true }
       ).populate("createdBy", "firstName lastName email");
 

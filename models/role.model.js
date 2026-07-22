@@ -16,6 +16,8 @@ const permissionsSchema = new mongoose.Schema(
     email_chat: { type: Boolean, default: false },
     whatsapp_chat: { type: Boolean, default: false },
     reports: { type: Boolean, default: false },
+    schedule_view: { type: Boolean, default: true },
+    documents: { type: Boolean, default: true },
   },
   { _id: false }
 );
