@@ -221,6 +221,17 @@ export default {
     const { status } = req.body;
     try {
       const { Proposal } = getModels(req);
+
+      // A draft has never actually been emailed — flipping its status
+      // straight to "sent" (or any other post-send status) via this
+      // endpoint would mark it sent without ever sending it. That transition
+      // must go through the real send flow (sendProposal), not this one.
+      const existing = await Proposal.findById(id).select("status");
+      if (!existing) return res.status(404).json({ error: "Proposal not found" });
+      if (existing.status === "draft" && status !== "draft") {
+        return res.status(400).json({ error: "This draft hasn't been sent yet — send it first before changing its status." });
+      }
+
       const updated = await Proposal.findByIdAndUpdate(
         id,
         {

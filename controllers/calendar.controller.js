@@ -145,6 +145,10 @@ export default {
       if (isFeatureEnabled(planFeatures, "invoices")) {
         const invoiceQuery = {
           dueDate: { $gte: rangeStart, $lte: rangeEnd },
+          // A fully paid invoice has nothing left to remind anyone about —
+          // its due-date entry should drop off the calendar the moment it's
+          // settled, regardless of how far away the due date still is.
+          status: { $ne: "paid" },
           ...(isAdmin ? {} : { assignTo: userId }),
         };
         const invoices = await Invoice.find(invoiceQuery)
@@ -158,7 +162,7 @@ export default {
             title: `Invoice #${inv.invoicenumber}`,
             date: inv.dueDate,
             status: inv.status,
-            pending: inv.status !== "paid" && new Date(inv.dueDate) < new Date(),
+            pending: new Date(inv.dueDate) < new Date(),
             dealId: dealRef?._id || null,
             dealName: dealRef?.dealName || null,
             // The specific invoice's own view page, not just the general list.
@@ -199,6 +203,15 @@ export default {
       if (Meeting && isFeatureEnabled(planFeatures, "meetings")) {
         const meetingQuery = {
           startDateTime: { $gte: rangeStart, $lte: rangeEnd },
+          // Meetings never get a stored "completed" status — the Meetings
+          // page (effectiveStatus in Meetings.jsx) derives it purely by
+          // checking whether endDateTime has already passed, so the DB
+          // status stays "scheduled" forever unless explicitly cancelled.
+          // Mirroring that same logic here: a meeting drops off the
+          // calendar once it's actually over, not just when cancelled —
+          // same reasoning as paid invoices dropping off.
+          status: "scheduled",
+          endDateTime: { $gte: new Date() },
           ...(isAdmin ? {} : { createdBy: userId }),
         };
         const meetings = await Meeting.find(meetingQuery).select("title startDateTime endDateTime status dealId createdBy");
@@ -210,7 +223,7 @@ export default {
             date: m.startDateTime,
             endDate: m.endDateTime,
             status: m.status,
-            pending: m.status === "scheduled" && new Date(m.startDateTime) < new Date(),
+            pending: new Date(m.startDateTime) < new Date(),
             dealId: m.dealId || null,
             link: { page: "meetings" },
           });
