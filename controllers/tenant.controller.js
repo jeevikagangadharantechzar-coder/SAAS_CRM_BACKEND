@@ -12,6 +12,7 @@ import { sendWelcomeEmail, sendUpgradeAlertEmail, sendPlanEmail } from "../utils
 import { emitToSuperAdmin } from "../realtime/superAdminSocket.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
 import userService from "../services/user.service.js";
+import { logActivity } from "../services/tenantActivityLog.service.js";
 
 dotenv.config();
 
@@ -251,6 +252,15 @@ export const createTenant = async (req, res) => {
       });
 
       await EmailTemplate.insertMany(defaultEmailTemplates);
+
+      logActivity(tenantDB, {
+        userName: req.superAdmin?.email || "Super Admin",
+        userRole: "Super Admin",
+        module: "Tenant Management",
+        action: "Tenant Created",
+        status: "Success",
+        metadata: { tenantId: String(tenant._id), slug: tenant.slug },
+      });
     } catch (setupErr) {
       // Setup failed — remove the orphaned tenant record so the slug can be retried
       await Tenant.findByIdAndDelete(tenant._id);
@@ -334,6 +344,19 @@ export const toggleTenant = async (req, res) => {
 
     tenant.isActive = !tenant.isActive;
     await tenant.save();
+
+    try {
+      const tenantDB = await getTenantDB(tenant.dbName);
+      logActivity(tenantDB, {
+        userName: req.superAdmin?.email || "Super Admin",
+        userRole: "Super Admin",
+        module: "Tenant Management",
+        action: tenant.isActive ? "Tenant Activated" : "Tenant Deactivated",
+        status: "Success",
+      });
+    } catch (logErr) {
+      console.error(`Failed to log tenant toggle for ${tenant.slug}:`, logErr.message);
+    }
 
     res.json({ success: true, isActive: tenant.isActive, tenant });
   } catch (err) {
@@ -446,6 +469,15 @@ export const impersonateTenant = async (req, res) => {
       process.env.SECRET_KEY,
       { expiresIn: "1d" }
     );
+
+    logActivity(tenantDB, {
+      userName: req.superAdmin?.email || "Super Admin",
+      userRole: "Super Admin",
+      module: "Tenant Management",
+      action: "Tenant Impersonated",
+      status: "Success",
+      metadata: { impersonatedUser: user.email },
+    });
 
     res.json({
       success: true,
@@ -909,8 +941,9 @@ export const updateTenant = async (req, res) => {
     await tenant.save();
 
     // 2. Update the tenant's own database admin user record
+    let tenantDB;
     try {
-      const tenantDB = await getTenantDB(tenant.dbName);
+      tenantDB = await getTenantDB(tenant.dbName);
       const { User } = getTenantModels(tenantDB);
 
       // Find the admin user by the old admin email
@@ -927,6 +960,16 @@ export const updateTenant = async (req, res) => {
       }
     } catch (dbErr) {
       console.error(`Failed to update tenant database user for ${tenant.slug}:`, dbErr.message);
+    }
+
+    if (tenantDB) {
+      logActivity(tenantDB, {
+        userName: req.superAdmin?.email || "Super Admin",
+        userRole: "Super Admin",
+        module: "Tenant Management",
+        action: "Tenant Updated",
+        status: "Success",
+      });
     }
 
     res.json({ success: true, message: "Tenant updated successfully.", tenant });
