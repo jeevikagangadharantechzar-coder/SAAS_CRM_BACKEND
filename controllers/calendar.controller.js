@@ -38,6 +38,12 @@ export default {
       const isAdmin = req.user.role?.name === "Admin";
       const userId = req.user._id;
 
+      // Admin-only "view as user" filter — lets an Admin narrow the merged
+      // feed down to one salesperson's follow-ups instead of everyone's at
+      // once. A Sales user can never widen or redirect this to someone
+      // else's data; their own scoping below is untouched either way.
+      const scopeUserId = isAdmin ? (req.query.userId || null) : userId;
+
       // The whole /calendar route is already gated on schedule_view, but
       // that alone isn't enough — this endpoint aggregates data straight out
       // of other modules' collections, so a plan that disables e.g.
@@ -52,7 +58,7 @@ export default {
         const taskQuery = {
           dueDate: { $gte: rangeStart, $lte: rangeEnd },
           archived: { $ne: true },
-          ...(isAdmin ? {} : { assignedTo: userId }),
+          ...(scopeUserId ? { assignedTo: scopeUserId } : {}),
         };
         const tasks = await Task.find(taskQuery).select("title description status dueDate dealRef dealRefs assignedTo");
         tasks.forEach((t) => {
@@ -79,7 +85,7 @@ export default {
         const targetQuery = {
           startDate: { $lte: rangeEnd },
           endDate: { $gte: rangeStart },
-          ...(isAdmin ? {} : { salesPerson: userId }),
+          ...(scopeUserId ? { salesPerson: scopeUserId } : {}),
         };
         const targets = await Target.find(targetQuery).select("description period startDate endDate expiredAt salesPerson");
         targets.forEach((tg) => {
@@ -100,7 +106,7 @@ export default {
       if (isFeatureEnabled(planFeatures, ["deals_all", "deals_pipeline"])) {
         const dealQuery = {
           followUpDate: { $gte: rangeStart, $lte: rangeEnd },
-          ...(isAdmin ? {} : { assignedTo: userId }),
+          ...(scopeUserId ? { assignedTo: scopeUserId } : {}),
         };
         const deals = await Deal.find(dealQuery).select("dealName followUpDate stage assignedTo");
         deals.forEach((d) => {
@@ -123,7 +129,7 @@ export default {
       if (isFeatureEnabled(planFeatures, "leads")) {
         const leadQuery = {
           followUpDate: { $gte: rangeStart, $lte: rangeEnd },
-          ...(isAdmin ? {} : { assignTo: userId }),
+          ...(scopeUserId ? { assignTo: scopeUserId } : {}),
         };
         const leads = await Lead.find(leadQuery).select("leadName followUpDate status assignTo");
         leads.forEach((l) => {
@@ -149,7 +155,7 @@ export default {
           // its due-date entry should drop off the calendar the moment it's
           // settled, regardless of how far away the due date still is.
           status: { $ne: "paid" },
-          ...(isAdmin ? {} : { assignTo: userId }),
+          ...(scopeUserId ? { assignTo: scopeUserId } : {}),
         };
         const invoices = await Invoice.find(invoiceQuery)
           .populate("items.deal", "dealName")
@@ -179,8 +185,8 @@ export default {
         let proposals = await Proposal.find(proposalQuery)
           .populate("deal", "dealName assignedTo")
           .select("title followUpDate status deal");
-        if (!isAdmin) {
-          proposals = proposals.filter((p) => String(p.deal?.assignedTo) === String(userId));
+        if (scopeUserId) {
+          proposals = proposals.filter((p) => String(p.deal?.assignedTo) === String(scopeUserId));
         }
         proposals.forEach((p) => {
           events.push({
@@ -212,7 +218,7 @@ export default {
           // same reasoning as paid invoices dropping off.
           status: "scheduled",
           endDateTime: { $gte: new Date() },
-          ...(isAdmin ? {} : { createdBy: userId }),
+          ...(scopeUserId ? { createdBy: scopeUserId } : {}),
         };
         const meetings = await Meeting.find(meetingQuery).select("title startDateTime endDateTime status dealId createdBy");
         meetings.forEach((m) => {
@@ -236,7 +242,7 @@ export default {
         const emailQuery = {
           scheduledFor: { $gte: rangeStart, $lte: rangeEnd },
           status: "scheduled",
-          ...(isAdmin ? {} : { createdBy: userId }),
+          ...(scopeUserId ? { createdBy: scopeUserId } : {}),
         };
         const emails = await MassEmail.find(emailQuery).select("subject scheduledFor status createdBy");
         emails.forEach((e) => {
