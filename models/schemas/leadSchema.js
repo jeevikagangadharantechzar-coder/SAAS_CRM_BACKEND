@@ -16,6 +16,8 @@ const leadSchema = new mongoose.Schema(
     },
     industry:    { type: String },
     requirement: { type: String },
+    NumberOfEmployees: { type: Number },
+
 
     assignTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
