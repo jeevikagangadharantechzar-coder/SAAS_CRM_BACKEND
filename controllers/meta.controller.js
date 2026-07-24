@@ -185,7 +185,11 @@ export default {
     } catch (err) {
       console.error("Meta callback error:", err.response?.data || err.message);
       const msg = err.response?.data?.error?.message || err.message;
-      res.status(500).json({ success: false, message: msg });
+      // OAuth code errors (already used / expired) should be 400, not 500
+      const isOAuthCodeError = msg?.toLowerCase().includes("authorization code") ||
+                               msg?.toLowerCase().includes("code has been used") ||
+                               err.response?.data?.error?.code === 100;
+      res.status(isOAuthCodeError ? 400 : 500).json({ success: false, message: msg });
     }
   },
 
