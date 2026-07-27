@@ -68,6 +68,17 @@ const leadSchema = new mongoose.Schema(
       },
     ],
 
+    // Audit trail of add/edit/delete actions on followUpNotes, kept even after
+    // the underlying note is deleted so the timeline stays intact.
+    followUpNotesHistory: [
+      {
+        action:      { type: String, enum: ["added", "edited", "deleted"], required: true },
+        note:        { type: String, default: "" },
+        performedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        createdAt:   { type: Date, default: Date.now },
+      },
+    ],
+
     // Meta (Facebook / Instagram) lead capture metadata
     meta: {
       leadgenId: { type: String, default: null, index: true },  // Facebook leadgen_id (for dedup)

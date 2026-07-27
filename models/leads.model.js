@@ -42,6 +42,14 @@ const leadSchema = new mongoose.Schema(
         createdAt: { type: Date, default: Date.now },
       },
     ],
+    followUpNotesHistory: [
+      {
+        action:      { type: String, enum: ["added", "edited", "deleted"], required: true },
+        note:        { type: String, default: "" },
+        performedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        createdAt:   { type: Date, default: Date.now },
+      },
+    ],
     attachments: [
       {
         name: { type: String, required: true },
