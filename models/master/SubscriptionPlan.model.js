@@ -80,6 +80,7 @@ const subscriptionPlanSchema = new mongoose.Schema(
 
     is_recommended:       { type: Boolean, default: false },
     is_visible:           { type: Boolean, default: true },
+    show_on_landing_page: { type: Boolean, default: false },
     sort_order:           { type: Number, default: 0 },
     trial_days:           { type: Number, default: 0 },
 
@@ -100,6 +101,21 @@ subscriptionPlanSchema.statics.getActivePlans = function () {
 
 subscriptionPlanSchema.statics.getPublicPlans = function () {
   return this.find({ status: "active", is_visible: true, is_deleted: false })
+    .select("-is_deleted -__v")
+    .sort("sort_order");
+};
+
+// Used by the marketing site's landing/pricing page: the free plan always
+// shows (it's the default trial offer) regardless of the checkbox, and
+// other plans need show_on_landing_page checked. Kept separate from
+// getPublicPlans, which the in-app tenant upgrade flow uses and relies on
+// is_visible instead.
+subscriptionPlanSchema.statics.getLandingPagePlans = function () {
+  return this.find({
+    status: "active",
+    is_deleted: false,
+    $or: [{ plan_type: "free" }, { show_on_landing_page: true }],
+  })
     .select("-is_deleted -__v")
     .sort("sort_order");
 };

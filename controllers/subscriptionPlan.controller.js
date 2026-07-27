@@ -112,6 +112,20 @@ export const getPublicPlans = async (req, res) => {
   }
 };
 
+export const getLandingPagePlans = async (req, res) => {
+  try {
+    const plans = await planService.getLandingPagePlans();
+    return res.status(200).json({
+      success: true,
+      data: plans,
+      message: "Landing page plans fetched successfully",
+    });
+  } catch (err) {
+    console.error("getLandingPagePlans error:", err);
+    return sendError(res, err);
+  }
+};
+
 export const getTenantSubscriptions = async (req, res) => {
   try {
     const { plan_status, plan_id, page = 1, limit = 10 } = req.query;
