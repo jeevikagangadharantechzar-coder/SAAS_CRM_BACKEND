@@ -320,7 +320,8 @@ export default {
       const { Lead } = getModels(req);
       const lead = await Lead.findById(req.params.id)
         .populate("assignTo", "firstName lastName email role")
-        .populate("notesUpdatedBy", "firstName lastName");
+        .populate("notesUpdatedBy", "firstName lastName")
+        .populate("followUpNotesHistory.performedBy", "firstName lastName email");
       if (!lead) return res.status(404).json({ message: "Lead not found" });
       res.status(200).json(lead);
     } catch (error) {
@@ -688,14 +689,71 @@ export default {
       }
 
       lead.followUpNotes.push(newNote);
+      lead.followUpNotesHistory.push({ action: "added", note: newNote.note, performedBy: req.user._id, createdAt: newNote.createdAt });
       await lead.save();
 
       // A logged follow-up note means this lead is no longer "missed" —
       // clear any pending missed-follow-up notifications for it.
       await deleteAllNotificationsByEntity("lead", req.params.id, tDB);
 
-      const updated = await Lead.findById(req.params.id).populate("assignTo", "firstName lastName email role");
+      const updated = await Lead.findById(req.params.id)
+        .populate("assignTo", "firstName lastName email role")
+        .populate("followUpNotesHistory.performedBy", "firstName lastName email");
       res.status(200).json({ message: "Follow-up note added", lead: updated });
+    } catch (error) {
+      res.status(400).json({ message: error.message });
+    }
+  },
+
+  editFollowUpNote: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const { note } = req.body;
+      if (!note || !note.trim()) return res.status(400).json({ message: "Note is required" });
+
+      const lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      const noteDoc = lead.followUpNotes.id(req.params.noteId);
+      if (!noteDoc) return res.status(404).json({ message: "Follow-up note not found" });
+
+      noteDoc.note = note.trim();
+      if (req.file) {
+        noteDoc.audioPath = `/uploads/leads/${req.file.filename}`;
+        noteDoc.audioName = req.file.originalname;
+      }
+
+      lead.followUpNotesHistory.push({ action: "edited", note: noteDoc.note, performedBy: req.user._id, createdAt: new Date() });
+      await lead.save();
+
+      const updated = await Lead.findById(req.params.id)
+        .populate("assignTo", "firstName lastName email role")
+        .populate("followUpNotesHistory.performedBy", "firstName lastName email");
+      res.status(200).json({ message: "Follow-up note updated", lead: updated });
+    } catch (error) {
+      res.status(400).json({ message: error.message });
+    }
+  },
+
+  deleteFollowUpNote: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+
+      const lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      const noteDoc = lead.followUpNotes.id(req.params.noteId);
+      if (!noteDoc) return res.status(404).json({ message: "Follow-up note not found" });
+
+      const deletedNoteText = noteDoc.note;
+      noteDoc.deleteOne();
+      lead.followUpNotesHistory.push({ action: "deleted", note: deletedNoteText, performedBy: req.user._id, createdAt: new Date() });
+      await lead.save();
+
+      const updated = await Lead.findById(req.params.id)
+        .populate("assignTo", "firstName lastName email role")
+        .populate("followUpNotesHistory.performedBy", "firstName lastName email");
+      res.status(200).json({ message: "Follow-up note deleted", lead: updated });
     } catch (error) {
       res.status(400).json({ message: error.message });
     }
