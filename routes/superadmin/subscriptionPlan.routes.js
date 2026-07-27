@@ -7,6 +7,7 @@ import {
   updatePlan,
   deletePlan,
   getPublicPlans,
+  getLandingPagePlans,
   assignPlanToTenant,
   getTenantSubscriptions,
 } from "../../controllers/subscriptionPlan.controller.js";
@@ -19,6 +20,7 @@ const router = express.Router();
 
 // Public — no auth (for pricing pages)
 router.get("/public", getPublicPlans);
+router.get("/public/landing", getLandingPagePlans);
 
 // Superadmin-protected routes
 router.get("/",                     superAdminAuth, getAllPlans);
