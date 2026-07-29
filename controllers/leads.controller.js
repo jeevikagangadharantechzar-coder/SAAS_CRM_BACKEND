@@ -10,6 +10,7 @@ import {
   sendNotificationToAdmins,
 } from "../services/notificationService.js";
 import { notifyLeadOrDealEdited, notifyLeadStatusChangedByAdmin, notifyLeadConvertedByAdmin } from "../services/taskNotificationService.js";
+import { handleReassignmentOptions } from "../services/taskReassignmentService.js";
 
 // Legacy fallbacks
 import LeadLegacy         from "../models/leads.model.js";
@@ -25,6 +26,8 @@ const getModels = (req) => {
     User:         UserLegacy,
     Deal:         DealLegacy,
     Notification: NotificationLegacy,
+    Task:         null, // Task fallback if ever needed without tenantDB
+    Target:       null, // Target fallback
   };
 };
 
@@ -146,7 +149,7 @@ export default {
 
   getLeads: async (req, res) => {
     try {
-      const { Lead, User } = getModels(req);
+      const { Lead, User, Task, Target } = getModels(req);
       const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus, startDate, endDate } = req.query;
       const query = {};
       const andConditions = [];
@@ -212,6 +215,44 @@ export default {
       const hiddenStatuses = req.user.role.name !== "Admin" ? ["Rejected", "Converted"] : ["Rejected"];
       query.status = query.status && !hiddenStatuses.includes(query.status) ? query.status : { $nin: hiddenStatuses };
 
+      // Filter by Active Task and Active Target
+      if (req.query.activeTask === "true" && Task) {
+        const activeTasks = await Task.find({
+          status: { $ne: "Completed" },
+          archived: { $ne: true }
+        }).select('leadRefs leadRef').lean();
+        
+        const leadIds = new Set();
+        activeTasks.forEach(t => {
+          if (t.leadRef) leadIds.add(String(t.leadRef));
+          if (t.leadRefs && t.leadRefs.length) t.leadRefs.forEach(ref => leadIds.add(String(ref)));
+        });
+        
+        query._id = { $in: Array.from(leadIds) };
+      }
+
+      if (req.query.activeTarget === "true" && Target) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const activeTargets = await Target.find({
+          endDate: { $gte: today },
+          linkedLeads: { $exists: true, $ne: [] }
+        }).select('linkedLeads').lean();
+        
+        const leadIds = new Set();
+        activeTargets.forEach(t => {
+          if (t.linkedLeads && t.linkedLeads.length) t.linkedLeads.forEach(ref => leadIds.add(String(ref)));
+        });
+
+        if (query._id && query._id.$in) {
+          // Intersect with existing $in (from activeTask)
+          const existingIds = query._id.$in;
+          query._id.$in = existingIds.filter(id => leadIds.has(String(id)));
+        } else {
+          query._id = { ...query._id, $in: Array.from(leadIds) };
+        }
+      }
+
       const skip       = (page - 1) * limit;
       const totalLeads = await Lead.countDocuments(query);
       const leads      = await Lead.find(query)
@@ -222,7 +263,43 @@ export default {
         .skip(skip)
         .limit(Number(limit));
 
-      res.status(200).json({ leads, totalLeads, totalPages: Math.ceil(totalLeads / limit), currentPage: Number(page) });
+      const leadIds = leads.map(l => l._id);
+
+      let allActiveTasks = [];
+      if (Task && leadIds.length > 0) {
+        allActiveTasks = await Task.find({
+          status: { $ne: "Completed" },
+          archived: { $ne: true },
+          $or: [{ leadRefs: { $in: leadIds } }, { leadRef: { $in: leadIds } }]
+        }).select("_id title dueDate leadRef leadRefs").lean();
+      }
+
+      let allActiveTargets = [];
+      if (Target && leadIds.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        allActiveTargets = await Target.find({
+          endDate: { $gte: today },
+          linkedLeads: { $in: leadIds }
+        }).select("_id endDate linkedLeads").lean();
+      }
+
+      const leadsWithExtras = leads.map(lead => {
+        const leadObj = lead.toObject();
+        
+        const activeTasks = allActiveTasks.filter(t => 
+          (t.leadRef && String(t.leadRef) === String(lead._id)) || 
+          (t.leadRefs && t.leadRefs.some(ref => String(ref) === String(lead._id)))
+        );
+
+        const activeTargets = allActiveTargets.filter(t => 
+          t.linkedLeads && t.linkedLeads.some(ref => String(ref) === String(lead._id))
+        );
+
+        return { ...leadObj, activeTasks, activeTargets };
+      });
+
+      res.status(200).json({ leads: leadsWithExtras, totalLeads, totalPages: Math.ceil(totalLeads / limit), currentPage: Number(page) });
     } catch (error) {
       console.error("Get leads error:", error);
       res.status(500).json({ message: error.message });
@@ -338,6 +415,16 @@ export default {
 
       const patch = { ...req.body };
 
+      // Check for reassignment action
+      const { taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription, targetAction, extendedTargetEndDate, extendedTargetDescription } = patch;
+      delete patch.taskAction;
+      delete patch.newTaskName;
+      delete patch.extendedTaskDueDate;
+      delete patch.extendedTaskDescription;
+      delete patch.targetAction;
+      delete patch.extendedTargetEndDate;
+      delete patch.extendedTargetDescription;
+
       // Sanitize ObjectId fields — empty string crashes Mongoose cast
       if ("assignTo" in patch && (!patch.assignTo || patch.assignTo === "")) {
         patch.assignTo = null;
@@ -381,6 +468,19 @@ export default {
         patch.$push = { statusHistory: { status: patch.status, changedAt: new Date() } };
       }
       if (patch.followUpDate) patch.lastReminderAt = null;
+
+      const oldAssignedToId = before.assignTo?._id?.toString() || before.assignTo?.toString() || null;
+      if (patch.assignTo && String(patch.assignTo) !== oldAssignedToId) {
+        if ((taskAction || targetAction) && oldAssignedToId) {
+          await handleReassignmentOptions(
+            req, getModels(req), "lead", req.params.id, oldAssignedToId, patch.assignTo, 
+            {
+              taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription,
+              targetAction, extendedTargetEndDate, extendedTargetDescription
+            }, req.user._id
+          );
+        }
+      }
 
       const { $push, ...patchWithoutPush } = patch;
       const updateOp = $push ? { ...patchWithoutPush, $push } : patchWithoutPush;
@@ -508,6 +608,7 @@ export default {
       const formattedNumber = new Intl.NumberFormat("en-IN").format(numericValue);
       const formattedValue  = `${formattedNumber} ${currency || "INR"}`;
 
+      const finalStage = stage || "Qualification";
       const deal = new Deal({
         leadId:           lead._id,
         dealName:         lead.leadName,
@@ -516,7 +617,7 @@ export default {
         value:            formattedValue,
         currency:         currency || "INR",
         notes:            notes || "",
-        stage:            stage || "Qualification",
+        stage:            finalStage,
         email:            lead.email || "",
         phoneNumber:      lead.phoneNumber || "",
         source:           lead.source || "",
@@ -533,6 +634,9 @@ export default {
         companySize:      lead.companySize || "Medium",
         leadStatusHistory: leadStatusHistory,
         leadCreatedAt:    lead.createdAt,
+        stageHistory:     [{ stage: finalStage, movedAt: new Date(), movedBy: req.user._id }],
+        ...(finalStage === "Closed Won" && { wonAt: new Date(), wonBy: req.user._id }),
+        ...(finalStage === "Closed Lost" && { stageLostAt: "Qualification", lostDate: new Date() }),
       });
 
       await deal.save();

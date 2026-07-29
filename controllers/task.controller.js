@@ -18,6 +18,36 @@ import { computeTaskProgress } from "../services/taskProgressService.js";
 const getModels = (req) => getTenantModels(req.tenantDB);
 
 export default {
+  getLinkedTasks: async (req, res) => {
+    try {
+      const { itemType, itemId } = req.params;
+      const { Task, Deal } = getModels(req);
+      
+      const query = { archived: false };
+      
+      if (itemType === "lead") {
+        query.$or = [{ leadRef: itemId }, { leadRefs: itemId }];
+      } else if (itemType === "deal") {
+        query.$or = [{ dealRef: itemId }, { dealRefs: itemId }];
+      } else {
+        return res.status(400).json({ message: "Invalid itemType" });
+      }
+
+      if (req.user.role?.name !== "Admin") {
+        query.assignedTo = req.user.id;
+      }
+
+      let tasks = await Task.find(query).populate(LEAD_DEAL_POPULATE).lean();
+      tasks = tasks.map(attachLinkedArrays).map(attachLinkedItemBadge);
+      tasks = await attachConvertedDealJourney(Deal, tasks);
+
+      res.status(200).json(tasks);
+    } catch (error) {
+      console.error("Error in getLinkedTasks:", error);
+      res.status(500).json({ message: "Server error while fetching linked tasks" });
+    }
+  },
+
   // Admin: get all tasks; Sales: get their own assigned tasks
   getTasks: async (req, res) => {
     try {
@@ -43,7 +73,63 @@ export default {
       // task.dealRef, so resolve it for every task's Stage Journey view.
       await attachConvertedDealJourney(Deal, rawTasks);
 
-      res.status(200).json(rawTasks.map((t) => attachLinkedArrays(attachLinkedItemBadge(t))));
+      const tasksToReturn = [];
+      for (const t of rawTasks) {
+        attachLinkedArrays(t);
+        
+        if (t.status !== "Completed" && t.status !== "Rejected") {
+          const totalItems = (t.leadRefs?.length || 0) + (t.dealRefs?.length || 0);
+          if (totalItems > 0) {
+            let completedItems = 0;
+            (t.dealRefs || []).forEach(d => { if (d && d.stage === "Closed Won") completedItems++; });
+            (t.leadRefs || []).forEach(l => { if (l && l.status === "Converted") completedItems++; });
+            const overall = Math.round((completedItems / totalItems) * 100);
+
+            if (t.status === "In Hold") {
+              if (t.holdSnapshotProgress == null) {
+                t.holdSnapshotProgress = overall;
+                await Task.findByIdAndUpdate(t._id, { holdSnapshotProgress: overall });
+              } else if (overall > t.holdSnapshotProgress) {
+                if (overall >= 100) {
+                  t.status = "Completed";
+                  t.completedAt = new Date();
+                  t.approvedByAdmin = true;
+                  await Task.findByIdAndUpdate(t._id, { 
+                    status: "Completed",
+                    completedAt: t.completedAt,
+                    approvedByAdmin: true,
+                    holdSnapshotProgress: null
+                  });
+                } else {
+                  t.status = "In Progress";
+                  await Task.findByIdAndUpdate(t._id, { status: "In Progress", holdSnapshotProgress: null });
+                }
+              }
+            } else {
+              if (overall >= 100) {
+                t.status = "Completed";
+                t.completedAt = new Date();
+                t.approvedByAdmin = true; // Auto-approve just like when manually marked completed
+                await Task.findByIdAndUpdate(t._id, { 
+                  status: "Completed",
+                  completedAt: t.completedAt,
+                  approvedByAdmin: true
+                });
+              } else if (overall > 0 && (t.status === "New" || t.status === "Pending")) {
+                t.status = "In Progress";
+                await Task.findByIdAndUpdate(t._id, { status: "In Progress" });
+              } else if (overall === 0 && t.status === "In Progress") {
+                t.status = "New";
+                await Task.findByIdAndUpdate(t._id, { status: "New" });
+              }
+            }
+          }
+        }
+        
+        tasksToReturn.push(attachLinkedItemBadge(t));
+      }
+
+      res.status(200).json(tasksToReturn);
     } catch (err) {
       console.error("Error fetching tasks:", err);
       res.status(500).json({ message: "Internal server error" });
@@ -200,7 +286,26 @@ export default {
       // taken raw from req.body.
       const updatePayload = isAdmin
         ? { ...req.body }
-        : { status: req.body.status, completionNotes: req.body.completionNotes };
+        : { 
+            status: req.body.status, 
+            completionNotes: req.body.completionNotes,
+            inProcessNote: req.body.inProcessNote,
+          };
+
+      // Handle Rejection Request for Salespeople
+      if (!isAdmin && req.body.status === "Rejected") {
+        updatePayload.status = task.status; // Revert status, wait for admin approval
+        updatePayload.rejectionRequested = true;
+        updatePayload.rejectionReason = req.body.rejectionReason || "";
+      }
+      
+      // Handle Hold Request for Salespeople
+      if (!isAdmin && req.body.status === "In Hold") {
+        updatePayload.status = task.status; // Revert status, wait for admin approval
+        updatePayload.holdRequested = true;
+        updatePayload.holdReason = req.body.holdReason || "";
+        updatePayload.holdRequestedAt = new Date();
+      }
       delete updatePayload.leadRef;
       delete updatePayload.dealRef;
       delete updatePayload.leadRefs;
@@ -242,6 +347,49 @@ export default {
         (newLeadRefs && !sortedEq(newLeadRefs, currentLeadRefs)) ||
         (newDealRefs && !sortedEq(newDealRefs, currentDealRefs))
       );
+
+      // If the task was already completed and the admin adds new leads/deals, 
+      // we create a new task ("Continuation of...") instead of modifying the completed one.
+      if (wasCompleted && isAdmin && (addedLeadIds.length || addedDealIds.length)) {
+        const providedLeadDates = req.body.leadDueDates || {};
+        const providedDealDates = req.body.dealDueDates || {};
+        const missingLead = addedLeadIds.filter((id) => !providedLeadDates[id]);
+        const missingDeal = addedDealIds.filter((id) => !providedDealDates[id]);
+        if (missingLead.length || missingDeal.length) {
+          return res.status(400).json({ message: "Please set a due date for each newly linked lead/deal." });
+        }
+
+        const newTask = await Task.create({
+          title: `Continuation of ${task.title}`,
+          description: task.description,
+          priority: task.priority,
+          dueDate: req.body.dueDate || task.dueDate,
+          assignedTo: task.assignedTo._id,
+          createdBy: req.user._id,
+          status: "New",
+          leadRefs: addedLeadIds,
+          dealRefs: addedDealIds,
+          leadRef: addedLeadIds.length ? addedLeadIds[addedLeadIds.length - 1] : null,
+          dealRef: addedDealIds.length ? addedDealIds[addedDealIds.length - 1] : null,
+          leadDueDates: providedLeadDates,
+          dealDueDates: providedDealDates,
+          history: [
+            { event: "Created", detail: `Created as a continuation of completed task "${task.title}"`, by: req.user._id, at: new Date() }
+          ],
+        });
+
+        const adminName = `${req.user.firstName} ${req.user.lastName}`;
+        await createNotification(Notification, {
+          userId: task.assignedTo._id,
+          title: "New Task Assigned (Continuation)",
+          message: `Admin ${adminName} assigned you a new task: "${newTask.title}"`,
+          type: "task",
+          meta: { taskId: String(newTask._id), taskAssigned: true },
+        });
+        await broadcastTasksRefresh(User, Role, [task.assignedTo._id]);
+
+        return res.status(200).json({ message: "Task was already completed, so a new Continuation task was created.", data: task });
+      }
 
       // Each lead/deal newly added to the task on THIS edit (not one that was
       // already linked) must come with its own due date, picked inline in the
@@ -307,6 +455,16 @@ export default {
         historyPush.push({ event: "LinkedItemChanged", detail: `${actorName} dismissed the Closed Won deal card from this task`, by: req.user._id, at: new Date() });
       }
       if (historyPush.length) updatePayload.$push = { history: { $each: historyPush } };
+
+      if (!isAdmin && req.body.status === "Rejected") {
+        updatePayload.$push = updatePayload.$push || { history: { $each: [] } };
+        updatePayload.$push.history.$each.push({ event: "RejectionRequested", detail: `Salesperson requested rejection. Reason: ${req.body.rejectionReason || "None given"}`, by: req.user._id, at: new Date() });
+      }
+
+      if (!isAdmin && req.body.status === "In Hold") {
+        updatePayload.$push = updatePayload.$push || { history: { $each: [] } };
+        updatePayload.$push.history.$each.push({ event: "HoldRequested", detail: `Salesperson requested to place task on hold. Reason: ${req.body.holdReason || "None given"}`, by: req.user._id, at: new Date() });
+      }
 
       const updated = await Task.findByIdAndUpdate(req.params.id, updatePayload, {
         new: true,
@@ -394,17 +552,43 @@ export default {
         req.body.completionNotes &&
         req.body.completionNotes !== task.completionNotes;
 
-      if (notesAdded) {
+      // When sales requests rejection → notify admins
+      const rejectionRequested = !isAdmin && req.body.status === "Rejected";
+
+      // When sales requests hold → notify admins
+      const holdRequested = !isAdmin && req.body.status === "In Hold";
+
+      if (notesAdded || rejectionRequested || holdRequested) {
         const admins = await findAdmins(User, Role);
         const salesName = `${req.user.firstName} ${req.user.lastName}`;
         for (const admin of admins) {
-          await createNotification(Notification, {
-            userId: admin._id,
-            title: "Task Note Added",
-            message: `${salesName} added a note on task "${task.title}": ${req.body.completionNotes}`,
-            type: "task",
-            meta: { taskId: String(task._id), taskNoteAdded: true, completionNotes: req.body.completionNotes, ...buildLinkedMeta(updated) },
-          });
+          if (notesAdded) {
+            await createNotification(Notification, {
+              userId: admin._id,
+              title: "Task Note Added",
+              message: `${salesName} added a note on task "${task.title}": ${req.body.completionNotes}`,
+              type: "task",
+              meta: { taskId: String(task._id), taskNoteAdded: true, completionNotes: req.body.completionNotes, ...buildLinkedMeta(updated) },
+            });
+          }
+          if (rejectionRequested) {
+            await createNotification(Notification, {
+              userId: admin._id,
+              title: "Task Rejection Requested",
+              message: `${salesName} requested to reject task "${task.title}". Reason: ${req.body.rejectionReason}`,
+              type: "task",
+              meta: { taskId: String(task._id), taskRejectionRequested: true, rejectionReason: req.body.rejectionReason, ...buildLinkedMeta(updated) },
+            });
+          }
+          if (holdRequested) {
+            await createNotification(Notification, {
+              userId: admin._id,
+              title: "Task Hold Requested",
+              message: `${salesName} requested to place task "${task.title}" on hold. Reason: ${req.body.holdReason}`,
+              type: "task",
+              meta: { taskId: String(task._id), taskHoldRequested: true, holdReason: req.body.holdReason, ...buildLinkedMeta(updated) },
+            });
+          }
         }
       }
 
@@ -478,6 +662,119 @@ export default {
       res.status(200).json({ message: "Task approved", data: updated });
     } catch (err) {
       console.error("Error approving task:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: approve or deny a rejection request
+  approveRejection: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Task, Notification, User, Role } = getModels(req);
+      const { action } = req.body; // "approve" or "deny"
+      const task = await Task.findById(req.params.id);
+      if (!task) return res.status(404).json({ message: "Task not found" });
+
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+      let updatePayload = {};
+      let message = "";
+
+      if (action === "approve") {
+        updatePayload = {
+          status: "Rejected",
+          rejectionRequested: false,
+          rejectionApprovedAt: new Date(),
+          $push: { history: { event: "RejectionApproved", detail: `Rejection approved by Admin ${adminName}`, by: req.user._id, at: new Date() } },
+        };
+        message = `Admin ${adminName} approved your request to reject task "${task.title}".`;
+      } else {
+        updatePayload = {
+          rejectionRequested: false,
+          rejectionReason: "",
+          $push: { history: { event: "RejectionDenied", detail: `Rejection denied by Admin ${adminName}`, by: req.user._id, at: new Date() } },
+        };
+        message = `Admin ${adminName} denied your request to reject task "${task.title}".`;
+      }
+
+      const updated = await Task.findByIdAndUpdate(req.params.id, updatePayload, { new: true })
+        .populate("assignedTo", "firstName lastName email")
+        .populate(LEAD_DEAL_POPULATE);
+
+      // Notify the salesperson
+      await createNotification(Notification, {
+        userId: task.assignedTo._id,
+        title: action === "approve" ? "Task Rejection Approved" : "Task Rejection Denied",
+        message,
+        type: "task",
+        meta: { taskId: String(task._id), taskRejectionAction: action },
+      });
+
+      await broadcastTasksRefresh(User, Role, [task.assignedTo._id]);
+      const updatedLean = attachLinkedArrays(attachLinkedItemBadge(updated.toObject()));
+      res.status(200).json({ message: `Rejection ${action}d successfully`, data: updatedLean });
+    } catch (err) {
+      console.error("Error handling rejection request:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: approve or deny a hold request
+  approveHold: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Task, Notification, User, Role } = getModels(req);
+      const { action, extendDueDate } = req.body; // "approve" or "deny"
+      const task = await Task.findById(req.params.id);
+      if (!task) return res.status(404).json({ message: "Task not found" });
+
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+      let updatePayload = {};
+      let message = "";
+
+      if (action === "approve") {
+        updatePayload = {
+          status: "In Hold",
+          holdRequested: false,
+          holdApprovedAt: new Date(),
+          $push: { history: { event: "HoldApproved", detail: `Hold approved by Admin ${adminName}${extendDueDate ? ` — due date extended to ${new Date(extendDueDate).toDateString()}` : ""}`, by: req.user._id, at: new Date() } },
+        };
+        if (extendDueDate) {
+          updatePayload.dueDate = new Date(extendDueDate);
+          updatePayload.reminderSentAt = null;
+          updatePayload.dueTodaySentAt = null;
+        }
+        message = `Admin ${adminName} approved your request to place task "${task.title}" on hold.`;
+      } else {
+        updatePayload = {
+          holdRequested: false,
+          holdReason: "",
+          $push: { history: { event: "HoldDenied", detail: `Hold denied by Admin ${adminName}`, by: req.user._id, at: new Date() } },
+        };
+        message = `Admin ${adminName} denied your request to place task "${task.title}" on hold.`;
+      }
+
+      const updated = await Task.findByIdAndUpdate(req.params.id, updatePayload, { new: true })
+        .populate("assignedTo", "firstName lastName email")
+        .populate(LEAD_DEAL_POPULATE);
+
+      // Notify the salesperson
+      await createNotification(Notification, {
+        userId: task.assignedTo._id,
+        title: action === "approve" ? "Task Hold Approved" : "Task Hold Denied",
+        message,
+        type: "task",
+        meta: { taskId: String(task._id), taskHoldAction: action },
+      });
+
+      await broadcastTasksRefresh(User, Role, [task.assignedTo._id]);
+      const updatedLean = attachLinkedArrays(attachLinkedItemBadge(updated.toObject()));
+      res.status(200).json({ message: `Hold ${action}d successfully`, data: updatedLean });
+    } catch (err) {
+      console.error("Error handling hold request:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },
@@ -821,6 +1118,35 @@ export default {
     }
   },
 
+  // Admin: mark a reason note as read (resolved) without reassigning
+  markReasonNoteRead: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied" });
+      const { Task, Notification, User, Role } = getModels(req);
+      const { noteIdx } = req.params;
+
+      const task = await Task.findById(req.params.id);
+      if (!task) return res.status(404).json({ message: "Task not found" });
+
+      const rn = task.reasonNotes[Number(noteIdx)];
+      if (!rn) return res.status(404).json({ message: "Reason note not found" });
+
+      task.reasonNotes[Number(noteIdx)].status = "resolved";
+      task.reasonNotes[Number(noteIdx)].resolvedAt = new Date();
+      await task.save();
+
+      const updated = await Task.findById(task._id).populate(LEAD_DEAL_POPULATE);
+      await broadcastTasksRefresh(User, Role, [task.assignedTo]);
+      res.status(200).json({
+        message: "Marked as read",
+        data: attachLinkedArrays(attachLinkedItemBadge(updated.toObject())),
+      });
+    } catch (err) {
+      console.error("Error marking task reason note as read:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
   // Admin: delete a single reason note
   deleteReasonNote: async (req, res) => {
     try {
@@ -984,6 +1310,46 @@ export default {
       res.status(200).json(Object.assign({}, ...perUserMaps));
     } catch (err) {
       console.error("Error fetching task progress for all sales users:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  checkReassignment: async (req, res) => {
+    try {
+      const { Task, Target } = getModels(req);
+      const { itemType, itemId, oldUserId } = req.params;
+
+      if (!itemType || !itemId || !oldUserId) {
+        return res.status(400).json({ message: "Missing required parameters" });
+      }
+
+      const activeTasks = await Task.find({
+        assignedTo: oldUserId,
+        status: { $ne: "Completed" },
+        archived: { $ne: true },
+        $or: [
+          itemType === "deal" ? { dealRefs: itemId } : { leadRefs: itemId },
+          itemType === "deal" ? { dealRef: itemId } : { leadRef: itemId }
+        ]
+      });
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const activeTargets = await Target.find({
+        salesPerson: oldUserId,
+        endDate: { $gte: today },
+        ...(itemType === "deal" ? { linkedDeals: itemId } : { linkedLeads: itemId })
+      });
+
+      res.status(200).json({
+        hasActiveTasks: activeTasks.length > 0,
+        hasActiveTargets: activeTargets.length > 0,
+        tasksCount: activeTasks.length,
+        targetsCount: activeTargets.length
+      });
+    } catch (error) {
+      console.error("Error in checkReassignment:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   },

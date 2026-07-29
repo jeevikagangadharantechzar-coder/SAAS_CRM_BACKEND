@@ -11,8 +11,8 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["Pending", "In Progress", "Completed"],
-      default: "Pending",
+      enum: ["New", "Pending", "In Progress", "In Hold", "Completed", "Rejected"],
+      default: "New",
     },
     dueDate: { type: Date, required: true },
     assignedTo: {
@@ -56,8 +56,17 @@ const taskSchema = new mongoose.Schema(
     callsMade: { type: Number, default: 0, min: 0 },
     meetingsDone: { type: Number, default: 0, min: 0 },
     completionNotes: { type: String, trim: true, default: "" },
+    inProcessNote: { type: String, trim: true, default: "" },
+    rejectionRequested: { type: Boolean, default: false },
+    rejectionReason: { type: String, trim: true, default: "" },
+    rejectionApprovedAt: { type: Date, default: null },
     approvedByAdmin: { type: Boolean, default: false },
     completedAt:     { type: Date, default: null },
+
+    holdRequested: { type: Boolean, default: false },
+    holdReason: { type: String, trim: true, default: "" },
+    holdRequestedAt: { type: Date, default: null },
+    holdSnapshotProgress: { type: Number, default: null },
 
     // "Delete" from the admin's list never erases the record — it just hides
     // it here, keeping history/audit trail intact in the database. Applies

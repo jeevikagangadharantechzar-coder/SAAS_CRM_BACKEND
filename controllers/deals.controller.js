@@ -16,6 +16,7 @@ import {
   notifyDealClosedWonAndArchiveTask,
   notifyDealStageChangedByAdmin,
 } from "../services/taskNotificationService.js";
+import { handleReassignmentOptions } from "../services/taskReassignmentService.js";
 
 // Legacy fallbacks
 import DealLegacy         from "../models/deals.model.js";
@@ -24,7 +25,7 @@ import NotificationLegacy from "../models/notification.model.js";
 
 const getModels = (req) => {
   if (req.tenantDB) return getTenantModels(req.tenantDB);
-  return { Deal: DealLegacy, Lead: LeadLegacy, Notification: NotificationLegacy };
+  return { Deal: DealLegacy, Lead: LeadLegacy, Notification: NotificationLegacy, Task: null, Target: null };
 };
 
 const getSettings = (req) =>
@@ -207,7 +208,7 @@ export default {
 
   getAllDeals: async (req, res) => {
     try {
-      const { Deal } = getModels(req);
+      const { Deal, Task, Target } = getModels(req);
       const isAdmin = req.user.role.name === "Admin";
       let query = {};
       if (!isAdmin) query.assignedTo = req.user._id;
@@ -260,7 +261,44 @@ export default {
         .populate({ path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
         .populate({ path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
         .sort({ createdAt: -1 });
-      res.status(200).json(deals);
+
+      const dealIds = deals.map(d => d._id);
+
+      let allActiveTasks = [];
+      if (Task && dealIds.length > 0) {
+        allActiveTasks = await Task.find({
+          status: { $ne: "Completed" },
+          archived: { $ne: true },
+          $or: [{ dealRefs: { $in: dealIds } }, { dealRef: { $in: dealIds } }]
+        }).select("_id title dueDate dealRef dealRefs").lean();
+      }
+
+      let allActiveTargets = [];
+      if (Target && dealIds.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        allActiveTargets = await Target.find({
+          endDate: { $gte: today },
+          linkedDeals: { $in: dealIds }
+        }).select("_id endDate linkedDeals").lean();
+      }
+
+      const dealsWithExtras = deals.map((deal) => {
+        const dealObj = deal.toObject();
+        
+        const activeTasks = allActiveTasks.filter(t => 
+          (t.dealRef && String(t.dealRef) === String(deal._id)) || 
+          (t.dealRefs && t.dealRefs.some(ref => String(ref) === String(deal._id)))
+        );
+
+        const activeTargets = allActiveTargets.filter(t => 
+          t.linkedDeals && t.linkedDeals.some(ref => String(ref) === String(deal._id))
+        );
+
+        return { ...dealObj, activeTasks, activeTargets };
+      });
+
+      res.status(200).json(dealsWithExtras);
     } catch (err) { console.error(err); res.status(500).json({ message: err.message }); }
   },
 
@@ -378,6 +416,8 @@ export default {
         alternativeNumber, alternativeEmail,
         companyName, companyId, industry, requirement, address, country, existingAttachments,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
+        taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription,
+        targetAction, extendedTargetEndDate, extendedTargetDescription,
       } = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
       const deal = await Deal.findById(req.params.id).populate("assignedTo");
@@ -437,6 +477,15 @@ export default {
       const oldAssignedToId = deal.assignedTo?._id?.toString() || deal.assignedTo?.toString() || null;
       if (assignTo && String(assignTo) !== oldAssignedToId) {
         pushFields.assignmentHistory = { assignedTo: assignTo, assignedAt: new Date(), assignedBy: req.user._id };
+        if ((taskAction || targetAction) && oldAssignedToId) {
+          await handleReassignmentOptions(
+            req, getModels(req), "deal", req.params.id, oldAssignedToId, assignTo, 
+            {
+              taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription,
+              targetAction, extendedTargetEndDate, extendedTargetDescription
+            }, req.user._id
+          );
+        }
       }
       if (Object.keys(pushFields).length > 0) updateFields.$push = pushFields;
       if (dealValue !== undefined && dealValue !== null && String(dealValue).trim() !== "") {
