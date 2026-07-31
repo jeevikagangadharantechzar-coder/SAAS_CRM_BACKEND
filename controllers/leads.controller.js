@@ -150,7 +150,8 @@ export default {
   getLeads: async (req, res) => {
     try {
       const { Lead, User, Task, Target } = getModels(req);
-      const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus, startDate, endDate } = req.query;
+      const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus, start, end,overallLead="" } = req.query;
+      const isOverallLead = overallLead === "all";
       const query = {};
       const andConditions = [];
 
@@ -158,11 +159,11 @@ export default {
 
       // General Start/End Date filter — plain createdAt range. Either side
       // can be omitted independently; omitting both leaves every record visible.
-      if (startDate || endDate) {
-        query.createdAt = {};
-        if (startDate) query.createdAt.$gte = new Date(startDate);
-        if (endDate) query.createdAt.$lte = new Date(endDate + "T23:59:59.999Z");
-      }
+    if (!isOverallLead && (start || end)) {
+  query.createdAt = {};
+  if (start) query.createdAt.$gte = new Date(start);
+  if (end) query.createdAt.$lte = new Date(end + "T23:59:59.999Z");
+}
 
       if (search?.trim()) {
         andConditions.push({
@@ -253,16 +254,33 @@ export default {
         }
       }
 
-      const skip       = (page - 1) * limit;
-      const totalLeads = await Lead.countDocuments(query);
-      const leads      = await Lead.find(query)
-        .populate("assignTo", "firstName lastName email role")
-        .populate("rejectedBy", "firstName lastName")
-        .populate({ path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(Number(limit));
+      // const skip       = (page - 1) * limit;
+      // const totalLeads = await Lead.countDocuments(query);
+      // const leads      = await Lead.find(query)
+      //   .populate("assignTo", "firstName lastName email role")
+      //   .populate("rejectedBy", "firstName lastName")
+      //   .populate({ path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } })
+      //   .sort({ createdAt: -1 })
+      //   .skip(skip)
+      //   .limit(Number(limit));
+const totalLeads = await Lead.countDocuments(query);
 
+let leadQuery = Lead.find(query)
+  .populate("assignTo", "firstName lastName email role")
+  .populate("rejectedBy", "firstName lastName")
+  .populate({
+    path: "convertedBy",
+    select: "firstName lastName role",
+    populate: { path: "role", select: "name" }
+  })
+  .sort({ createdAt: -1 });
+
+if (!isOverallLead) {
+  const skip = (Number(page) - 1) * Number(limit);
+  leadQuery = leadQuery.skip(skip).limit(Number(limit));
+}
+
+const leads = await leadQuery;
       const leadIds = leads.map(l => l._id);
 
       let allActiveTasks = [];
