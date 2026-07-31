@@ -48,6 +48,9 @@ import googleIntegrationRoutes  from "./googleIntegration.routes.js";
 import zoomIntegrationRoutes    from "./zoomIntegration.routes.js";
 import locationRoutes           from "./location.routes.js";
 import supportRoutes            from "./support.routes.js";
+import whatsappCloudRoutes     from "./whatsappCloud.routes.js";
+import instagramRoutes         from "./instagram.routes.js";
+import facebookRoutes          from "./facebook.routes.js";
 
 
 import publicRoutes from "./public.routes.js";
@@ -104,6 +107,9 @@ router.use("/google-integration", googleIntegrationRoutes);
 router.use("/zoom-integration",   zoomIntegrationRoutes);
 router.use("/location",           locationRoutes);
 router.use("/support",            supportRoutes);
+router.use("/whatsapp",           whatsappCloudRoutes);
+router.use("/instagram",          instagramRoutes);
+router.use("/facebook",           facebookRoutes);
 
 
 export default router;

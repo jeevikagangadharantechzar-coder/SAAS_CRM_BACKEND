@@ -14,13 +14,14 @@
  *     → creates Lead in tenant's DB
  */
 
-import axios  from "axios";
+import axios from "axios";
 import crypto from "crypto";
 import { getTenantModels } from "../models/tenant/index.js";
 import { isFeatureEnabled } from "../utils/planFeatures.js";
+import { notifyUser } from "../realtime/socket.js";
 
-const GRAPH_API  = "https://graph.facebook.com/v21.0";
-const APP_ID     = process.env.META_APP_ID;
+const GRAPH_API = "https://graph.facebook.com/v21.0";
+const APP_ID = process.env.META_APP_ID;
 const APP_SECRET = process.env.META_APP_SECRET;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -29,24 +30,52 @@ const APP_SECRET = process.env.META_APP_SECRET;
 const getLongLivedToken = async (shortToken) => {
   const { data } = await axios.get(`${GRAPH_API}/oauth/access_token`, {
     params: {
-      grant_type:        "fb_exchange_token",
-      client_id:         APP_ID,
-      client_secret:     APP_SECRET,
+      grant_type: "fb_exchange_token",
+      client_id: APP_ID,
+      client_secret: APP_SECRET,
       fb_exchange_token: shortToken,
     },
   });
   return data; // { access_token, token_type, expires_in }
 };
 
-/** Fetch all pages the user manages + their page access tokens */
+/** Fetch all pages the user manages (personal + via Business Manager) */
 const getUserPages = async (userToken) => {
-  const { data } = await axios.get(`${GRAPH_API}/me/accounts`, {
-    params: {
-      access_token: userToken,
-      fields:       "id,name,access_token,instagram_business_account{id,username}",
-    },
-  });
-  return data.data || []; // array of page objects
+  const allPages = [];
+  const seenIds = new Set();
+  const pageFields = "id,name,access_token,instagram_business_account{id,username}";
+
+  // 1. Personal pages the user directly admins
+  try {
+    const { data } = await axios.get(`${GRAPH_API}/me/accounts`, {
+      params: { access_token: userToken, fields: pageFields },
+    });
+    for (const p of (data.data || [])) {
+      if (!seenIds.has(p.id)) { allPages.push(p); seenIds.add(p.id); }
+    }
+  } catch (err) {
+    console.warn("getUserPages /me/accounts:", err.response?.data?.error?.message || err.message);
+  }
+
+  // 2. Business Manager pages (requires business_management scope)
+  try {
+    const { data: bizData } = await axios.get(`${GRAPH_API}/me/businesses`, {
+      params: {
+        access_token: userToken,
+        fields: `id,name,owned_pages{${pageFields}},client_pages{${pageFields}}`,
+      },
+    });
+    for (const biz of (bizData.data || [])) {
+      for (const page of [...(biz.owned_pages?.data || []), ...(biz.client_pages?.data || [])]) {
+        if (!seenIds.has(page.id)) { allPages.push(page); seenIds.add(page.id); }
+      }
+    }
+  } catch (err) {
+    // Non-fatal — scope may not have been granted
+    console.warn("getUserPages /me/businesses:", err.response?.data?.error?.message || err.message);
+  }
+
+  return allPages;
 };
 
 /** Fetch a single lead's field values using the lead's page access token */
@@ -54,7 +83,7 @@ const fetchLeadDetails = async (leadgenId, pageAccessToken) => {
   const { data } = await axios.get(`${GRAPH_API}/${leadgenId}`, {
     params: {
       access_token: pageAccessToken,
-      fields:       "field_data,created_time,ad_name,form_id",
+      fields: "field_data,created_time,ad_name,form_id,platform",
     },
   });
   return data;
@@ -73,11 +102,19 @@ export default {
       if (!APP_ID) return res.status(500).json({ success: false, message: "META_APP_ID not configured in .env" });
 
       const redirectUri = `${process.env.FRONTEND_URL}/integrations/facebook/callback`;
-      const scopes      = [
+      const scopes = [
         "pages_show_list",
         "leads_retrieval",
         "pages_read_engagement",
+        // "pages_read_user_content", // TODO (Future): Uncomment this once Meta App Review approves it!
         "pages_manage_ads",
+        "pages_manage_metadata",
+        "pages_manage_engagement",
+        "pages_manage_posts",
+        "pages_messaging",
+        "business_management",
+        "ads_read",
+        "ads_management",
       ].join(",");
 
       // state carries tenantSlug so frontend can send it back in callback
@@ -125,18 +162,18 @@ export default {
       // Fetch pages this user manages
       const pages = await getUserPages(userToken);
       if (!pages.length) {
-        return res.status(400).json({ success: false, message: "No Facebook Pages found. Please create a Page first." });
+        return res.status(400).json({ success: false, message: "No Facebook Pages found. Make sure you are an Admin of the Facebook Page (or Business Manager that owns it) and grant all requested permissions." });
       }
 
       // If no pageId yet → return page list + userToken so frontend can pick without re-using the code
       if (!pageId) {
         return res.json({
-          success:    true,
+          success: true,
           selectPage: true,
           userToken,                          // frontend stores this, sends back on page selection
           pages: pages.map(p => ({
-            pageId:       p.id,
-            pageName:     p.name,
+            pageId: p.id,
+            pageName: p.name,
             hasInstagram: !!p.instagram_business_account,
           })),
         });
@@ -153,8 +190,8 @@ export default {
           null,
           {
             params: {
-              subscribed_fields: "leadgen",
-              access_token:      selectedPage.access_token,
+              subscribed_fields: "leadgen,messages,feed",
+              access_token: selectedPage.access_token,
             },
           }
         );
@@ -169,14 +206,14 @@ export default {
       const integration = await MetaIntegration.findOneAndUpdate(
         { facebookPageId: selectedPage.id },
         {
-          facebookPageId:     selectedPage.id,
-          pageName:           selectedPage.name,
-          pageAccessToken:    selectedPage.access_token,
+          facebookPageId: selectedPage.id,
+          pageName: selectedPage.name,
+          pageAccessToken: selectedPage.access_token,
           instagramAccountId: selectedPage.instagram_business_account?.id || null,
-          instagramUsername:  selectedPage.instagram_business_account?.username || "",
-          status:             "active",
-          webhookSubscribed:  true,
-          connectedBy:        req.user._id,
+          instagramUsername: selectedPage.instagram_business_account?.username || "",
+          status: "active",
+          webhookSubscribed: true,
+          connectedBy: req.user._id,
         },
         { upsert: true, new: true }
       );
@@ -187,8 +224,8 @@ export default {
       const msg = err.response?.data?.error?.message || err.message;
       // OAuth code errors (already used / expired) should be 400, not 500
       const isOAuthCodeError = msg?.toLowerCase().includes("authorization code") ||
-                               msg?.toLowerCase().includes("code has been used") ||
-                               err.response?.data?.error?.code === 100;
+        msg?.toLowerCase().includes("code has been used") ||
+        err.response?.data?.error?.code === 100;
       res.status(isOAuthCodeError ? 400 : 500).json({ success: false, message: msg });
     }
   },
@@ -246,7 +283,7 @@ export default {
 
       let totalCreated = 0;
       let totalSkipped = 0;
-      const errors     = [];
+      const errors = [];
 
       for (const integration of integrations) {
         try {
@@ -263,7 +300,7 @@ export default {
               const leadsRes = await axios.get(`${GRAPH_API}/${form.id}/leads`, {
                 params: {
                   access_token: integration.pageAccessToken,
-                  fields: "id,created_time,field_data,ad_id,form_id",
+                  fields: "id,created_time,field_data,ad_id,form_id,platform",
                   limit: 100,
                 },
               });
@@ -279,26 +316,31 @@ export default {
                 const fields = {};
                 (leadData.field_data || []).forEach(f => { fields[f.name] = f.values?.[0] || ""; });
 
-                const name  = fields.full_name
-                              || (`${fields.first_name || ""} ${fields.last_name || ""}`).trim()
-                              || fields.name
-                              || "Facebook Lead";
-                const email   = fields.email        || `fb_${leadData.id}@noreply.com`;
-                const phone   = fields.phone_number || fields.phone || fields.mobile_number || "N/A";
+                const name = fields.full_name
+                  || (`${fields.first_name || ""} ${fields.last_name || ""}`).trim()
+                  || fields.name
+                  || "Facebook Lead";
+                const email = fields.email || `fb_${leadData.id}@noreply.com`;
+                const phone = fields.phone_number || fields.phone || fields.mobile_number || "N/A";
                 const company = fields.company_name || fields.company || integration.pageName;
 
+                let source = "Facebook Ads";
+                if (leadData.platform === "instagram" || leadData.platform === "ig") source = "Instagram Ads";
+                else if (leadData.platform === "facebook" || leadData.platform === "fb") source = "Facebook Ads";
+                else if (integration.instagramAccountId) source = "Instagram Ads"; // Fallback if platform is missing
+
                 await Lead.create({
-                  leadName:    name,
+                  leadName: name,
                   email,
                   phoneNumber: phone,
                   companyName: company,
-                  source:      integration.instagramAccountId ? "Instagram" : "Facebook",
-                  status:      "Cold",
-                  notes:       `Synced from Facebook Lead Form: ${form.name}`,
+                  source,
+                  status: "Cold",
+                  notes: `Synced from Facebook Lead Form: ${form.name}`,
                   meta: {
                     leadgenId: leadData.id,
-                    pageId:    integration.facebookPageId,
-                    formId:    form.id,
+                    pageId: integration.facebookPageId,
+                    formId: form.id,
                     rawFields: fields,
                   },
                 });
@@ -346,29 +388,29 @@ export default {
         return res.status(400).json({ success: false, message: "No active Facebook Page connected. Go to Integrations and connect a page first." });
       }
 
-      const name    = req.body.name    || "Test Facebook Lead";
-      const email   = req.body.email   || "testlead@facebook.com";
-      const phone   = req.body.phone   || "+1 555-123-4567";
+      const name = req.body.name || "Test Facebook Lead";
+      const email = req.body.email || "testlead@facebook.com";
+      const phone = req.body.phone || "+1 555-123-4567";
       const company = req.body.company || integration.pageName || "Test Company";
 
       // Check for existing test lead with same email to avoid duplicates
-      const existing = await Lead.findOne({ email, source: { $in: ["Facebook", "Instagram"] } });
+      const existing = await Lead.findOne({ email, source: { $in: ["Facebook Ads", "Instagram Ads", "Facebook", "Instagram"] } });
       if (existing) {
         return res.status(400).json({ success: false, message: "A test lead with this email already exists. Delete it first or use a different email." });
       }
 
       const lead = await Lead.create({
-        leadName:    name,
+        leadName: name,
         email,
         phoneNumber: phone,
         companyName: company,
-        source:      integration.instagramAccountId ? "Instagram" : "Facebook",
-        status:      "Cold",
-        notes:       `[TEST] Simulated Facebook lead from page: ${integration.pageName}`,
+        source: integration.instagramAccountId ? "Instagram Ads" : "Facebook Ads",
+        status: "Cold",
+        notes: `[TEST] Simulated Facebook lead from page: ${integration.pageName}`,
         meta: {
           leadgenId: `test_${Date.now()}`,
-          pageId:    integration.facebookPageId,
-          formId:    "test_form",
+          pageId: integration.facebookPageId,
+          formId: "test_form",
           rawFields: { full_name: name, email, phone_number: phone, company_name: company },
         },
       });
@@ -390,8 +432,8 @@ export default {
   verifyWebhook: (req, res) => {
     // Meta sends both hub.mode (dot) and hub_mode (underscore)
     // Express qs parser keeps only the underscore version
-    const mode      = req.query.hub_mode;
-    const token     = req.query.hub_verify_token;
+    const mode = req.query.hub_mode;
+    const token = req.query.hub_verify_token;
     const challenge = req.query.hub_challenge;
 
     if (mode === "subscribe" && token === process.env.META_WEBHOOK_VERIFY_TOKEN) {
@@ -416,7 +458,7 @@ export default {
       console.warn("❌ Meta webhook: missing x-hub-signature-256 header");
       return res.status(403).send("Forbidden");
     }
-    const rawBody  = req.rawBody || Buffer.from(JSON.stringify(req.body));
+    const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body));
     const expected = "sha256=" + crypto.createHmac("sha256", APP_SECRET).update(rawBody).digest("hex");
     if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
       console.warn("❌ Meta webhook: signature mismatch — possible forged request");
@@ -432,15 +474,34 @@ export default {
       if (body.object !== "page") return;
 
       for (const entry of body.entry || []) {
+        // Messenger DM events
+        for (const messaging of entry.messaging || []) {
+          const pageId = entry.id;
+          setImmediate(() =>
+            import("./facebook.controller.js").then(({ processFbMessengerEvent }) =>
+              processFbMessengerEvent(pageId, messaging)
+            )
+          );
+        }
+
+        // Lead-gen and feed changes
         for (const change of entry.changes || []) {
-          if (change.field !== "leadgen") continue;
-
-          const { leadgen_id, page_id, form_id } = change.value;
-          console.log(`📥 Meta lead received | page: ${page_id} | lead: ${leadgen_id}`);
-
-          // Find which tenant owns this page_id
-          // We need to search across all tenant DBs — handled by importing tenantDB config
-          setImmediate(() => processMetaLead({ leadgen_id, page_id, form_id }));
+          if (change.field === "leadgen") {
+            const { leadgen_id, page_id, form_id } = change.value;
+            console.log(`📥 Meta lead received | page: ${page_id} | lead: ${leadgen_id}`);
+            setImmediate(() => processMetaLead({ leadgen_id, page_id, form_id }));
+          }
+          if (change.field === "feed") {
+            const value = change.value;
+            if (value.item === "comment" && (value.verb === "add" || value.verb === "edited")) {
+              const pageId = entry.id;
+              setImmediate(() =>
+                import("./facebook.controller.js").then(({ processFbCommentEvent }) =>
+                  processFbCommentEvent(pageId, value)
+                )
+              );
+            }
+          }
         }
       }
     } catch (err) {
@@ -452,87 +513,111 @@ export default {
 // ─── Background Lead Processing ───────────────────────────────────────────────
 
 /**
- * Find the tenant that has this page_id connected,
- * fetch lead details from Graph API,
- * create a Lead in their DB
+ * Find the tenant that owns this page_id (via MetaIntegration OR InstagramIntegration),
+ * fetch lead details from Graph API, determine Facebook vs Instagram Ads source,
+ * create a Lead in their DB, and emit a real-time socket notification to admins.
  */
 const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
   try {
-    // Import here to avoid circular deps
     const { getTenantDB } = await import("../config/tenantDB.js");
     const { default: TenantMaster } = await import("../models/master/Tenant.js");
     const { registerTenantModels, getTenantModels } = await import("../models/tenant/index.js");
 
-    // Find all active tenants
     const tenants = await TenantMaster.find({ status: "active" }).populate("plan_id");
 
     for (const tenant of tenants) {
       const conn = await getTenantDB(tenant.slug);
       registerTenantModels(conn);
-      const { MetaIntegration, Lead } = getTenantModels(conn);
+      const { MetaIntegration, InstagramIntegration, Lead, User, Role } = getTenantModels(conn);
 
-      // Check if this tenant has this page connected
-      const integration = await MetaIntegration.findOne({
-        facebookPageId: page_id,
-        status: "active",
-      });
+      // ── Find tenant by page_id ───────────────────────────────────────────
+      // Check MetaIntegration first (Facebook Page directly connected)
+      let pageAccessToken = null;
+      let pageName = "";
+      let defaultSource = "Facebook Ads";
 
-      if (!integration) continue;
+      const metaInteg = await MetaIntegration.findOne({ facebookPageId: page_id, status: "active" });
+      if (metaInteg) {
+        pageAccessToken = metaInteg.pageAccessToken;
+        pageName = metaInteg.pageName || "";
+        defaultSource = metaInteg.instagramAccountId ? "Instagram Ads" : "Facebook Ads";
+      } else {
+        // Fall back: tenant connected via Instagram OAuth (stores pageId + pageAccessToken)
+        const igInteg = await InstagramIntegration.findOne({ pageId: page_id, status: "active" });
+        if (!igInteg) continue;
+        pageAccessToken = igInteg.pageAccessToken;
+        pageName = igInteg.displayName || "";
+        defaultSource = "Instagram Ads";
+      }
 
-      // The tenant may have connected this page before their plan dropped
-      // Facebook integration — stop ingesting leads for them going forward.
       if (!isFeatureEnabled(tenant.plan_id?.features, "integration_facebook")) {
-        console.log(`⏭️  Skipping Meta lead for tenant ${tenant.slug} — integration_facebook disabled on plan`);
+        console.log(`Skipping Meta lead for tenant ${tenant.slug} — integration_facebook disabled on plan`);
         break;
       }
 
-      // Found the tenant — fetch lead details from Graph API
+      // ── Fetch lead details from Graph API ────────────────────────────────
       let leadData;
       try {
-        leadData = await fetchLeadDetails(leadgen_id, integration.pageAccessToken);
+        leadData = await fetchLeadDetails(leadgen_id, pageAccessToken);
       } catch (apiErr) {
         console.error(`Meta Graph API error for lead ${leadgen_id}:`, apiErr.response?.data || apiErr.message);
         break;
       }
 
-      // Parse field_data into a flat object
+      // ── Determine source from platform field ─────────────────────────────
+      // Meta returns platform = "facebook" | "instagram" | undefined
+      let source = defaultSource;
+      if (leadData.platform === "instagram") source = "Instagram Ads";
+      else if (leadData.platform === "facebook") source = "Facebook Ads";
+
+      // ── Parse form fields ────────────────────────────────────────────────
       const fields = {};
       for (const f of leadData.field_data || []) {
         fields[f.name] = f.values?.[0] || "";
       }
 
-      // Map Facebook fields → CRM Lead fields
-      const fullName   = fields["full_name"] || `${fields["first_name"] || ""} ${fields["last_name"] || ""}`.trim() || "Facebook Lead";
-      const email      = fields["email"] || "";
-      const phone      = fields["phone_number"] || fields["phone"] || "N/A";
-      const company    = fields["company_name"] || fields["company"] || integration.pageName || "Unknown";
+      const fullName = fields["full_name"] || `${fields["first_name"] || ""} ${fields["last_name"] || ""}`.trim() || "Lead";
+      const email = fields["email"] || "";
+      const phone = fields["phone_number"] || fields["phone"] || "N/A";
+      const company = fields["company_name"] || fields["company"] || pageName || "Unknown";
 
-      // Avoid duplicates — check by leadgen_id stored in notes or by email+phone
+      // ── Dedup ────────────────────────────────────────────────────────────
       const existing = await Lead.findOne({ "meta.leadgenId": leadgen_id });
       if (existing) {
-        console.log(`⚠️  Lead ${leadgen_id} already exists — skipping`);
+        console.log(`Lead ${leadgen_id} already exists — skipping`);
         break;
       }
 
-      // Create the lead
-      await Lead.create({
-        leadName:    fullName,
+      // ── Create lead ──────────────────────────────────────────────────────
+      const lead = await Lead.create({
+        leadName: fullName,
         email,
         phoneNumber: phone,
         companyName: company,
-        source:      integration.instagramAccountId ? "Instagram" : "Facebook",
-        status:      "Cold",
-        notes:       `Auto-captured from ${integration.instagramAccountId ? "Instagram" : "Facebook"} Lead Form\nForm ID: ${form_id}\nPage: ${integration.pageName}`,
+        source,
+        status: "Cold",
+        notes: `Auto-captured from ${source}\nForm ID: ${form_id}\nPage: ${pageName}`,
         meta: {
           leadgenId: leadgen_id,
-          pageId:    page_id,
-          formId:    form_id,
+          pageId: page_id,
+          formId: form_id,
           rawFields: fields,
         },
       });
 
-      console.log(`✅ Lead created for tenant "${tenant.slug}": ${fullName} (${email})`);
-      break; // Found the tenant, stop searching
+      console.log(`Lead created for tenant "${tenant.slug}": ${fullName} (source: ${source})`);
+
+      // ── Notify admins via socket ─────────────────────────────────────────
+      try {
+        const adminRole = await Role.findOne({ name: "Admin" });
+        if (adminRole) {
+          const admins = await User.find({ role: adminRole._id, status: "Active" }, "_id").lean();
+          const payload = { leadId: String(lead._id), leadName: lead.leadName, source };
+          admins.forEach(a => notifyUser(String(a._id), "lead_created", payload));
+        }
+      } catch (_) { }
+
+      break;
     }
   } catch (err) {
     console.error("processMetaLead error:", err.message);

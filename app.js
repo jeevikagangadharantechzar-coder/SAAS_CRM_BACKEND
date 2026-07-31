@@ -11,9 +11,13 @@ import mongoSanitize from "express-mongo-sanitize";
 import rateLimit from "express-rate-limit";
 
 // Meta webhook (public — must be before auth middleware)
-import metaWebhookRoutes        from "./routes/metaWebhook.routes.js";
+import metaWebhookRoutes            from "./routes/metaWebhook.routes.js";
 // LinkedIn webhook (public — must be before auth middleware)
-import linkedinWebhookRoutes    from "./routes/linkedinWebhook.routes.js";
+import linkedinWebhookRoutes        from "./routes/linkedinWebhook.routes.js";
+// WhatsApp Cloud API webhook (public — must be before auth middleware)
+import whatsappCloudWebhookRoutes   from "./routes/whatsappCloudWebhook.routes.js";
+// Instagram webhook (public — must be before auth middleware)
+import instagramWebhookRoutes       from "./routes/instagramWebhook.routes.js";
 
 
 // Multi-tenant SaaS imports
@@ -97,6 +101,8 @@ const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (origin.endsWith(".trycloudflare.com")) return callback(null, true);
+    if (origin.endsWith(".loca.lt")) return callback(null, true);
     console.warn(`  CORS blocked: ${origin}`);
     return callback(new Error(`CORS policy: origin ${origin} not allowed`));
   },
@@ -115,7 +121,12 @@ app.options("*", cors(corsOptions));
 // For Meta webhook signature verification we need the raw body on /webhooks/meta
 // All other routes use normal JSON parsing
 app.use((req, res, next) => {
-  if (req.path.startsWith("/webhooks/meta") || req.path.startsWith("/webhooks/linkedin")) {
+  if (
+    req.path.startsWith("/webhooks/meta") ||
+    req.path.startsWith("/webhooks/linkedin") ||
+    req.path.startsWith("/webhooks/whatsapp") ||
+    req.path.startsWith("/webhooks/instagram")
+  ) {
     express.json({
       verify: (req, _res, buf) => { req.rawBody = buf; },
     })(req, res, next);
@@ -164,8 +175,10 @@ app.use(express.static(path.join(__dirname, "public")));
 // ─────────────────────────────────────────────
 // Public Webhook Routes (no auth — Meta calls these directly)
 // ─────────────────────────────────────────────
-app.use("/webhooks/meta", metaWebhookRoutes);
-app.use("/webhooks/linkedin", linkedinWebhookRoutes);
+app.use("/webhooks/meta",       metaWebhookRoutes);
+app.use("/webhooks/linkedin",   linkedinWebhookRoutes);
+app.use("/webhooks/whatsapp",   whatsappCloudWebhookRoutes);
+app.use("/webhooks/instagram",  instagramWebhookRoutes);
 
 
 // ─────────────────────────────────────────────
@@ -299,8 +312,7 @@ const startServer = async () => {
 
     server.listen(PORT, () => {
       console.log(` Server running on port ${PORT}`);
-      console.log(` WhatsApp webhook: POST http://localhost:${PORT}/api/whatsapp/webhook`);
-      console.log(` WhatsApp status:  POST http://localhost:${PORT}/api/whatsapp/status`);
+      console.log(` WhatsApp webhook: http://localhost:${PORT}/webhooks/whatsapp`);
       console.log(` Allowed origins: ${allowedOrigins.join(", ")}`);
     });
   } catch (error) {

@@ -76,6 +76,9 @@ const leadSchema = new mongoose.Schema(
       rawFields: { type: Map, of: String, default: {} },        // all form fields as-is
     },
 
+    // Instagram DM lead source
+    instagramUsername: { type: String, default: null, index: true },
+
     // LinkedIn lead capture metadata
     linkedinLeadId:       { type: String, default: null, index: true },
     linkedinCampaignId:   { type: String, default: null },

@@ -35,6 +35,13 @@ import deviceSessionSchema       from "../schemas/deviceSessionSchema.js";
 import userLocationSchema        from "../schemas/userLocationSchema.js";
 import dealNoteSchema            from "../schemas/dealNoteSchema.js";
 import calendarNoteSchema        from "../schemas/calendarNoteSchema.js";
+import whatsappIntegrationSchema  from "../schemas/whatsappIntegrationSchema.js";
+import whatsappCloudMessageSchema from "../schemas/whatsappCloudMessageSchema.js";
+import instagramIntegrationSchema from "../schemas/instagramIntegrationSchema.js";
+import instagramMessageSchema     from "../schemas/instagramMessageSchema.js";
+import instagramCommentSchema     from "../schemas/instagramCommentSchema.js";
+import facebookMessageSchema      from "../schemas/facebookMessageSchema.js";
+import facebookCommentSchema      from "../schemas/facebookCommentSchema.js";
 
 
 const MODEL_MAP = [
@@ -73,8 +80,15 @@ const MODEL_MAP = [
   ["ZoomIntegration",    zoomIntegrationSchema],
   ["DeviceSession",      deviceSessionSchema],
   ["UserLocation",       userLocationSchema],
-  ["DealNote",           dealNoteSchema],
-  ["CalendarNote",       calendarNoteSchema],
+  ["DealNote",              dealNoteSchema],
+  ["CalendarNote",          calendarNoteSchema],
+  ["WhatsAppIntegration",   whatsappIntegrationSchema],
+  ["WhatsAppCloudMessage",  whatsappCloudMessageSchema],
+  ["InstagramIntegration",  instagramIntegrationSchema],
+  ["InstagramMessage",      instagramMessageSchema],
+  ["InstagramComment",      instagramCommentSchema],
+  ["FacebookMessage",       facebookMessageSchema],
+  ["FacebookComment",       facebookCommentSchema],
 ];
 
 /**
@@ -131,7 +145,14 @@ export function getTenantModels(conn) {
     ZoomIntegration:     conn.model("ZoomIntegration"),
     DeviceSession:       conn.model("DeviceSession"),
     UserLocation:        conn.model("UserLocation"),
-    DealNote:            conn.model("DealNote"),
-    CalendarNote:        conn.model("CalendarNote"),
+    DealNote:              conn.model("DealNote"),
+    CalendarNote:          conn.model("CalendarNote"),
+    WhatsAppIntegration:   conn.model("WhatsAppIntegration"),
+    WhatsAppCloudMessage:  conn.model("WhatsAppCloudMessage"),
+    InstagramIntegration:  conn.model("InstagramIntegration"),
+    InstagramMessage:      conn.model("InstagramMessage"),
+    InstagramComment:      conn.model("InstagramComment"),
+    FacebookMessage:       conn.model("FacebookMessage"),
+    FacebookComment:       conn.model("FacebookComment"),
   };
 }
