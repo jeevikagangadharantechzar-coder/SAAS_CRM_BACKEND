@@ -209,10 +209,9 @@ export default {
         }
       }
 
-      // Rejected leads always live on the dedicated Rejected Leads page instead
-      // — never in the main list, for anyone (including Admin). Converted
-      // leads stay visible here for Admin only (read-only record-keeping copy).
-      const hiddenStatuses = req.user.role.name !== "Admin" ? ["Rejected", "Converted"] : ["Rejected"];
+      // Converted leads stay visible here for Admin only (read-only record-keeping copy).
+      // Rejected and Junk leads show in the pipeline/list.
+      const hiddenStatuses = req.user.role.name !== "Admin" ? ["Converted"] : [];
       query.status = query.status && !hiddenStatuses.includes(query.status) ? query.status : { $nin: hiddenStatuses };
 
       // Filter by Active Task and Active Target
