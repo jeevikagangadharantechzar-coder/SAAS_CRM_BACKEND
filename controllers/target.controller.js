@@ -14,7 +14,7 @@ import { getBulkLinkage } from "../services/linkageService.js";
 const getModels = (req) => getTenantModels(req.tenantDB);
 
 // Compute actual counts for a user within a date range, scoped to linked leads/deals if provided
-async function computeActuals(models, userId, startDate, endDate, linkedLeadIds = null, linkedDealIds = null, targetLeadsGoal = 0, targetDealsGoal = 0) {
+async function computeActuals(models, userId, startDate, endDate, linkedLeadIds = null, linkedDealIds = null, targetLeadsGoal = 0, targetDealsGoal = 0, reportedCallsCount = 0, reportedMeetingsCount = 0) {
   const { Lead, Deal, CallLog, Activity } = models;
 
   const start = new Date(startDate);
@@ -35,9 +35,9 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   // every unrelated lead the sales person happened to convert elsewhere that
   // period (which used to leak onto Targets/Tasks that never asked for it).
   const leadsConvertedQuery = linkedLeadIds && linkedLeadIds.length > 0
-    ? Deal.countDocuments({ leadId: { $in: linkedLeadIds }, convertedBy: userId })
+    ? Deal.countDocuments({ leadId: { $in: linkedLeadIds } })
     : targetLeadsGoal > 0
-      ? Lead.countDocuments({ assignTo: userId, status: "Converted", convertedBy: userId, updatedAt: { $gte: start, $lte: end } })
+      ? Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   // Deals won: same self-only rule — filtered by wonAt (the moment it was
@@ -47,19 +47,37 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   // double-count it in a later one). Same no-goal-means-zero rule as leads
   // converted above.
   const dealsWonQuery = linkedDealIds && linkedDealIds.length > 0
-    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won", wonBy: userId })
+    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won" })
     : targetDealsGoal > 0
-      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", wonBy: userId, wonAt: { $gte: start, $lte: end } })
+      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
-  const [leadsConverted, dealsWon, calls, meetings] = await Promise.all([
+  const leadDealWonQuery = linkedLeadIds && linkedLeadIds.length > 0
+    ? Deal.countDocuments({ leadId: { $in: linkedLeadIds }, stage: "Closed Won" })
+    : targetLeadsGoal > 0
+      ? Deal.countDocuments({ assignedTo: userId, leadId: { $ne: null }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
+      : Promise.resolve(0);
+
+  const dealsLostQuery = (linkedDealIds && linkedDealIds.length > 0) || (linkedLeadIds && linkedLeadIds.length > 0)
+    ? Deal.countDocuments({ 
+        $or: [
+          ...(linkedDealIds?.length ? [{ _id: { $in: linkedDealIds } }] : []),
+          ...(linkedLeadIds?.length ? [{ leadId: { $in: linkedLeadIds } }] : [])
+        ],
+        stage: "Closed Lost" 
+      })
+    : targetDealsGoal > 0 || targetLeadsGoal > 0
+      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Lost", updatedAt: { $gte: start, $lte: end } })
+      : Promise.resolve(0);
+
+  const [leadsConverted, dealsWon, leadDealWon, dealsLost] = await Promise.all([
     leadsConvertedQuery,
     dealsWonQuery,
-    CallLog.countDocuments({ userId: userId, createdAt: { $gte: start, $lte: end } }),
-    Activity.countDocuments({ assignedTo: userId, activityCategory: "Meeting", startDate: { $gte: start, $lte: end } }),
+    leadDealWonQuery,
+    dealsLostQuery
   ]);
 
-  return { leadsConverted, dealsWon, calls, meetings };
+  return { leadsConverted, dealsWon, calls: reportedCallsCount, meetings: reportedMeetingsCount, leadDealWon, dealsLost };
 }
 
 // When a Target links SPECIFIC leads/deals and Admin personally converts/wins
@@ -74,8 +92,12 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
 // (no curated list) has no "this exact item was taken" concept, so it's
 // returned unchanged.
 function effectiveGoal(rawGoal, rawLinkedCount, adminHandledCount) {
-  if (rawLinkedCount === 0) return rawGoal;
-  return Math.max(0, rawGoal - adminHandledCount);
+  if (rawLinkedCount > 0) {
+    const intendedGoal = rawGoal > 0 ? rawGoal : rawLinkedCount;
+    const reachable = Math.max(0, rawLinkedCount - adminHandledCount);
+    return Math.min(intendedGoal, reachable);
+  }
+  return rawGoal || 0;
 }
 
 // Self-only progress snapshot for a sales person who has NO Target at all yet
@@ -187,6 +209,129 @@ async function computeFallbackSnapshotsForTasks(models, userId, tasks) {
 }
 
 export default {
+  // Fetch targets linked to a specific lead or deal
+  getLinkedTargets: async (req, res) => {
+    try {
+      const { itemType, itemId } = req.params;
+      const models = getModels(req);
+      const { Target, Lead, Deal } = models;
+
+      const query = {};
+      if (itemType === "lead") query.linkedLeads = itemId;
+      else if (itemType === "deal") query.linkedDeals = itemId;
+      else return res.status(400).json({ message: "Invalid itemType" });
+
+      if (req.user.role?.name !== "Admin") {
+        query.salesPerson = req.user._id;
+      }
+
+      const allRawTargets = await Target.find(query)
+        .populate("salesPerson", "firstName lastName email")
+        .populate("createdBy", "firstName lastName email")
+        .populate("notes.addedBy", "firstName lastName")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const rawTargets = allRawTargets.filter((t) => !!t.salesPerson);
+
+      const result = await Promise.all(rawTargets.map(async (t) => {
+        const rawLeadIds = (t.linkedLeads || []);
+        const rawDealIds = (t.linkedDeals || []);
+
+        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length);
+
+        const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
+          .select("leadName companyName phoneNumber email status createdAt statusHistory")
+          .lean();
+
+        const spIdStr = String(t.salesPerson._id || t.salesPerson);
+
+        const convertedLeadDealsRole = { path: "convertedBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+        const wonByRole = { path: "wonBy", select: "firstName lastName role", populate: { path: "role", select: "name" } };
+
+        const convertedLeadDeals = await Deal.find({ leadId: { $in: rawLeadIds } })
+          .select("dealName leadId convertedAt convertedBy assignedTo createdAt stage value currency leadStatusHistory leadCreatedAt stageHistory lossReason lossNotes stageLostAt updatedAt companyName phoneNumber email wonAt wonBy")
+          .populate(convertedLeadDealsRole)
+          .populate(STAGE_HISTORY_MOVER_POPULATE)
+          .lean()
+          .then(deals => deals.map(d => {
+            const isSPConverted = d.convertedBy
+              ? String(d.convertedBy._id || d.convertedBy) === spIdStr
+              : String(d.assignedTo || "") === spIdStr;
+            const convertedByName = d.convertedBy
+              ? `${d.convertedBy.firstName || ""} ${d.convertedBy.lastName || ""}`.trim()
+              : null;
+            return {
+              ...d,
+              salesPersonConverted: isSPConverted,
+              convertedByName,
+              takenByAdminName: getTakenByAdminName(d.stageHistory, String(d.assignedTo || spIdStr)),
+            };
+          }));
+
+        const existingDeals = await Deal.find({ _id: { $in: rawDealIds } })
+          .select("dealName dealTitle companyName phoneNumber email stage value currency wonAt wonBy convertedAt convertedBy assignedTo createdAt stageHistory lossReason lossNotes stageLostAt updatedAt")
+          .populate(convertedLeadDealsRole)
+          .populate(wonByRole)
+          .populate(STAGE_HISTORY_MOVER_POPULATE)
+          .lean()
+          .then(deals => deals.map(d => {
+            const takenByAdminName = getTakenByAdminName(d.stageHistory, String(d.assignedTo || spIdStr));
+            if (!d.convertedBy) return { ...d, salesPersonConverted: null, convertedByName: null, takenByAdminName };
+            const isSPConverted = String(d.convertedBy._id || d.convertedBy) === spIdStr;
+            return {
+              ...d,
+              salesPersonConverted: isSPConverted,
+              convertedByName: `${d.convertedBy.firstName || ""} ${d.convertedBy.lastName || ""}`.trim(),
+              takenByAdminName,
+            };
+          }));
+
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, 0);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, 0);
+
+        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
+        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
+        const leadDealWonPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) : 0;
+        const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
+        const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
+        const activePercentages = [
+          effTargetLeads > 0 ? leadsPercent : null,
+          effTargetDeals > 0 ? dealsPercent : null,
+          t.targetCalls > 0 ? callsPercent : null,
+          t.targetMeetings > 0 ? meetingsPercent : null,
+        ].filter(v => v !== null);
+        const overall = activePercentages.length > 0
+          ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
+          : 0;
+
+        let finalStatus = t.status;
+        if (overall >= 100 && t.status !== "Completed" && t.status !== "Rejected") {
+          finalStatus = "Completed";
+          await Target.findByIdAndUpdate(t._id, { status: "Completed" });
+        } else if (overall < 100 && t.status === "Completed") {
+          finalStatus = "In Progress";
+          await Target.findByIdAndUpdate(t._id, { status: "In Progress" });
+        }
+
+        return {
+          ...t,
+          status: finalStatus,
+          linkedLeads: existingLeads,
+          linkedDeals: existingDeals,
+          convertedLeadDeals,
+          actuals,
+          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals, leadDealWonPercent },
+        };
+      }));
+
+      res.status(200).json(result);
+    } catch (err) {
+      console.error("Error fetching linked targets:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
   // Admin: get all targets with progress
   getTargets: async (req, res) => {
     try {
@@ -220,7 +365,7 @@ export default {
         const rawDealIds = (t.linkedDeals || []);
 
         // Counts use raw IDs (works even for deleted leads)
-        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals);
+        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length);
 
         // Populate existing leads (deleted ones are simply absent)
         const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
@@ -274,19 +419,7 @@ export default {
             };
           }));
 
-        // Count leads that converted to a deal AND that deal is Closed Won BY
-        // THE SALES PERSON THEMSELVES — admin-assisted wins don't count
-        // toward their own target progress (they show in Admin Completed).
-        const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won" && String(d.wonBy || "") === spIdStr).length;
-        actuals.leadDealWon = leadDealWon;
-
-        // Count Closed Lost deals (linked deals + converted lead deals) —
-        // same self-only rule as leadDealWon above: only counts if the sales
-        // person themselves moved it to Closed Lost, not an admin-closed loss.
-        const dealsLost =
-          existingDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, spIdStr)).length +
-          convertedLeadDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, spIdStr)).length;
-        actuals.dealsLost = dealsLost;
+        // Overwrites removed because computeActuals handles it
 
         // How many of THIS target's own linked leads/deals did Admin close
         // out personally — see effectiveGoal() above for why this shrinks
@@ -294,28 +427,49 @@ export default {
         const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
         const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
 
-        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
-        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, 0);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, 0);
 
         const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
         const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
+        const leadDealWonPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
           effTargetLeads > 0 ? leadsPercent : null,
           effTargetDeals > 0 ? dealsPercent : null,
+          t.targetCalls > 0 ? callsPercent : null,
+          t.targetMeetings > 0 ? meetingsPercent : null,
         ].filter(v => v !== null);
         const overall = activePercentages.length > 0
           ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
           : 0;
 
+        let finalStatus = t.status;
+        if (t.status !== "In Hold" && t.status !== "Rejected") {
+          if (overall >= 100 && t.status !== "Completed") {
+            finalStatus = "Completed";
+            await Target.findByIdAndUpdate(t._id, { status: "Completed" });
+          } else if (overall > 0 && overall < 100 && (t.status === "New" || t.status === "Pending")) {
+            finalStatus = "In Progress";
+            await Target.findByIdAndUpdate(t._id, { status: "In Progress" });
+          } else if (overall === 0 && t.status === "In Progress") {
+            finalStatus = "New";
+            await Target.findByIdAndUpdate(t._id, { status: "New" });
+          } else if (overall < 100 && t.status === "Completed") {
+            finalStatus = "In Progress";
+            await Target.findByIdAndUpdate(t._id, { status: "In Progress" });
+          }
+        }
+
         return {
           ...t,
+          status: finalStatus,
           linkedLeads: existingLeads,
           linkedDeals: existingDeals,
           convertedLeadDeals,
           actuals,
-          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals },
+          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals, leadDealWonPercent },
         };
       }));
 
@@ -346,7 +500,7 @@ export default {
         const rawLeadIds = (t.linkedLeads || []);
         const rawDealIds = (t.linkedDeals || []);
 
-        const actuals = await computeActuals(models, req.user._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals);
+        const actuals = await computeActuals(models, req.user._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length);
 
         const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
           .select("leadName companyName phoneNumber email status createdAt statusHistory")
@@ -395,47 +549,71 @@ export default {
             };
           }));
 
-        // Count leads that converted to a deal AND that deal is Closed Won BY
-        // THE SALES PERSON THEMSELVES — admin-assisted wins don't count
-        // toward their own target progress (they show in Admin Completed).
-        const leadDealWon = convertedLeadDeals.filter(d => d.stage === "Closed Won" && String(d.wonBy || "") === myIdStr).length;
-        actuals.leadDealWon = leadDealWon;
-
-        // Count Closed Lost deals (linked deals + converted lead deals) —
-        // same self-only rule as leadDealWon above: only counts if you
-        // yourself moved it to Closed Lost, not an admin-closed loss.
-        const dealsLost =
-          existingDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, myIdStr)).length +
-          convertedLeadDeals.filter(d => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, myIdStr)).length;
-        actuals.dealsLost = dealsLost;
+        // Overwrites removed because computeActuals handles it
 
         // Same admin-took-this-specific-item denominator shrink as getTargets
         // above — see effectiveGoal().
         const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
         const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
 
-        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
-        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, 0);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, 0);
 
         const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
         const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
+        const leadDealWonPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) : 0;
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
           effTargetLeads > 0 ? leadsPercent : null,
           effTargetDeals > 0 ? dealsPercent : null,
+          t.targetCalls > 0 ? callsPercent : null,
+          t.targetMeetings > 0 ? meetingsPercent : null,
         ].filter(v => v !== null);
         const overall = activePercentages.length > 0
           ? Math.round(activePercentages.reduce((a, b) => a + b, 0) / activePercentages.length)
           : 0;
 
+        let finalStatus = t.status;
+        if (t.status !== "Rejected") {
+          if (t.status === "In Hold") {
+            if (t.holdSnapshotProgress == null) {
+              t.holdSnapshotProgress = overall;
+              await Target.findByIdAndUpdate(t._id, { holdSnapshotProgress: overall });
+            } else if (overall > t.holdSnapshotProgress) {
+              if (overall >= 100) {
+                finalStatus = "Completed";
+                await Target.findByIdAndUpdate(t._id, { status: "Completed", holdSnapshotProgress: null });
+              } else {
+                finalStatus = "In Progress";
+                await Target.findByIdAndUpdate(t._id, { status: "In Progress", holdSnapshotProgress: null });
+              }
+            }
+          } else {
+            if (overall >= 100 && t.status !== "Completed") {
+              finalStatus = "Completed";
+              await Target.findByIdAndUpdate(t._id, { status: "Completed" });
+            } else if (overall > 0 && overall < 100 && (t.status === "New" || t.status === "Pending")) {
+              finalStatus = "In Progress";
+              await Target.findByIdAndUpdate(t._id, { status: "In Progress" });
+            } else if (overall === 0 && t.status === "In Progress") {
+              finalStatus = "New";
+              await Target.findByIdAndUpdate(t._id, { status: "New" });
+            } else if (overall < 100 && t.status === "Completed") {
+              finalStatus = "In Progress";
+              await Target.findByIdAndUpdate(t._id, { status: "In Progress" });
+            }
+          }
+        }
+
         return {
           ...t,
+          status: finalStatus,
           linkedLeads: existingLeads,
           linkedDeals: existingDeals,
           convertedLeadDeals,
           actuals,
-          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals },
+          percentages: { leadsPercent, dealsPercent, callsPercent, meetingsPercent, overall, effTargetLeads, effTargetDeals, leadDealWonPercent },
         };
       }));
 
@@ -453,27 +631,41 @@ export default {
         return res.status(403).json({ message: "Access denied: Admins only" });
       }
       const models = getModels(req);
-      const { Lead, Deal } = models;
+      const { Lead, Deal, Target, Task } = models;
       const { userId } = req.params;
 
-      const [leads, deals] = await Promise.all([
+      const [leads, deals, activeTargets, pendingTasks] = await Promise.all([
         // Rejected leads are dead ends and Converted leads have already become
         // a Deal (shown below via the Deals query instead) — neither belongs
         // in this "pick leads to link" list.
-        Lead.find({ assignTo: userId, status: { $nin: ["Rejected", "Converted"] } })
+        Lead.find({ assignTo: userId })
           .select("leadName companyName phoneNumber email status createdAt updatedAt")
           .sort({ createdAt: -1 }),
-        // Closed Won/Lost deals are already-finished outcomes — same reasoning
-        // as excluding Converted/Rejected leads above. This also keeps deals
-        // Admin already closed out of the picker entirely, since linking an
-        // already-decided deal to a future target makes no sense and previously
-        // let Admin's own wins inflate "Total Deals"/the Won highlight here.
-        Deal.find({ assignedTo: userId, stage: { $nin: ["Closed Won", "Closed Lost"] } })
+        Deal.find({ assignedTo: userId })
           .select("dealName dealTitle stage value currency companyName phoneNumber email createdAt updatedAt wonAt convertedAt convertedBy stageHistory lossReason lossNotes stageLostAt")
           .populate("convertedBy", "firstName lastName")
           .populate(STAGE_HISTORY_MOVER_POPULATE)
           .sort({ createdAt: -1 }),
+        Target.find({ salesPerson: userId, endDate: { $gte: new Date() } }).select("linkedLeads linkedDeals convertedLeadDeals"),
+        Task.find({ assignedTo: userId, status: { $ne: "Completed" } }).select("leadRef dealRef leadRefs dealRefs")
       ]);
+
+      const inTargetLeadIds = new Set();
+      const inTargetDealIds = new Set();
+      activeTargets.forEach(t => {
+        (t.linkedLeads || []).forEach(id => inTargetLeadIds.add(String(id._id || id)));
+        (t.linkedDeals || []).forEach(id => inTargetDealIds.add(String(id._id || id)));
+        (t.convertedLeadDeals || []).forEach(id => inTargetDealIds.add(String(id._id || id)));
+      });
+
+      const inTaskLeadIds = new Set();
+      const inTaskDealIds = new Set();
+      pendingTasks.forEach(t => {
+        if (t.leadRef) inTaskLeadIds.add(String(t.leadRef._id || t.leadRef));
+        if (t.dealRef) inTaskDealIds.add(String(t.dealRef._id || t.dealRef));
+        (t.leadRefs || []).forEach(id => inTaskLeadIds.add(String(id._id || id)));
+        (t.dealRefs || []).forEach(id => inTaskDealIds.add(String(id._id || id)));
+      });
 
       // Group leads by status
       const leadsByStatus = leads.reduce((acc, l) => {
@@ -521,6 +713,8 @@ export default {
             email: l.email,
             status: l.status,
             createdAt: l.createdAt,
+            inActiveTarget: inTargetLeadIds.has(String(l._id)),
+            inActiveTask: inTaskLeadIds.has(String(l._id)),
           })),
         },
         deals: {
@@ -546,6 +740,8 @@ export default {
             salesPersonConverted: d.salesPersonConverted,
             convertedByName: d.convertedByName,
             takenByAdminName: d.takenByAdminName,
+            inActiveTarget: inTargetDealIds.has(String(d._id)),
+            inActiveTask: inTaskDealIds.has(String(d._id)),
           })),
         },
       });
@@ -623,10 +819,37 @@ export default {
   // Admin: update target
   updateTarget: async (req, res) => {
     try {
-      if (req.user.role?.name !== "Admin") {
-        return res.status(403).json({ message: "Access denied: Admins only" });
-      }
       const { Target, Notification } = getModels(req);
+      const isAdmin = req.user.role?.name === "Admin";
+      
+      const existing = await Target.findById(req.params.id).select("startDate endDate salesPerson status").lean();
+      if (!existing) return res.status(404).json({ message: "Target not found" });
+
+      if (!isAdmin && String(existing.salesPerson) !== String(req.user._id)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      let updatePayload = { ...req.body };
+
+      if (!isAdmin) {
+        updatePayload = {
+          status: req.body.status,
+          inProcessNote: req.body.inProcessNote,
+        };
+
+        if (req.body.status === "Rejected") {
+          updatePayload.status = existing.status;
+          updatePayload.rejectionRequested = true;
+          updatePayload.rejectionReason = req.body.rejectionReason || "";
+        }
+        
+        if (req.body.status === "In Hold") {
+          updatePayload.status = existing.status;
+          updatePayload.holdRequested = true;
+          updatePayload.holdReason = req.body.holdReason || "";
+          updatePayload.holdRequestedAt = new Date();
+        }
+      }
       const { startDate, endDate } = req.body;
       let endDateChanged = false;
       if (startDate || endDate) {
@@ -639,17 +862,15 @@ export default {
         );
         if (dateError) return res.status(400).json({ message: dateError });
 
-        // A changed End Date invalidates any reminder/due-today/expiry already sent
-        // for the old deadline — reset so the cron re-evaluates the new one.
-        if (endDate && new Date(endDate).getTime() !== new Date(existing.endDate).getTime()) {
+        if (isAdmin && endDate && new Date(endDate).getTime() !== new Date(existing.endDate).getTime()) {
           endDateChanged = true;
-          req.body.reminderSentAt = null;
-          req.body.dueTodaySentAt = null;
-          req.body.expiredAt = null;
+          updatePayload.reminderSentAt = null;
+          updatePayload.dueTodaySentAt = null;
+          updatePayload.expiredAt = null;
         }
       }
 
-      const updated = await Target.findByIdAndUpdate(req.params.id, req.body, {
+      const updated = await Target.findByIdAndUpdate(req.params.id, updatePayload, {
         new: true,
         runValidators: true,
       }).populate("salesPerson", "firstName lastName email")
@@ -668,13 +889,51 @@ export default {
 
       const adminName = `${req.user.firstName} ${req.user.lastName}`;
       const updDescSuffix = updated.description?.trim() ? ` Message from admin: "${updated.description.trim()}"` : "";
-      await createNotification(Notification, {
-        userId: updated.salesPerson._id,
-        title: "Target Updated",
-        message: `Admin ${adminName} updated your target${detailSuffix}.${updDescSuffix} Check My Targets for the latest details.`,
-        type: "target",
-        meta: { targetId: String(updated._id), targetUpdated: true },
-      });
+      
+      if (isAdmin) {
+        await createNotification(Notification, {
+          userId: updated.salesPerson._id,
+          title: "Target Updated",
+          message: `Admin ${adminName} updated your target${detailSuffix}.${updDescSuffix} Check My Targets for the latest details.`,
+          type: "target",
+          meta: { targetId: String(updated._id), targetUpdated: true },
+        });
+      } else {
+        // Salesperson updated their own target. Notify admin if they requested rejection or added note
+        const { User, Role } = getModels(req);
+        const admins = await findAdmins(User, Role);
+        const rejectionRequested = updatePayload.rejectionRequested;
+        const holdRequested = updatePayload.holdRequested;
+        const statusChanged = req.body.status && req.body.status !== existing.status && !rejectionRequested && !holdRequested;
+        
+        for (const admin of admins) {
+          if (rejectionRequested) {
+            await createNotification(Notification, {
+              userId: admin._id,
+              title: "Target Rejection Requested",
+              message: `${adminName} requested to reject target${detailSuffix}. Reason: ${req.body.rejectionReason}`,
+              type: "target",
+              meta: { targetId: String(updated._id), targetRejectionRequested: true },
+            });
+          } else if (holdRequested) {
+            await createNotification(Notification, {
+              userId: admin._id,
+              title: "Target Hold Requested",
+              message: `${adminName} requested to place target${detailSuffix} on hold. Reason: ${req.body.holdReason}`,
+              type: "target",
+              meta: { targetId: String(updated._id), targetHoldRequested: true },
+            });
+          } else if (statusChanged) {
+            await createNotification(Notification, {
+              userId: admin._id,
+              title: "Target Status Changed",
+              message: `${adminName} changed target status to ${req.body.status}. Note: ${req.body.inProcessNote || "None"}`,
+              type: "target",
+              meta: { targetId: String(updated._id), targetStatusChanged: true },
+            });
+          }
+        }
+      }
 
       if (endDateChanged) {
         checkTargetDeadlineNow(updated._id, req.tenantDB).catch(() => {});
@@ -683,6 +942,112 @@ export default {
       res.status(200).json({ message: "Target updated", data: updated });
     } catch (err) {
       console.error("Error updating target:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: approve or deny a target rejection request
+  approveRejection: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Target, Notification } = getModels(req);
+      const { action } = req.body; // "approve" or "deny"
+      const target = await Target.findById(req.params.id);
+      if (!target) return res.status(404).json({ message: "Target not found" });
+
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+      let updatePayload = {};
+      let message = "";
+
+      if (action === "approve") {
+        updatePayload = {
+          status: "Rejected",
+          rejectionRequested: false,
+          rejectionApprovedAt: new Date(),
+        };
+        message = `Admin ${adminName} approved your request to reject target.`;
+      } else {
+        updatePayload = {
+          rejectionRequested: false,
+          rejectionReason: "",
+        };
+        message = `Admin ${adminName} denied your request to reject target.`;
+      }
+
+      const updated = await Target.findByIdAndUpdate(req.params.id, updatePayload, { new: true })
+        .populate("salesPerson", "firstName lastName email");
+
+      // Notify the salesperson
+      await createNotification(Notification, {
+        userId: target.salesPerson._id,
+        title: action === "approve" ? "Target Rejection Approved" : "Target Rejection Denied",
+        message,
+        type: "target",
+        meta: { targetId: String(target._id), targetRejectionAction: action },
+      });
+
+      notifyTargetUser(String(target.salesPerson), "targets_refresh", {});
+      res.status(200).json({ message: `Rejection ${action}d successfully`, data: updated });
+    } catch (err) {
+      console.error("Error handling rejection request:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Admin: approve or deny a hold request
+  approveHold: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Target, Notification } = getModels(req);
+      const { action, extendDueDate } = req.body; // "approve" or "deny"
+      const target = await Target.findById(req.params.id);
+      if (!target) return res.status(404).json({ message: "Target not found" });
+
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+      let updatePayload = {};
+      let message = "";
+
+      if (action === "approve") {
+        updatePayload = {
+          status: "In Hold",
+          holdRequested: false,
+          holdApprovedAt: new Date(),
+        };
+        if (extendDueDate) {
+          updatePayload.endDate = new Date(extendDueDate);
+          updatePayload.reminderSentAt = null;
+          updatePayload.dueTodaySentAt = null;
+          updatePayload.expiredAt = null;
+        }
+        message = `Admin ${adminName} approved your request to place target on hold.`;
+      } else {
+        updatePayload = {
+          holdRequested: false,
+          holdReason: "",
+        };
+        message = `Admin ${adminName} denied your request to place target on hold.`;
+      }
+
+      const updated = await Target.findByIdAndUpdate(req.params.id, updatePayload, { new: true })
+        .populate("salesPerson", "firstName lastName email");
+
+      // Notify the salesperson
+      await createNotification(Notification, {
+        userId: target.salesPerson._id,
+        title: action === "approve" ? "Target Hold Approved" : "Target Hold Denied",
+        message,
+        type: "target",
+        meta: { targetId: String(target._id), targetHoldAction: action },
+      });
+
+      notifyTargetUser(String(target.salesPerson), "targets_refresh", {});
+      res.status(200).json({ message: `Hold ${action}d successfully`, data: updated });
+    } catch (err) {
+      console.error("Error handling hold request:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },
@@ -762,6 +1127,22 @@ export default {
         const admins = await findAdmins(User, Role);
         admins.forEach(a => notifyTargetUser(String(a._id), "targets_refresh", {}));
       } catch (_) {}
+
+      // Clean up related notifications
+      const { Notification } = getModels(req);
+      let objectId = null;
+      try { objectId = new mongoose.Types.ObjectId(req.params.id); } catch {}
+      const query = objectId
+        ? { $or: [{ "meta.targetId": req.params.id }, { "meta.targetId": objectId }] }
+        : { "meta.targetId": req.params.id };
+
+      const relatedNotifs = await Notification.find(query).select("_id userId");
+      if (relatedNotifs.length > 0) {
+        const notifIds = relatedNotifs.map((n) => n._id);
+        await Notification.deleteMany({ _id: { $in: notifIds } });
+        // The targets_refresh event above will typically cause the client to refetch anyway,
+        // but we can also emit the exact deleted event if needed.
+      }
 
       res.status(200).json({ message: "Target deleted successfully" });
     } catch (err) {
@@ -1058,6 +1439,33 @@ export default {
     }
   },
 
+  // Admin: mark a reason note as read (resolved) without reassigning
+  markReasonNoteRead: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied" });
+      const { Target } = getModels(req);
+      const { noteIdx } = req.params;
+
+      const target = await Target.findById(req.params.id);
+      if (!target) return res.status(404).json({ message: "Target not found" });
+
+      const rn = target.reasonNotes[Number(noteIdx)];
+      if (!rn) return res.status(404).json({ message: "Reason note not found" });
+
+      target.reasonNotes[Number(noteIdx)].status = "resolved";
+      target.reasonNotes[Number(noteIdx)].resolvedAt = new Date();
+      await target.save();
+
+      res.status(200).json({
+        message: "Marked as read",
+        data: { _id: String(target._id), reasonNotes: target.reasonNotes },
+      });
+    } catch (err) {
+      console.error("Error marking target reason note as read:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
   // Admin: get all pending reason notes across all targets
   getAllReasonNotes: async (req, res) => {
     try {
@@ -1187,52 +1595,27 @@ export default {
         await target.save();
         console.log("[reassignItem] Original target saved — item removed.");
 
-        // 2. Find or create a target for the new sales person
-        const today = new Date();
-        let receiverTarget = await Target.findOne({
-          salesPerson: reassignToUserId,
-          startDate:   { $lte: today },
-          endDate:     { $gte: today },
-        }).sort({ createdAt: -1 }).lean();
-
-        if (!receiverTarget) {
-          receiverTarget = await Target.findOne({ salesPerson: reassignToUserId })
-            .sort({ createdAt: -1 }).lean();
-        }
-
-        console.log("[reassignItem] receiverTarget found?", receiverTarget ? `YES — id: ${receiverTarget._id}` : "NO — will create new");
-
+        // 2. ALWAYS create a new target for the new sales person so it appears as "New"
         const resolvedEndDate = extendEndDate ? new Date(extendEndDate) : null;
 
-        if (receiverTarget) {
-          const updateOp = { $addToSet: {} };
-          if (rn.itemType === "lead") updateOp.$addToSet.linkedLeads = rn.itemId;
-          else updateOp.$addToSet.linkedDeals = rn.itemId;
-          // Reset the reminder guards whenever the deadline moves, so the cron
-          // treats this as a fresh deadline instead of one it already handled.
-          if (resolvedEndDate) updateOp.$set = { endDate: resolvedEndDate, reminderSentAt: null, dueTodaySentAt: null, expiredAt: null };
-          await Target.findByIdAndUpdate(receiverTarget._id, updateOp);
-          console.log("[reassignItem] Item added to existing target via $addToSet.", resolvedEndDate ? `EndDate extended to ${resolvedEndDate}` : "");
-        } else {
-          const createPayload = {
-            salesPerson:    reassignToUserId,
-            period:         target.period,
-            startDate:      target.startDate,
-            endDate:        resolvedEndDate || target.endDate,
-            // Set targets to 0 — admin can update later; avoids showing "0/1" with no items
-            targetLeads:    0,
-            targetDeals:    0,
-            targetCalls:    0,
-            targetMeetings: 0,
-            description:    `Assigned by admin — ${rn.itemType}: ${rn.itemName}`,
-            createdBy:      req.user._id,
-            linkedLeads:    rn.itemType === "lead" ? [rn.itemId] : [],
-            linkedDeals:    rn.itemType === "deal" ? [rn.itemId] : [],
-          };
-          console.log("[reassignItem] Creating new target with payload:", JSON.stringify(createPayload));
-          receiverTarget = await Target.create(createPayload);
-          console.log("[reassignItem] New target created — id:", String(receiverTarget._id));
-        }
+        const createPayload = {
+          salesPerson:    reassignToUserId,
+          period:         target.period,
+          startDate:      target.startDate,
+          endDate:        resolvedEndDate || target.endDate,
+          // Set targets to 0 — admin can update later; avoids showing "0/1" with no items
+          targetLeads:    0,
+          targetDeals:    0,
+          targetCalls:    0,
+          targetMeetings: 0,
+          description:    `Assigned by admin — ${rn.itemType}: ${rn.itemName}`,
+          createdBy:      req.user._id,
+          linkedLeads:    rn.itemType === "lead" ? [rn.itemId] : [],
+          linkedDeals:    rn.itemType === "deal" ? [rn.itemId] : [],
+        };
+        console.log("[reassignItem] Creating new target with payload:", JSON.stringify(createPayload));
+        const receiverTarget = await Target.create(createPayload);
+        console.log("[reassignItem] New target created — id:", String(receiverTarget._id));
 
         // 3. Notifications
         await createNotification(Notification, {
@@ -1341,35 +1724,18 @@ export default {
         if (dealIds.length) await Deal.updateMany({ _id: { $in: dealIds } }, { assignedTo: reassignToUserId, isActive: true });
         await Target.findByIdAndUpdate(targetLean._id, { $pullAll: { linkedLeads: leadIds, linkedDeals: dealIds } });
 
-        const today = new Date();
-        let receiverTarget = await Target.findOne({
-          salesPerson: reassignToUserId,
-          startDate:   { $lte: today },
-          endDate:     { $gte: today },
-        }).sort({ createdAt: -1 }).lean();
-        if (!receiverTarget) {
-          receiverTarget = await Target.findOne({ salesPerson: reassignToUserId }).sort({ createdAt: -1 }).lean();
-        }
-
-        if (receiverTarget) {
-          const updateOp = { $addToSet: {} };
-          if (leadIds.length) updateOp.$addToSet.linkedLeads = { $each: leadIds };
-          if (dealIds.length) updateOp.$addToSet.linkedDeals = { $each: dealIds };
-          if (resolvedEndDate) updateOp.$set = { endDate: resolvedEndDate, reminderSentAt: null, dueTodaySentAt: null, expiredAt: null };
-          await Target.findByIdAndUpdate(receiverTarget._id, updateOp);
-        } else {
-          receiverTarget = await Target.create({
-            salesPerson:    reassignToUserId,
-            period:         targetLean.period,
-            startDate:      targetLean.startDate,
-            endDate:        resolvedEndDate || targetLean.endDate,
-            targetLeads: 0, targetDeals: 0, targetCalls: 0, targetMeetings: 0,
-            description:    `Assigned by admin — reassigned from ${oldSalesName}'s target`,
-            createdBy:      req.user._id,
-            linkedLeads:    leadIds,
-            linkedDeals:    dealIds,
-          });
-        }
+        // ALWAYS create a new target for the new sales person so it appears as "New"
+        const receiverTarget = await Target.create({
+          salesPerson:    reassignToUserId,
+          period:         targetLean.period,
+          startDate:      targetLean.startDate,
+          endDate:        resolvedEndDate || targetLean.endDate,
+          targetLeads: 0, targetDeals: 0, targetCalls: 0, targetMeetings: 0,
+          description:    `Assigned by admin — reassigned from ${oldSalesName}'s target`,
+          createdBy:      req.user._id,
+          linkedLeads:    leadIds,
+          linkedDeals:    dealIds,
+        });
 
         const itemSummary = [...incompleteLeads.map((l) => l.leadName), ...incompleteDeals.map((d) => d.dealName || d.dealTitle)].join(", ");
 
@@ -1520,6 +1886,77 @@ export default {
       res.status(200).json({ message: "Removed from Admin Completed" });
     } catch (err) {
       console.error("Error dismissing target admin activity item:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Manual target reporting for calls
+  addCallReport: async (req, res) => {
+    try {
+      const { Target } = getModels(req);
+      const { id } = req.params;
+      const { companyName, callSummary, companyUrl } = req.body;
+      const recordingUrl = req.file ? req.file.path : null;
+
+      if (!companyName || !callSummary) {
+        return res.status(400).json({ message: "Company name and call summary are required" });
+      }
+
+      const target = await Target.findById(id);
+      if (!target) return res.status(404).json({ message: "Target not found" });
+
+      // Verify ownership or admin
+      if (String(target.salesPerson) !== String(req.user._id) && req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      target.reportedCalls.push({
+        companyName,
+        callSummary,
+        companyUrl,
+        recordingUrl,
+        addedBy: req.user._id,
+      });
+
+      await target.save();
+      res.status(200).json({ message: "Call report added successfully", target });
+    } catch (err) {
+      console.error("Error adding call report:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  // Manual target reporting for meetings
+  addMeetingReport: async (req, res) => {
+    try {
+      const { Target } = getModels(req);
+      const { id } = req.params;
+      const { companyName, meetingSummary, companyUrl } = req.body;
+      const screenshotUrl = req.file ? req.file.path : null;
+
+      if (!companyName || !meetingSummary) {
+        return res.status(400).json({ message: "Company name and meeting summary are required" });
+      }
+
+      const target = await Target.findById(id);
+      if (!target) return res.status(404).json({ message: "Target not found" });
+
+      if (String(target.salesPerson) !== String(req.user._id) && req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      target.reportedMeetings.push({
+        companyName,
+        meetingSummary,
+        companyUrl,
+        screenshotUrl,
+        addedBy: req.user._id,
+      });
+
+      await target.save();
+      res.status(200).json({ message: "Meeting report added successfully", target });
+    } catch (err) {
+      console.error("Error adding meeting report:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },

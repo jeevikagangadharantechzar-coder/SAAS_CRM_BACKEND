@@ -40,6 +40,8 @@ router.patch("/:id/status", adminOrAssigned, indexControllers.leadsController.up
 router.patch("/:id/reject", adminOnly, indexControllers.leadsController.rejectLead);
 router.patch("/:id/followup", protect, indexControllers.leadsController.updateFollowUpDate);
 router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);
+router.patch("/:id/followup-notes/:noteId", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.editFollowUpNote);
+router.delete("/:id/followup-notes/:noteId", adminOrAssigned, indexControllers.leadsController.deleteFollowUpNote);
 
 //  GENERIC ROUTE WITH :id LAST (catch-all for /:id)
 router.get("/getLead/:id", adminOrAssigned, indexControllers.leadsController.getLeadById);

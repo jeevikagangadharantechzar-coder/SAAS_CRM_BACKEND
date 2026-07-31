@@ -109,6 +109,10 @@ export const getPublicPlans = async () => {
   return SubscriptionPlan.getPublicPlans();
 };
 
+export const getLandingPagePlans = async () => {
+  return SubscriptionPlan.getLandingPagePlans();
+};
+
 export const getTenantSubscriptions = async ({ plan_status, plan_id, page = 1, limit = 10 }) => {
   const filter = {};
   if (plan_status) filter.plan_status = plan_status;

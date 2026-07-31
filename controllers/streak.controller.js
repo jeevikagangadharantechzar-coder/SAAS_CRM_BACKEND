@@ -36,7 +36,7 @@ function formatTime(date) {
 
 function calcWorkHours(loginHistory, rangeStart, rangeEnd) {
   let logsToConsider = loginHistory || [];
-  
+
   if (rangeStart && rangeEnd) {
     // Option 4: Only show for a single day, hide (—) for multiple days
     if (rangeStart.toDateString() !== rangeEnd.toDateString()) {
@@ -56,7 +56,7 @@ function calcWorkHours(loginHistory, rangeStart, rangeEnd) {
   if (!logsToConsider.length) return "—";
   const earliest = logsToConsider.reduce((e, l) => new Date(l.login) < new Date(e.login) ? l : e);
   const latestSession = logsToConsider.reduce((e, l) => new Date(l.login) > new Date(e.login) ? l : e);
-  
+
   const logouts = logsToConsider.filter(l => l.logout);
   let latestLogout = null;
   if (logouts.length > 0) {
@@ -66,9 +66,9 @@ function calcWorkHours(loginHistory, rangeStart, rangeEnd) {
   if (!latestSession.logout && (!latestLogout || new Date(latestSession.login) > new Date(latestLogout.logout))) {
     return `${formatTime(earliest.login)} - Ongoing`;
   }
-  
+
   if (!latestLogout) {
-      return `${formatTime(earliest.login)} - Ongoing`;
+    return `${formatTime(earliest.login)} - Ongoing`;
   }
 
   return `${formatTime(earliest.login)} - ${formatTime(latestLogout.logout)}`;
@@ -167,13 +167,13 @@ export default {
       ]);
 
       const leadsMap = {}; const dealsMap = {};
-      targetUsers.forEach(u => { 
-        const id = u._id.toString(); 
-        leadsMap[id] = { range: 0, cumulative: 0, seenRange: new Set() }; 
-        dealsMap[id] = { 
+      targetUsers.forEach(u => {
+        const id = u._id.toString();
+        leadsMap[id] = { range: 0, cumulative: 0, seenRange: new Set() };
+        dealsMap[id] = {
           rangeTotal: 0, cumTotal: 0, rangeQ: 0, rangeC: 0, cumQ: 0, cumC: 0,
           seenCum: new Set(), seenRange: new Set()
-        }; 
+        };
       });
       allLeads.forEach(lead => {
         const id = lead.assignTo?.toString();
@@ -191,13 +191,13 @@ export default {
       });
       allDeals.forEach(deal => {
         const id = deal.assignedTo?.toString(); if (!dealsMap[id]) return;
-        
+
         dealsMap[id].cumTotal++;
-        const d = new Date(deal.createdAt); 
+        const d = new Date(deal.createdAt);
         if (d >= rangeStart && d <= rangeEnd) dealsMap[id].rangeTotal++;
 
         const leadId = deal.leadId ? deal.leadId.toString() : deal._id.toString();
-        
+
         if (!dealsMap[id].seenCum.has(leadId)) {
           dealsMap[id].seenCum.add(leadId);
           dealsMap[id].cumC++;
@@ -208,7 +208,7 @@ export default {
           if (!dealsMap[id].seenRange.has(leadId)) {
             dealsMap[id].seenRange.add(leadId);
             dealsMap[id].rangeC++;
-            
+
             if (leadsMap[id] && !leadsMap[id].seenRange.has(leadId)) {
               leadsMap[id].range++;
               leadsMap[id].seenRange.add(leadId);
@@ -245,7 +245,7 @@ export default {
       // Primary: highest conversion rate (speed); Secondary: most leads total
       const sorted = rows.filter(r => r.totalLeads > 0 || r.cumulativeTotalLeads > 0).sort((a, b) => b.conversionRate !== a.conversionRate ? b.conversionRate - a.conversionRate : b.totalLeads - a.totalLeads);
       const stats = {
-        totalSalespeople: sorted.length, activeSalespeople: sorted.filter(r => r.conversionRate > 0).length,
+        totalSalespeople: sorted.length, activeSalespeople: sorted.filter(r => r.workHours && r.workHours !== "—").length,
         avgConversionRate: sorted.length ? Number((sorted.reduce((s, r) => s + r.conversionRate, 0) / sorted.length).toFixed(1)) : 0,
         totalLeads: sorted.reduce((s, r) => s + r.totalLeads, 0), totalConvertedLeads: sorted.reduce((s, r) => s + r.convertedLeads, 0), cumulativeTotalLeads: sorted.reduce((s, r) => s + r.cumulativeTotalLeads, 0),
       };

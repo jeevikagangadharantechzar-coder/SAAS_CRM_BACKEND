@@ -14,6 +14,11 @@ const targetSchema = new mongoose.Schema(
     },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
+    status: {
+      type: String,
+      enum: ["New", "In Progress", "In Hold", "Completed", "Rejected"],
+      default: "New",
+    },
     description: { type: String, default: "" },
     targetLeads: { type: Number, default: 0 },
     targetDeals: { type: Number, default: 0 },
@@ -53,9 +58,38 @@ const targetSchema = new mongoose.Schema(
         stageOrStatus: { type: String },
       },
     ],
+    reportedCalls: [
+      {
+        companyName: { type: String, required: true },
+        callSummary: { type: String, required: true },
+        companyUrl:  { type: String },
+        recordingUrl:{ type: String },
+        addedBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        addedAt:     { type: Date, default: Date.now },
+      }
+    ],
+    reportedMeetings: [
+      {
+        companyName:    { type: String, required: true },
+        meetingSummary: { type: String, required: true },
+        companyUrl:     { type: String },
+        screenshotUrl:  { type: String },
+        addedBy:        { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        addedAt:        { type: Date, default: Date.now },
+      }
+    ],
     reminderSentAt:   { type: Date, default: null },
     dueTodaySentAt:   { type: Date, default: null },
     expiredAt:        { type: Date, default: null },
+    inProcessNote: { type: String, trim: true, default: "" },
+    rejectionRequested: { type: Boolean, default: false },
+    rejectionReason: { type: String, trim: true, default: "" },
+    rejectionApprovedAt: { type: Date, default: null },
+    
+    holdRequested: { type: Boolean, default: false },
+    holdReason: { type: String, trim: true, default: "" },
+    holdRequestedAt: { type: Date, default: null },
+    holdSnapshotProgress: { type: Number, default: null },
   },
   { timestamps: true }
 );

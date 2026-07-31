@@ -130,6 +130,35 @@ const processTasks = async (models, tenantDB) => {
       console.error(`Task due-today error for task ${t._id}:`, e.message);
     }
   }
+
+  // Auto-completion hook: if all linked leads are Converted and all linked deals are Closed Won,
+  // mark the task as Completed (progress reaches 100%).
+  const openTasks = await Task.find({ status: { $ne: "Completed" }, archived: { $ne: true } })
+    .populate("leadRefs", "status")
+    .populate("dealRefs", "stage")
+    .lean();
+
+  for (const t of openTasks) {
+    try {
+      let is100Percent = true;
+      let hasLinks = false;
+      if (t.leadRefs && t.leadRefs.length > 0) {
+        hasLinks = true;
+        if (t.leadRefs.some((l) => l.status !== "Converted")) is100Percent = false;
+      }
+      if (t.dealRefs && t.dealRefs.length > 0) {
+        hasLinks = true;
+        if (t.dealRefs.some((d) => d.stage !== "Closed Won")) is100Percent = false;
+      }
+
+      // If it has at least one link and all links are completed, auto-move to Completed.
+      if (hasLinks && is100Percent) {
+        await Task.findByIdAndUpdate(t._id, { status: "Completed", completedAt: new Date() });
+      }
+    } catch (e) {
+      console.error(`Task auto-completion error for task ${t._id}:`, e.message);
+    }
+  }
 };
 
 // ── Per-lead/deal due-date reminders ────────────────────────────────────

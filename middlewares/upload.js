@@ -49,12 +49,12 @@ const AUDIO_EXTENSIONS = [
 
 //  Allow images + all common document types
 const fileFilter = (req, file, cb) => {
-  if (file.fieldname === "audio") {
+  if (file.fieldname === "audio" || file.fieldname === "recording") {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (file.mimetype.startsWith("audio/") || AUDIO_EXTENSIONS.includes(ext)) {
+    if (file.mimetype.startsWith("audio/") || file.mimetype.startsWith("video/") || AUDIO_EXTENSIONS.includes(ext)) {
       return cb(null, true);
     }
-    return cb(new Error(`Audio file type "${file.mimetype || ext}" not allowed.`), false);
+    return cb(new Error(`Audio/Video file type "${file.mimetype || ext}" not allowed.`), false);
   }
 
   const allowedMimes = [
