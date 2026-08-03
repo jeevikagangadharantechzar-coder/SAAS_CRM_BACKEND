@@ -23,7 +23,7 @@ export default {
     try {
       const { Lead, Deal, CallLog, BotHistory } = getModels(req);
       const { command, contactId, contactType } = req.body;
-      const userId   = req.user._id;
+      const userId = req.user._id;
       const userRole = req.user.role.name;
 
       if (contactId && contactType) {
@@ -95,7 +95,7 @@ export default {
   getSuggestions: async (req, res) => {
     try {
       const { Lead, Deal, BotHistory } = getModels(req);
-      const userId   = req.user._id;
+      const userId = req.user._id;
       const userRole = req.user.role.name;
 
       let leadQuery = { status: { $ne: "Converted" } };
@@ -136,7 +136,7 @@ export default {
       const BotHistory = models.BotHistory;
       if (!BotHistory) return res.status(400).json({ success: false, message: "Bot history unavailable in non-tenant mode" });
       const userId = req.user._id;
-      const limit  = parseInt(req.query.limit) || 50;
+      const limit = parseInt(req.query.limit) || 50;
       const history = await BotHistory.find({ userId }).sort({ createdAt: -1 }).limit(limit).lean();
       res.json({ success: true, count: history.length, data: history });
     } catch (err) {
@@ -150,15 +150,15 @@ async function initiateCall({ contactId, contactType, userId, userRole, res, Lea
 
   if (contactType === "lead") {
     const q = userRole !== "Admin" ? { _id: contactId, assignTo: userId } : { _id: contactId };
-    record   = await Lead.findOne(q);
-    name     = record?.leadName;
-    company  = record?.companyName;
+    record = await Lead.findOne(q);
+    name = record?.leadName;
+    company = record?.companyName;
     phoneRaw = record?.phoneNumber;
   } else {
     const q = userRole !== "Admin" ? { _id: contactId, assignedTo: userId } : { _id: contactId };
-    record   = await Deal.findOne(q);
-    name     = record?.dealName;
-    company  = record?.companyName;
+    record = await Deal.findOne(q);
+    name = record?.dealName;
+    company = record?.companyName;
     phoneRaw = record?.phoneNumber;
   }
 
@@ -172,13 +172,13 @@ async function initiateCall({ contactId, contactType, userId, userRole, res, Lea
   }
 
   const sessionId = uuidv4();
-  const logData   = {
+  const logData = {
     userId, callType: "whatsapp", phoneNumber, callStatus: "initiated",
     initiatedBy: "bot", sessionId, trackingMethod: "visibility",
     metadata: { contactType, source: contactType },
   };
   if (contactType === "lead") logData.leadId = contactId;
-  else                        logData.dealId  = contactId;
+  else logData.dealId = contactId;
 
   const callLog = new CallLog(logData);
   await callLog.save();
@@ -191,17 +191,17 @@ async function initiateCall({ contactId, contactType, userId, userRole, res, Lea
   const baseUrl = process.env.BACKEND_URL;
 
   return res.json({
-    success:    true,
-    message:    `Ready to call ${contactType === "lead" ? "Lead" : "Deal"}: ${name}`,
+    success: true,
+    message: `Ready to call ${contactType === "lead" ? "Lead" : "Deal"}: ${name}`,
     sourceType: contactType,
     lead: { id: record._id, name, company, phone: phoneNumber },
     callLog: { id: callLog._id, sessionId, phoneNumber },
     whatsappUrl: `https://wa.me/${phoneNumber}`,
-    dialerUrl:   `tel:${phoneNumber}`,
+    dialerUrl: `tel:${phoneNumber}`,
     tracking: {
       sessionId,
       startUrl: `${baseUrl}/api/calllogs/track/${sessionId}/start`,
-      endUrl:   `${baseUrl}/api/calllogs/track/${sessionId}/end`,
+      endUrl: `${baseUrl}/api/calllogs/track/${sessionId}/end`,
     },
   });
 }
