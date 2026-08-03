@@ -210,9 +210,11 @@ export default {
         }
       }
 
-      // Converted leads stay visible here for Admin only (read-only record-keeping copy).
+      // Converted leads stay visible here for Admin and Sales (own leads, via the
+      // assignTo scoping above) — anyone else with list access doesn't see them.
       // Rejected and Junk leads show in the pipeline/list.
-      const hiddenStatuses = req.user.role.name !== "Admin" ? ["Converted"] : [];
+      const canSeeConverted = ["Admin", "Sales"].includes(req.user.role.name);
+      const hiddenStatuses = canSeeConverted ? [] : ["Converted"];
       query.status = query.status && !hiddenStatuses.includes(query.status) ? query.status : { $nin: hiddenStatuses };
 
       // Filter by Active Task and Active Target
