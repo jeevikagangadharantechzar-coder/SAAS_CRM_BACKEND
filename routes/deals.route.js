@@ -76,6 +76,13 @@ router.patch(
   indexControllers.dealsController.updateDeal
 );
 
+// Edit Follow-up Time
+router.patch(
+  "/edit-followup-time/:id",
+  adminOrAssignedToDeal,
+  indexControllers.dealsController.editFollowUpTime
+);
+
 // Complete follow-up
 router.post(
   "/:id/complete-followup",
