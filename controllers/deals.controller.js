@@ -240,19 +240,6 @@ export default {
         } else {
           query.createdAt = { $gte: rangeStart, $lte: rangeEnd };
         }
-      } else if (!isAdmin) {
-        // Default (non-search) fetch for a sales person: previous-day Closed
-        // Won / Closed Lost deals stay out of the list — only today's wins
-        // and losses show at initial render. Older ones are only reachable
-        // through the Custom Range search above. Pending (still-open) deals
-        // always show regardless of age.
-        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-        query.$or = [
-          { stage: { $nin: ["Closed Won", "Closed Lost"] } },
-          { stage: "Closed Won", wonAt: { $gte: todayStart, $lte: todayEnd } },
-          { stage: "Closed Lost", lostDate: { $gte: todayStart, $lte: todayEnd } },
-        ];
       }
 
       const deals = await Deal.find(query)
