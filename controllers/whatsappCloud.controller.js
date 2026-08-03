@@ -104,25 +104,38 @@ async function findTenantByPhoneNumberId(phoneNumberId) {
 // Otherwise → return phone list for user to pick (then use confirmPhoneNumber to save)
 export async function connectEmbeddedSignup(req, res) {
   try {
-    const { code, phoneNumberId, wabaId } = req.body;
+    const { code, userToken, phoneNumberId, wabaId } = req.body;
 
-    if (!code) {
-      return res.status(400).json({ success: false, message: "Authorization code is required." });
+    if (!code && !userToken) {
+      return res.status(400).json({ success: false, message: "Authorization code or access token is required." });
     }
 
     // Exchange code → short-lived token (no redirect_uri — popup flow)
+    // OR use userToken directly (token flow fallback when no config_id)
     let shortToken;
-    try {
-      const { data } = await axios.get(`${GRAPH_API}/oauth/access_token`, {
-        params: { client_id: APP_ID, client_secret: APP_SECRET, code },
-      });
-      shortToken = data.access_token;
-    } catch (err) {
-      const msg = err.response?.data?.error?.message || "Failed to exchange authorization code";
-      return res.status(400).json({ success: false, message: msg });
+    if (code) {
+      try {
+        const { data } = await axios.get(`${GRAPH_API}/oauth/access_token`, {
+          params: { client_id: APP_ID, client_secret: APP_SECRET, code },
+        });
+        shortToken = data.access_token;
+      } catch (err) {
+        const msg = err.response?.data?.error?.message || "Failed to exchange authorization code";
+        return res.status(400).json({ success: false, message: msg });
+      }
+    } else {
+      shortToken = userToken;
     }
 
-    const { token: longToken, expiresAt } = await getLongLivedToken(shortToken);
+    let longToken = shortToken;
+    let expiresAt = null;
+    try {
+      const result = await getLongLivedToken(shortToken);
+      longToken = result.token;
+      expiresAt = result.expiresAt;
+    } catch (err) {
+      console.warn("getLongLivedToken failed, using short-lived token:", err.response?.data?.error?.message || err.message);
+    }
 
     // ── Case 1: Embedded Signup gave us phoneNumberId + wabaId directly ──
     if (phoneNumberId && wabaId) {

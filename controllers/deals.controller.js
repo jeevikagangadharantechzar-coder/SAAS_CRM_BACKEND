@@ -240,19 +240,6 @@ export default {
         } else {
           query.createdAt = { $gte: rangeStart, $lte: rangeEnd };
         }
-      } else if (!isAdmin) {
-        // Default (non-search) fetch for a sales person: previous-day Closed
-        // Won / Closed Lost deals stay out of the list — only today's wins
-        // and losses show at initial render. Older ones are only reachable
-        // through the Custom Range search above. Pending (still-open) deals
-        // always show regardless of age.
-        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-        query.$or = [
-          { stage: { $nin: ["Closed Won", "Closed Lost"] } },
-          { stage: "Closed Won", wonAt: { $gte: todayStart, $lte: todayEnd } },
-          { stage: "Closed Lost", lostDate: { $gte: todayStart, $lte: todayEnd } },
-        ];
       }
 
       const deals = await Deal.find(query)
@@ -689,6 +676,58 @@ export default {
 
       res.status(200).json({ message: "Follow-up scheduled successfully", deal: updatedDeal });
     } catch (err) { console.error("Schedule follow-up error:", err); res.status(500).json({ message: err.message }); }
+  },
+
+  editFollowUpTime: async (req, res) => {
+    try {
+      const { Deal } = getModels(req);
+      const { id } = req.params;
+      const { newTime, editReason } = req.body;
+      const deal = await Deal.findById(id);
+      
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const assignedToId = deal.assignedTo?._id?.toString() || deal.assignedTo?.toString();
+      if (req.user.role.name !== "Admin" && assignedToId !== req.user._id.toString())
+        return res.status(403).json({ message: "Access denied" });
+        
+      if (!deal.followUpDate) return res.status(400).json({ message: "No active follow-up to edit" });
+      if (!newTime) return res.status(400).json({ message: "New time is required" });
+      if (!editReason || !editReason.trim()) return res.status(400).json({ message: "Edit reason is required" });
+
+      const parsedDate = new Date(newTime);
+      if (isNaN(parsedDate.getTime())) return res.status(400).json({ message: "Invalid date format" });
+
+      // Verify it's on the same day
+      const oldDate = new Date(deal.followUpDate);
+      if (
+        oldDate.getFullYear() !== parsedDate.getFullYear() ||
+        oldDate.getMonth() !== parsedDate.getMonth() ||
+        oldDate.getDate() !== parsedDate.getDate()
+      ) {
+        return res.status(400).json({ message: "You can only change the time, not the date." });
+      }
+
+      const updatedDeal = await Deal.findByIdAndUpdate(id, {
+        followUpDate: parsedDate,
+        lastReminderAt: null, // Reset reminder
+        followUpHistory: [...(deal.followUpHistory || []), {
+          date: new Date(),
+          followUpDate: parsedDate,
+          followUpComment: deal.followUpComment,
+          changedBy: req.user._id,
+          action: "Updated",
+          notes: editReason.trim()
+        }],
+        updatedAt: new Date(),
+      }, { new: true })
+        .populate("assignedTo", "firstName lastName email")
+        .populate("followUpHistory.changedBy", "firstName lastName email");
+
+      res.status(200).json({ message: "Follow-up time updated successfully", deal: updatedDeal });
+    } catch (err) {
+      console.error("Edit follow-up time error:", err);
+      res.status(500).json({ message: err.message });
+    }
   },
 
   deleteDeal: async (req, res) => {
