@@ -17,6 +17,9 @@ router.get("/pending", indexControllers.leadsController.getPendingLeads);
 router.get("/missed-followups", indexControllers.leadsController.getMissedFollowUps);
 router.get("/rejected", adminOnly, indexControllers.leadsController.getRejectedLeads);
 router.post("/rejected/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteRejectedLeads);
+router.get("/trash", adminOnly, indexControllers.leadsController.getTrashLeads);
+router.post("/trash/bulk-restore", adminOnly, indexControllers.leadsController.bulkRestoreLeads);
+router.post("/trash/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteTrashLeads);
 
 //  IMPORT / EXPORT ROUTES
 router.get("/export", indexControllers.leadsController.exportLeads);
@@ -38,6 +41,8 @@ router.delete("/deleteLead/:id", adminOrAssigned, indexControllers.leadsControll
 router.patch("/:id/convert", adminOrAssigned, indexControllers.leadsController.convertLeadToDeal);
 router.patch("/:id/status", adminOrAssigned, indexControllers.leadsController.updateLeadStatus);
 router.patch("/:id/reject", adminOnly, indexControllers.leadsController.rejectLead);
+router.patch("/:id/trash", adminOnly, indexControllers.leadsController.trashLead);
+router.patch("/:id/restore", adminOnly, indexControllers.leadsController.restoreLead);
 router.patch("/:id/followup", protect, indexControllers.leadsController.updateFollowUpDate);
 router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);
 router.patch("/:id/followup-notes/:noteId", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.editFollowUpNote);

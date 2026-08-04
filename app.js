@@ -58,6 +58,9 @@ import "./cron/targetCron.js";
 // Task management due-date reminder cron
 import "./cron/taskCron.js";
 
+// Trash auto-purge cron (30-day retention for trashed leads/deals)
+import "./cron/trashCron.js";
+
 // Socket
 import { initSocket } from "./realtime/socket.js";
 import { initSuperAdminSocket } from "./realtime/superAdminSocket.js";

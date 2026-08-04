@@ -38,6 +38,12 @@ const leadSchema = new mongoose.Schema(
     rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     rejectedAt:       { type: Date, default: null },
 
+    // Admin-only soft-hide: trashed leads are excluded from getAllLead but
+    // never deleted, so the record stays intact for anyone querying the DB directly.
+    // trashedAt anchors the 30-day auto-purge window (cron/trashCron.js).
+    trash:     { type: Boolean, default: false },
+    trashedAt: { type: Date, default: null },
+
     // Who actually performed the lead→deal conversion — only set when the
     // converted lead keeps a read-only copy here (currently: admin conversions).
     convertedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
