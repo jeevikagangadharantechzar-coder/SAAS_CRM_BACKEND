@@ -1033,56 +1033,105 @@ const leads = await leadQuery;
       const allowedStatuses = ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"];
       const results = { created: 0, failed: 0, errors: [] };
 
+      // Resolve all users and the round-robin starting point once, up front,
+      // instead of re-querying per row (which was the bottleneck at scale).
+      const users = await User
+        .find({})
+        .populate("role", "name")
+        .select("_id email role createdAt")
+        .sort({ createdAt: 1, _id: 1 })
+        .lean();
+
+      const salesUsers = users.filter((u) => {
+        const roleName =
+          typeof u.role === "string" ? u.role : u.role?.name || u.role?.roleName || "";
+        return String(roleName).toLowerCase() === "sales";
+      });
+
+      const emailToUserId = new Map(
+        users.filter((u) => u.email).map((u) => [String(u.email).toLowerCase(), u._id])
+      );
+
+      let roundRobinIdx = -1;
+      if (salesUsers.length) {
+        const lastLead = await Lead.findOne({ assignTo: { $ne: null } })
+          .sort({ createdAt: -1, _id: -1 })
+          .select("assignTo")
+          .lean();
+        roundRobinIdx = lastLead?.assignTo
+          ? salesUsers.findIndex((u) => u._id.toString() === lastLead.assignTo.toString())
+          : -1;
+      }
+      const nextSalesUser = () => {
+        if (!salesUsers.length) return null;
+        roundRobinIdx = (roundRobinIdx + 1) % salesUsers.length;
+        return salesUsers[roundRobinIdx]._id;
+      };
+
+      const ops = [];
+      const opRowNums = [];
+
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i] || {};
         const rowNum = i + 2; // +1 for header row, +1 for 1-indexing
 
-        try {
-          const leadName    = String(row.leadName || "").trim();
-          const companyName = String(row.companyName || "").trim();
-          const phoneNumber = String(row.phoneNumber || "").trim();
+        const leadName    = String(row.leadName || "").trim();
+        const companyName = String(row.companyName || "").trim();
+        const phoneNumber = String(row.phoneNumber || "").trim();
 
-          if (!leadName || !companyName || !phoneNumber) {
-            results.failed++;
-            results.errors.push(`Row ${rowNum}: leadName, companyName, and phoneNumber are required`);
-            continue;
-          }
-
-          let assignTo = null;
-          const assignToEmail = String(row.assignTo || "").trim();
-          if (assignToEmail) {
-            const matchedUser = await User.findOne({ email: new RegExp(`^${assignToEmail}$`, "i") });
-            assignTo = matchedUser?._id || null;
-          }
-          if (!assignTo) assignTo = await pickNextSalesUser(User, Lead);
-
-          const status = allowedStatuses.includes(row.status) ? row.status : "Cold";
-          const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
-            ? new Date(row.followUpDate)
-            : new Date();
-          const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
-
-          const lead = new Lead({
-            leadName, companyName, phoneNumber,
-            email:       String(row.email || "").trim(),
-            source:      String(row.source || "").trim(),
-            clientType,
-            industry:    String(row.industry || "").trim(),
-            requirement: String(row.requirement || "").trim(),
-            assignTo,
-            address:     String(row.address || "").trim(),
-            country:     String(row.country || "").trim(),
-            status,
-            notes:       String(row.notes || "").trim(),
-            followUpDate,
-            lastReminderAt: null,
-          });
-
-          await lead.save();
-          results.created++;
-        } catch (rowErr) {
+        if (!leadName || !companyName || !phoneNumber) {
           results.failed++;
-          results.errors.push(`Row ${rowNum}: ${rowErr.message}`);
+          results.errors.push(`Row ${rowNum}: leadName, companyName, and phoneNumber are required`);
+          continue;
+        }
+
+        let assignTo = null;
+        const assignToEmail = String(row.assignTo || "").trim();
+        if (assignToEmail) {
+          assignTo = emailToUserId.get(assignToEmail.toLowerCase()) || null;
+        }
+        if (!assignTo) assignTo = nextSalesUser();
+
+        const status = allowedStatuses.includes(row.status) ? row.status : "Cold";
+        const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
+          ? new Date(row.followUpDate)
+          : new Date();
+        const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
+
+        ops.push({
+          insertOne: {
+            document: {
+              leadName, companyName, phoneNumber,
+              email:       String(row.email || "").trim(),
+              source:      String(row.source || "").trim(),
+              clientType,
+              industry:    String(row.industry || "").trim(),
+              requirement: String(row.requirement || "").trim(),
+              assignTo,
+              address:     String(row.address || "").trim(),
+              country:     String(row.country || "").trim(),
+              status,
+              notes:       String(row.notes || "").trim(),
+              followUpDate,
+              lastReminderAt: null,
+            },
+          },
+        });
+        opRowNums.push(rowNum);
+      }
+
+      if (ops.length) {
+        try {
+          const bulkResult = await Lead.bulkWrite(ops, { ordered: false });
+          results.created += bulkResult.insertedCount || 0;
+        } catch (bulkErr) {
+          const writeErrors = bulkErr.writeErrors || [];
+          results.created += ops.length - writeErrors.length;
+          for (const we of writeErrors) {
+            results.failed++;
+            const rowNum = opRowNums[we.index];
+            results.errors.push(`Row ${rowNum}: ${we.errmsg || we.err?.errmsg || "Insert failed"}`);
+          }
         }
       }
 

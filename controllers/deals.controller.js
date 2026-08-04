@@ -1015,66 +1015,86 @@ export default {
       const allowedStages = ["Qualification", "Proposal Sent-Negotiation", "Invoice Sent", "Closed Won", "Closed Lost"];
       const results = { created: 0, failed: 0, errors: [] };
 
+      // Resolve all users once, up front, instead of a findOne per row.
+      const users = await User.find({}).select("_id email").lean();
+      const emailToUserId = new Map(
+        users.filter((u) => u.email).map((u) => [String(u.email).toLowerCase(), u._id])
+      );
+
+      const ops = [];
+      const opRowNums = [];
+
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i] || {};
         const rowNum = i + 2;
 
-        try {
-          const dealName    = String(row.dealName || "").trim();
-          const companyName = String(row.companyName || "").trim();
-          const phoneNumber = String(row.phoneNumber || "").trim();
+        const dealName    = String(row.dealName || "").trim();
+        const companyName = String(row.companyName || "").trim();
+        const phoneNumber = String(row.phoneNumber || "").trim();
 
-          if (!dealName || !phoneNumber || !companyName) {
-            results.failed++;
-            results.errors.push(`Row ${rowNum}: dealName, phoneNumber, and companyName are required`);
-            continue;
-          }
-
-          let assignedTo = null;
-          const assignedToEmail = String(row.assignedTo || "").trim();
-          if (assignedToEmail) {
-            const matchedUser = await User.findOne({ email: new RegExp(`^${assignedToEmail}$`, "i") });
-            assignedTo = matchedUser?._id || null;
-          }
-
-          const stage = allowedStages.includes(row.stage) ? row.stage : "Qualification";
-          const currency = String(row.currency || "INR").trim() || "INR";
-          const formattedValue = row.value && String(row.value).trim() !== "" ? formatDealValue(row.value, currency) : "0";
-          const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
-          const companySize = ["Small", "Medium", "Large", "Enterprise"].includes(row.companySize) ? row.companySize : undefined;
-          const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
-            ? new Date(row.followUpDate)
-            : null;
-
-          const deal = new Deal({
-            dealName, companyName, phoneNumber,
-            dealTitle:  String(row.dealTitle || "").trim(),
-            assignedTo,
-            value:      formattedValue,
-            currency,
-            clientType,
-            discountGiven: Number(row.discountGiven) || 0,
-            stage,
-            email:      String(row.email || "").trim(),
-            alternativeNumber: String(row.alternativeNumber || "").trim(),
-            alternativeEmail:  String(row.alternativeEmail || "").trim(),
-            source:     String(row.source || "").trim(),
-            companySize,
-            industry:   String(row.industry || "").trim(),
-            requirement: String(row.requirement || "").trim(),
-            address:    String(row.address || "").trim(),
-            country:    String(row.country || "").trim(),
-            notes:      String(row.notes || "").trim(),
-            followUpDate,
-            followUpComment: String(row.followUpComment || "").trim(),
-            stageHistory: [{ stage, movedAt: new Date(), movedBy: req.user._id }],
-          });
-
-          await deal.save();
-          results.created++;
-        } catch (rowErr) {
+        if (!dealName || !phoneNumber || !companyName) {
           results.failed++;
-          results.errors.push(`Row ${rowNum}: ${rowErr.message}`);
+          results.errors.push(`Row ${rowNum}: dealName, phoneNumber, and companyName are required`);
+          continue;
+        }
+
+        let assignedTo = null;
+        const assignedToEmail = String(row.assignedTo || "").trim();
+        if (assignedToEmail) {
+          assignedTo = emailToUserId.get(assignedToEmail.toLowerCase()) || null;
+        }
+
+        const stage = allowedStages.includes(row.stage) ? row.stage : "Qualification";
+        const currency = String(row.currency || "INR").trim() || "INR";
+        const formattedValue = row.value && String(row.value).trim() !== "" ? formatDealValue(row.value, currency) : "0";
+        const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
+        const companySize = ["Small", "Medium", "Large", "Enterprise"].includes(row.companySize) ? row.companySize : undefined;
+        const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
+          ? new Date(row.followUpDate)
+          : null;
+
+        ops.push({
+          insertOne: {
+            document: {
+              dealName, companyName, phoneNumber,
+              dealTitle:  String(row.dealTitle || "").trim(),
+              assignedTo,
+              value:      formattedValue,
+              currency,
+              clientType,
+              discountGiven: Number(row.discountGiven) || 0,
+              stage,
+              email:      String(row.email || "").trim(),
+              alternativeNumber: String(row.alternativeNumber || "").trim(),
+              alternativeEmail:  String(row.alternativeEmail || "").trim(),
+              source:     String(row.source || "").trim(),
+              companySize,
+              industry:   String(row.industry || "").trim(),
+              requirement: String(row.requirement || "").trim(),
+              address:    String(row.address || "").trim(),
+              country:    String(row.country || "").trim(),
+              notes:      String(row.notes || "").trim(),
+              followUpDate,
+              followUpComment: String(row.followUpComment || "").trim(),
+              stageHistory: [{ stage, movedAt: new Date(), movedBy: req.user._id }],
+            },
+          },
+        });
+        opRowNums.push(rowNum);
+      }
+
+      if (ops.length) {
+        try {
+          const bulkResult = await Deal.bulkWrite(ops, { ordered: false });
+          results.created += bulkResult.insertedCount || 0;
+        } catch (bulkErr) {
+          const writeErrors = bulkErr.writeErrors || [];
+          results.created += ops.length - writeErrors.length;
+          for (const we of writeErrors) {
+            results.failed++;
+            const rowNum = opRowNums[we.index];
+            results.errors.push(`Row ${rowNum}: ${we.errmsg || we.err?.errmsg || "Insert failed"}`);
+          }
         }
       }
 
