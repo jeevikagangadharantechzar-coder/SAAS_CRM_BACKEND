@@ -254,8 +254,11 @@ export default {
       let finalRows = sorted;
       if (!isAdmin) {
         const currentUserData = sorted.find(r => r.id === currentUserId);
-        const topPerformer = sorted.length > 0 ? sorted[0] : null;
-
+        
+        // Find the top performer based on highest volume of converted leads first
+        const sortedByLeads = [...sorted].sort((a, b) => b.convertedLeads !== a.convertedLeads ? b.convertedLeads - a.convertedLeads : b.conversionRate - a.conversionRate);
+        const topPerformer = sortedByLeads.length > 0 ? sortedByLeads[0] : null;
+        
         finalRows = [];
         if (topPerformer) finalRows.push(topPerformer);
         if (currentUserData && (!topPerformer || currentUserData.id !== topPerformer.id)) {
