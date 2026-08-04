@@ -220,6 +220,9 @@ export default {
       // them to see it on otherwise.
       query.stage = { $nin: ["Rejected"] };
 
+      // Trashed deals never show in the main list for anyone.
+      query.trash = { $ne: true };
+
       const { start, end } = req.query;
       const dealTypes = (req.query.dealType || "").split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -804,6 +807,148 @@ export default {
       res.status(200).json({ message: "Deal rejected", deal });
     } catch (error) {
       console.error("Error rejecting deal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: soft-hide a deal from the main list without deleting it.
+  trashDeal: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal } = getModels(req);
+      const deal = await Deal.findById(req.params.id);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+
+      deal.trash = true;
+      deal.trashedAt = new Date();
+      await deal.save();
+
+      res.status(200).json({ message: "Deal moved to trash", deal });
+    } catch (error) {
+      console.error("Error trashing deal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: restore a single trashed deal back to the main list.
+  restoreDeal: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal } = getModels(req);
+      const deal = await Deal.findById(req.params.id);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+
+      deal.trash = false;
+      deal.trashedAt = null;
+      await deal.save();
+
+      res.status(200).json({ message: "Deal restored", deal });
+    } catch (error) {
+      console.error("Error restoring deal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: dedicated list of trashed deals — search, filter, and paginate
+  // independently of the main Deals list. Mirrors getRejectedDeals.
+  getTrashDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal, User } = getModels(req);
+      const { search = "", assignee, page = 1, limit = 10 } = req.query;
+      const query = { trash: true };
+
+      if (search?.trim()) {
+        query.$or = [
+          { dealName:    { $regex: search, $options: "i" } },
+          { email:       { $regex: search, $options: "i" } },
+          { phoneNumber: { $regex: search, $options: "i" } },
+          { companyName: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      if (assignee && assignee !== "") {
+        if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
+          query.assignedTo = assignee;
+        } else {
+          const nameParts = assignee.split(" ");
+          const firstName = nameParts[0];
+          const lastName  = nameParts.slice(1).join(" ");
+          const userQuery = lastName
+            ? { firstName: { $regex: firstName, $options: "i" }, lastName: { $regex: lastName, $options: "i" } }
+            : { $or: [{ firstName: { $regex: firstName, $options: "i" } }, { lastName: { $regex: firstName, $options: "i" } }] };
+          const users   = await User.find(userQuery).select("_id");
+          const userIds = users.map((u) => u._id);
+          if (!userIds.length)
+            return res.status(200).json({ deals: [], totalDeals: 0, totalPages: 0, currentPage: Number(page) });
+          query.assignedTo = { $in: userIds };
+        }
+      }
+
+      const skip       = (page - 1) * limit;
+      const totalDeals = await Deal.countDocuments(query);
+      const deals      = await Deal.find(query)
+        .populate("assignedTo", "firstName lastName email")
+        .sort({ trashedAt: -1 })
+        .skip(skip)
+        .limit(Number(limit));
+
+      res.status(200).json({ deals, totalDeals, totalPages: Math.ceil(totalDeals / limit), currentPage: Number(page) });
+    } catch (error) {
+      console.error("Get trash deals error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: restore multiple trashed deals at once
+  bulkRestoreDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const result = await Deal.updateMany(
+        { _id: { $in: ids }, trash: true },
+        { $set: { trash: false, trashedAt: null } }
+      );
+
+      res.status(200).json({ message: "Deals restored", restoredCount: result.modifiedCount });
+    } catch (error) {
+      console.error("Bulk restore deals error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: permanently delete multiple trashed deals at once
+  bulkDeleteTrashDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal, Notification } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const trashIds = await Deal.find({ _id: { $in: ids }, trash: true }).distinct("_id");
+      await Notification.deleteMany({ "meta.dealId": { $in: trashIds.map(String) } });
+      await Deal.deleteMany({ _id: { $in: trashIds } });
+
+      res.status(200).json({ message: "Trashed deals deleted", deletedCount: trashIds.length });
+    } catch (error) {
+      console.error("Bulk delete trash deals error:", error);
       res.status(500).json({ message: error.message });
     }
   },

@@ -36,7 +36,12 @@ router.post("/bulk-import", adminOnly, indexControllers.dealsController.bulkImpo
 // routes, must come before the generic "/:id" routes below)
 router.get("/rejected", adminOnly, indexControllers.dealsController.getRejectedDeals);
 router.post("/rejected/bulk-delete", adminOnly, indexControllers.dealsController.bulkDeleteRejectedDeals);
+router.get("/trash", adminOnly, indexControllers.dealsController.getTrashDeals);
+router.post("/trash/bulk-restore", adminOnly, indexControllers.dealsController.bulkRestoreDeals);
+router.post("/trash/bulk-delete", adminOnly, indexControllers.dealsController.bulkDeleteTrashDeals);
 router.patch("/:id/reject", adminOnly, indexControllers.dealsController.rejectDeal);
+router.patch("/:id/trash", adminOnly, indexControllers.dealsController.trashDeal);
+router.patch("/:id/restore", adminOnly, indexControllers.dealsController.restoreDeal);
 
 // Get deal by ID
 router.get(
