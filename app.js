@@ -131,7 +131,7 @@ app.use((req, res, next) => {
       verify: (req, _res, buf) => { req.rawBody = buf; },
     })(req, res, next);
   } else {
-    express.json()(req, res, next);
+    express.json({ limit: "20mb" })(req, res, next);
   }
 });
 app.use(express.urlencoded({ extended: true }));
@@ -280,8 +280,11 @@ app.use((err, _req, res, _next) => {
   if (err.message?.startsWith("CORS policy")) {
     return res.status(403).json({ message: err.message });
   }
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ message: "Request payload too large" });
+  }
   console.error(" Server Error:", err.stack);
-  res.status(500).json({
+  res.status(err.status || err.statusCode || 500).json({
     message: "Server Error",
     error: process.env.NODE_ENV === "development" ? err.message : "Internal server error",
   });
