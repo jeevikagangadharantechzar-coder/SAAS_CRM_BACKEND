@@ -159,29 +159,54 @@ export default {
         userToken = longLived.access_token;
       }
 
-      // Fetch pages this user manages
-      const pages = await getUserPages(userToken);
-      if (!pages.length) {
-        return res.status(400).json({ success: false, message: "No Facebook Pages found. Make sure you are an Admin of the Facebook Page (or Business Manager that owns it) and grant all requested permissions." });
-      }
+      let selectedPage;
 
-      // If no pageId yet → return page list + userToken so frontend can pick without re-using the code
-      if (!pageId) {
+      if (pageId) {
+        // Step 2 — user selected a page; use the page's own access token (works for direct pages
+        // AND Business Manager "Add People" pages, because it was fetched in Step 1)
+        const { pageAccessToken, pageName, instagramId, instagramUsername } = req.body;
+        if (!pageAccessToken) {
+          return res.status(400).json({ success: false, message: "Page access token missing. Please reconnect Facebook." });
+        }
+        try {
+          // Verify the page token is valid and fetch any fresh metadata
+          const { data: pageData } = await axios.get(`${GRAPH_API}/${pageId}`, {
+            params: {
+              fields: "id,name,instagram_business_account{id,username}",
+              access_token: pageAccessToken,
+            },
+          });
+          selectedPage = {
+            id: pageData.id,
+            name: pageData.name || pageName,
+            access_token: pageAccessToken,
+            instagram_business_account: pageData.instagram_business_account || (instagramId ? { id: instagramId, username: instagramUsername } : null),
+          };
+        } catch (err) {
+          const msg = err.response?.data?.error?.message || "Failed to verify the selected Facebook Page.";
+          return res.status(400).json({ success: false, message: msg });
+        }
+      } else {
+        // Step 1 — fetch all pages so user can pick
+        const pages = await getUserPages(userToken);
+        if (!pages.length) {
+          return res.status(400).json({ success: false, message: "No Facebook Pages found. Make sure you are an Admin of the Facebook Page (or Business Manager that owns it) and grant all requested permissions." });
+        }
+
         return res.json({
           success: true,
           selectPage: true,
-          userToken,                          // frontend stores this, sends back on page selection
+          userToken,
           pages: pages.map(p => ({
             pageId: p.id,
             pageName: p.name,
+            pageAccessToken: p.access_token,
             hasInstagram: !!p.instagram_business_account,
+            instagramId: p.instagram_business_account?.id || null,
+            instagramUsername: p.instagram_business_account?.username || null,
           })),
         });
       }
-
-      // Find the chosen page
-      const selectedPage = pages.find(p => p.id === pageId);
-      if (!selectedPage) return res.status(400).json({ success: false, message: "Selected page not found in your Facebook account" });
 
       // Subscribe the page to our app's webhook for leadgen events
       try {
