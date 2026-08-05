@@ -6,6 +6,8 @@ const leadSchema = new mongoose.Schema(
     leadName:    { type: String, required: true },
     phoneNumber: { type: String, required: true },
     email:       { type: String },
+    alternatePhoneNumber: { type: String },
+    alternateEmail:       { type: String },
     source:      { type: String },
     sourceId:    { type: String, default: null, index: true },
     companyName: { type: String, required: true },

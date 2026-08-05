@@ -191,6 +191,11 @@ export default {
         andConditions.push({ $or: [{ followUpNotes: { $exists: false } }, { followUpNotes: { $size: 0 } }] });
       } else if (followUpStatus === "completed") {
         andConditions.push({ "followUpNotes.0": { $exists: true } });
+      } else if (followUpStatus === "today") {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+        query.followUpDate = { $gte: startOfToday, $lt: startOfTomorrow };
       }
 
       if (andConditions.length) query.$and = andConditions;
