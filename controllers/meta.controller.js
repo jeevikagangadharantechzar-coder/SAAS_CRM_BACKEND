@@ -19,6 +19,7 @@ import crypto from "crypto";
 import { getTenantModels } from "../models/tenant/index.js";
 import { isFeatureEnabled } from "../utils/planFeatures.js";
 import { notifyUser } from "../realtime/socket.js";
+import { pickNextSalesUser } from "../services/leadAssignment.js";
 
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 const APP_ID = process.env.META_APP_ID;
@@ -299,7 +300,7 @@ export default {
    */
   syncLeads: async (req, res) => {
     try {
-      const { MetaIntegration, Lead } = getTenantModels(req.tenantDB);
+      const { MetaIntegration, Lead, User } = getTenantModels(req.tenantDB);
 
       const integrations = await MetaIntegration.find({ status: "active" });
       if (!integrations.length) {
@@ -354,6 +355,7 @@ export default {
                 else if (leadData.platform === "facebook" || leadData.platform === "fb") source = "Facebook Ads";
                 else if (integration.instagramAccountId) source = "Instagram Ads"; // Fallback if platform is missing
 
+                const assignTo = await pickNextSalesUser(User, Lead);
                 await Lead.create({
                   leadName: name,
                   email,
@@ -361,6 +363,7 @@ export default {
                   companyName: company,
                   source,
                   status: "Cold",
+                  assignTo,
                   notes: `Synced from Facebook Lead Form: ${form.name}`,
                   meta: {
                     leadgenId: leadData.id,
@@ -613,7 +616,8 @@ const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
         break;
       }
 
-      // ── Create lead ──────────────────────────────────────────────────────
+      // ── Create lead with round-robin assignment ───────────────────────────
+      const assignTo = await pickNextSalesUser(User, Lead);
       const lead = await Lead.create({
         leadName: fullName,
         email,
@@ -621,6 +625,7 @@ const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
         companyName: company,
         source,
         status: "Cold",
+        assignTo,
         notes: `Auto-captured from ${source}\nForm ID: ${form_id}\nPage: ${pageName}`,
         meta: {
           leadgenId: leadgen_id,
