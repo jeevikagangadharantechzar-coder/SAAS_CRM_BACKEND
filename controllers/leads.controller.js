@@ -157,6 +157,9 @@ export default {
 
       if (req.user.role.name !== "Admin") query.assignTo = req.user._id;
 
+      // Trashed leads never show in the main list for anyone.
+      query.trash = { $ne: true };
+
       // General Start/End Date filter — plain createdAt range. Either side
       // can be omitted independently; omitting both leaves every record visible.
     if (!isOverallLead && (start || end)) {
@@ -913,6 +916,148 @@ const leads = await leadQuery;
       res.status(200).json({ message: "Lead rejected", lead });
     } catch (error) {
       console.error("Error rejecting lead:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: soft-hide a lead from the main list without deleting it.
+  trashLead: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead } = getModels(req);
+      const lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      lead.trash = true;
+      lead.trashedAt = new Date();
+      await lead.save();
+
+      res.status(200).json({ message: "Lead moved to trash", lead });
+    } catch (error) {
+      console.error("Error trashing lead:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: restore a single trashed lead back to the main list.
+  restoreLead: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead } = getModels(req);
+      const lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      lead.trash = false;
+      lead.trashedAt = null;
+      await lead.save();
+
+      res.status(200).json({ message: "Lead restored", lead });
+    } catch (error) {
+      console.error("Error restoring lead:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: dedicated list of trashed leads — search, filter, and paginate
+  // independently of the main Leads list. Mirrors getRejectedLeads.
+  getTrashLeads: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead, User } = getModels(req);
+      const { search = "", assignee, page = 1, limit = 10 } = req.query;
+      const query = { trash: true };
+
+      if (search?.trim()) {
+        query.$or = [
+          { leadName:    { $regex: search, $options: "i" } },
+          { email:       { $regex: search, $options: "i" } },
+          { phoneNumber: { $regex: search, $options: "i" } },
+          { companyName: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      if (assignee && assignee !== "") {
+        if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
+          query.assignTo = assignee;
+        } else {
+          const nameParts = assignee.split(" ");
+          const firstName = nameParts[0];
+          const lastName  = nameParts.slice(1).join(" ");
+          const userQuery = lastName
+            ? { firstName: { $regex: firstName, $options: "i" }, lastName: { $regex: lastName, $options: "i" } }
+            : { $or: [{ firstName: { $regex: firstName, $options: "i" } }, { lastName: { $regex: firstName, $options: "i" } }] };
+          const users   = await User.find(userQuery).select("_id");
+          const userIds = users.map((u) => u._id);
+          if (!userIds.length)
+            return res.status(200).json({ leads: [], totalLeads: 0, totalPages: 0, currentPage: Number(page) });
+          query.assignTo = { $in: userIds };
+        }
+      }
+
+      const skip       = (page - 1) * limit;
+      const totalLeads = await Lead.countDocuments(query);
+      const leads      = await Lead.find(query)
+        .populate("assignTo", "firstName lastName email")
+        .sort({ trashedAt: -1 })
+        .skip(skip)
+        .limit(Number(limit));
+
+      res.status(200).json({ leads, totalLeads, totalPages: Math.ceil(totalLeads / limit), currentPage: Number(page) });
+    } catch (error) {
+      console.error("Get trash leads error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: restore multiple trashed leads at once
+  bulkRestoreLeads: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const result = await Lead.updateMany(
+        { _id: { $in: ids }, trash: true },
+        { $set: { trash: false, trashedAt: null } }
+      );
+
+      res.status(200).json({ message: "Leads restored", restoredCount: result.modifiedCount });
+    } catch (error) {
+      console.error("Bulk restore leads error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: permanently delete multiple trashed leads at once
+  bulkDeleteTrashLeads: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Lead, Notification } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const trashIds = await Lead.find({ _id: { $in: ids }, trash: true }).distinct("_id");
+      await Notification.deleteMany({ "meta.leadId": { $in: trashIds.map(String) } });
+      await Lead.deleteMany({ _id: { $in: trashIds } });
+
+      res.status(200).json({ message: "Trashed leads deleted", deletedCount: trashIds.length });
+    } catch (error) {
+      console.error("Bulk delete trash leads error:", error);
       res.status(500).json({ message: error.message });
     }
   },

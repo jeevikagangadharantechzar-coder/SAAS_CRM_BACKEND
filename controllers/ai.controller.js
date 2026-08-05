@@ -146,7 +146,7 @@ export default {
         typeof req.user.role === "object" ? req.user.role.name : req.user.role;
       const lower = message.toLowerCase().trim();
 
-      const { filter: dateFilter, label: dateLabel } = getDateFilter(lower);
+      let { filter: dateFilter, label: dateLabel } = getDateFilter(lower);
 
       const stopWords = [
         "what", "is", "the", "for", "who", "whom", "whose", "when", "where", "why", "which", "how", "handles", "of", "deal", "deals", "lead", "leads", "show", "find", "get", "search",
@@ -156,15 +156,16 @@ export default {
         "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
         "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
         "am", "is", "are", "was", "were", "has", "have", "had", "do", "does", "did", "with", "can", "could", "would", "will", "shall", "should", "those", "these", "this", "that", "there", "here",
-        "at", "it", "he", "she", "they", "we"
+        "at", "it", "he", "she", "they", "we", "please", "kindly", "tell", "give", "want", "see", "look", "display", "bring", "pull", "up"
       ];
 
       const queryKeywords = [
-        "pending", "completed", "active", "progress", "high", "priority", "urgent", "low", "medium", "task", "tasks",
-        "unpaid", "paid", "partially", "invoice", "invoices", "target", "targets", "deal", "deals", "lead", "leads",
-        "streak", "leaderboard", "proposal", "proposals", "top", "performer",
-        "success", "draft", "sent", "rejection", "rejected", "accepted", "approved", "reply",
-        "revenue", "sales", "earnings", "total", "analysis", "analytics", "report"
+        "pending", "completed", "active", "progress", "high", "priority", "urgent", "low", "medium", "task", "tasks", "todo", "jobs", "assignments", "plan", "plans", "schedule", "agenda",
+        "unpaid", "paid", "partially", "invoice", "invoices", "bills", "billing", "target", "targets", "goals", "quotas", "deal", "deals", "opportunity", "opportunities", "lead", "leads", "prospects",
+        "streak", "leaderboard", "proposal", "proposals", "top", "performer", "ranking", "best", "highest",
+        "success", "draft", "sent", "rejection", "rejected", "accepted", "approved", "reply", "failed", "dropped",
+        "revenue", "sales", "earnings", "total", "analysis", "analytics", "report", "income", "profit", "turnover",
+        "attachment", "attachments", "document", "documents", "file", "files"
       ];
 
       const getSearchTerms = (lower) => {
@@ -177,7 +178,7 @@ export default {
       };
 
       // --- 1. GREETINGS ---
-      if (lower === "hi" || lower === "hello" || lower === "hey") {
+      if (lower.match(/^(hi|hello|hey|greetings|good morning|good afternoon|good evening|sup|howdy|how are you|how are u|what's up|whats up|yo)\b/i) && lower.length < 40) {
         const responseMsg = "Hello, I am Ziya. How can I assist you today?";
         await saveChat(AiChat, userId, message, "greeting", responseMsg, 0);
         return res.json({ success: true, intent: "greeting", message: responseMsg, data: [] });
@@ -187,8 +188,12 @@ export default {
       if (
         lower.includes("what can you do") ||
         lower.includes("what is your use") ||
+        lower.includes("what are your capabilities") ||
+        lower.includes("what do you do") ||
+        lower.includes("who are you") ||
         lower.includes("uses") ||
-        lower.includes("use of you") ||
+        lower.includes("commands") ||
+        lower.includes("how to use") ||
         lower === "help"
       ) {
         const responseMsg = "Hello! I am Ziya, your CRM AI Assistant. I'm here to help you manage your CRM data. For best results, you can ask me things like: 'Show my pending tasks', 'Find unpaid invoices', 'List my active targets', or 'Show my deals'.";
@@ -261,14 +266,25 @@ export default {
         let intentName = "analysis";
         let returnData = [];
 
-        if (lower.includes("loss") || lower.includes("lost") || lower.includes("rejection")) {
+        const isLoss = lower.includes("loss") || lower.includes("lost") || lower.includes("rejection") || lower.includes("failed") || lower.includes("dropped") || lower.includes("cancelled") || lower.includes("abandoned");
+        const isWon = lower.includes("won") || lower.includes("win") || lower.includes("success") || lower.includes("achieved") || lower.includes("secured") || lower.includes("bagged");
+        
+        if (isLoss || (lower.includes("reason") && !isWon)) {
           query.stage = { $in: ["Closed Lost", "Rejected"] };
 
-          const reasonMatch = lower.match(/(?:reason|because of)\s+([a-z0-9\s]+?)(?:\s+(?:in|last|this|today|yesterday|week|month|year)|$)/i);
+          const reasonMatch = lower.match(/(?:reason is|reason was|reason for|reason by|reason|because of|due to|caused by|account of|result of|why|explanation for)\s+([a-z0-9\s]+?)(?:\s+(?:in|last|this|today|yesterday|week|month|year)|$)/i);
           let reasonString = null;
           if (reasonMatch && reasonMatch[1]) {
-            reasonString = reasonMatch[1].trim();
-            query.lossReason = { $regex: new RegExp(reasonString, 'i') };
+            let extracted = reasonMatch[1].trim();
+            // Clean up filler words that might get accidentally captured
+            extracted = extracted.replace(/deals?\s+lost/gi, "").trim();
+            
+            const ignoreList = ["for deals lost", "deals lost", "for", "deals", "all", "dor deal lost", "deal lost", "dor", "by"];
+            
+            if (extracted.length > 0 && !ignoreList.includes(extracted.toLowerCase())) {
+              reasonString = extracted;
+              query.lossReason = { $regex: new RegExp(reasonString, 'i') };
+            }
           }
 
           const lostDeals = await Deal.find(query).populate("assignedTo", "firstName lastName email").sort({ createdAt: -1 });
@@ -288,7 +304,7 @@ export default {
           responseMsg = `You have ${wonDeals.length} won deals${dateLabel} totaling ${totalWon.toLocaleString()}. For detailed win rates and metrics, please visit the Deal Analysis dashboard.`;
           intentName = "won-analysis";
           returnData = wonDeals;
-        } else if (lower.includes("deal") || lower.includes("pipeline")) {
+        } else if (lower.includes("deal") || lower.includes("pipeline") || lower.includes("opportunity") || lower.includes("opportunities") || lower.includes("funnel")) {
           const allDeals = await Deal.find(query).populate("assignedTo", "firstName lastName email").sort({ createdAt: -1 });
           const openDeals = allDeals.filter(d => !["Closed Won", "Closed Lost", "Rejected"].includes(d.stage));
           const totalOpenValue = openDeals.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
@@ -304,7 +320,7 @@ export default {
       }
 
       // --- 5. REVENUE / SALES ---
-      if (lower.includes("revenue") || lower.includes("earnings") || lower.includes("total sales")) {
+      if (lower.includes("revenue") || lower.includes("earnings") || lower.includes("total sales") || lower.includes("income") || lower.includes("profit") || lower.includes("turnover") || lower.includes("money made")) {
         if (Invoice) {
           const searchTerms = getSearchTerms(lower);
           let matchingUserIds = [];
@@ -349,13 +365,13 @@ export default {
       }
 
       // --- 6. CLIENT CLASSIFICATION (CLV) ---
-      if (lower.includes("upsell") || lower.includes("top value") || lower.includes("at risk") || lower.includes("dormant")) {
+      if (lower.includes("upsell") || lower.includes("upgrade") || lower.includes("cross-sell") || lower.includes("top value") || lower.includes("vip") || lower.includes("best client") || lower.includes("at risk") || lower.includes("churn") || lower.includes("danger") || lower.includes("dormant") || lower.includes("inactive") || lower.includes("ghosted")) {
         let classification = null;
         let responseMsg = "";
-        if (lower.includes("upsell")) classification = "Upsell";
-        else if (lower.includes("top value")) classification = "Top Value";
-        else if (lower.includes("at risk")) classification = "At Risk";
-        else if (lower.includes("dormant")) classification = "Dormant";
+        if (lower.includes("upsell") || lower.includes("upgrade") || lower.includes("cross-sell")) classification = "Upsell";
+        else if (lower.includes("top value") || lower.includes("vip") || lower.includes("best client")) classification = "Top Value";
+        else if (lower.includes("at risk") || lower.includes("churn") || lower.includes("danger")) classification = "At Risk";
+        else if (lower.includes("dormant") || lower.includes("inactive") || lower.includes("ghosted")) classification = "Dormant";
 
         if (classification && ClientLTV) {
           const clients = await ClientLTV.find({ classification }).sort({ totalRevenue: -1 });
@@ -368,7 +384,7 @@ export default {
       }
 
       // --- 6. LEADERBOARD & PERFORMANCE ---
-      if (lower.includes("leaderboard") || lower.includes("top performer") || lower.includes("top sales")) {
+      if (lower.includes("leaderboard") || lower.includes("top performer") || lower.includes("top sales") || lower.includes("best") || lower.includes("highest") || lower.includes("number one") || lower.includes("ranking") || lower.includes("mvp")) {
         // Mock req/res to call streakController.getLeaderboard
         const mockReq = {
           user: req.user,
@@ -379,6 +395,9 @@ export default {
         if (dateFilter && dateFilter.$gte) {
           mockReq.query.startDate = dateFilter.$gte;
           mockReq.query.endDate = dateFilter.$lte || new Date();
+        } else if (lower.includes("all time") || lower.includes("overall")) {
+          mockReq.query.allTime = true;
+          dateLabel = " of all time";
         }
 
         const leaderboardData = await new Promise((resolve) => {
@@ -390,8 +409,11 @@ export default {
         });
 
         if (leaderboardData && leaderboardData.success && leaderboardData.data && leaderboardData.data.length > 0) {
-          const top = leaderboardData.data[0]; // Leaderboard is already sorted!
-          const responseMsg = `The top performer${dateLabel} is ${top.name} with a ${top.conversionDisplay} conversion rate (${top.convertedLeads} deals won out of ${top.totalLeads} leads). To view the full leaderboard, click below.`;
+          let rows = leaderboardData.data;
+          // Resort by converted leads to find the true top performer for the chatbot
+          rows = [...rows].sort((a, b) => b.convertedLeads !== a.convertedLeads ? b.convertedLeads - a.convertedLeads : b.conversionRate - a.conversionRate);
+          const top = rows[0];
+          const responseMsg = `The top performer${dateLabel} is ${top.name} with a ${top.conversionDisplay} conversion rate (${top.convertedLeads} deals won out of ${top.totalLeads} leads).`;
 
           const formattedUser = {
             _id: top.id,
@@ -415,7 +437,7 @@ export default {
       }
 
       // --- 5. INVOICES ---
-      if (Invoice && (lower.includes("invoice") || lower.includes("invoices")) && !lower.includes("deal") && !lower.includes("deals")) {
+      if (Invoice && (lower.includes("invoice") || lower.includes("invoices") || lower.includes("bills") || lower.includes("billing") || lower.includes("payments") || lower.includes("receipts")) && !lower.includes("deal") && !lower.includes("deals")) {
         const searchTerms = getSearchTerms(lower);
 
         // If there's a search term (like a deal name "jack" or invoice number "TZI-59798" or salesperson "mary")
@@ -535,7 +557,7 @@ export default {
       }
 
       // --- 4. TASKS ---
-      if (Task && (lower.includes("task") || lower.includes("tasks"))) {
+      if (Task && (lower.includes("task") || lower.includes("tasks") || lower.includes("todo") || lower.includes("to-do") || lower.includes("jobs") || lower.includes("assignments") || lower.includes("work") || lower.includes("plan") || lower.includes("schedule") || lower.includes("agenda"))) {
         const searchTerms = getSearchTerms(lower);
 
         let matchingDeals = [];
@@ -668,7 +690,7 @@ export default {
       }
 
       // --- 5. TARGETS ---
-      if (Target && (lower.includes("target") || lower.includes("targets") || lower.includes("progress"))) {
+      if (Target && (lower.includes("target") || lower.includes("targets") || lower.includes("progress") || lower.includes("goals") || lower.includes("quotas") || lower.includes("objectives") || lower.includes("kpi"))) {
         const searchTerms = getSearchTerms(lower);
 
         let matchingUsers = [];
@@ -736,7 +758,7 @@ export default {
       }
 
       // --- 6. USERS / PROFILES ---
-      if (lower.includes("profile") || lower.includes("who am i") || lower.includes("user") || lower.includes("users")) {
+      if (lower.includes("profile") || lower.includes("who am i") || lower.includes("user") || lower.includes("users") || lower.includes("my account") || lower.includes("my details") || lower.includes("employees") || lower.includes("staff") || lower.includes("team members")) {
         if (lower.includes("who am i") || lower.includes("my profile")) {
           const user = await User.findById(userId).populate("role");
           const userRole = user.role?.name || "User";
@@ -757,7 +779,7 @@ export default {
       }
 
       // --- DEALS ---
-      if (lower.includes("deal") || lower.includes("deals") || lower.includes("dela") || lower.includes("delas")) {
+      if (lower.includes("deal") || lower.includes("deals") || lower.includes("dela") || lower.includes("delas") || lower.includes("opportunity") || lower.includes("opportunities") || lower.includes("funnel") || lower.includes("pipeline")) {
         const dealSearchTerms = getSearchTerms(lower);
         let matchingUsers = [];
         if (dealSearchTerms.length > 0) {
@@ -775,7 +797,7 @@ export default {
         if (/\bdeal/.test(lower) && !/\bdeals/.test(lower)) {
           const dealMatches = [...message.matchAll(/\bdeal\s*([A-Za-z0-9_-]+)/gi)];
           if (dealMatches.length > 0) {
-            const invalidNames = ["score", "tasks", "task", "invoice", "invoices", "activity", "activities", "history", "notes", "proposal", "proposals", "attachment", "attachments", "details", "info", "target", "targets", "meeting", "email", "follow", "status", "by", "for", "with", "of", "to", "in", "on", "at", "about", "called", "named", "reason", "lost", "why", "won", "rejected", "open", "closed", "qualification", "negotiation"];
+            const invalidNames = ["score", "tasks", "task", "invoice", "invoices", "activity", "activities", "history", "notes", "proposal", "proposals", "attachment", "attachments", "document", "documents", "file", "files", "details", "info", "target", "targets", "meeting", "email", "follow", "status", "by", "for", "with", "of", "to", "in", "on", "at", "about", "called", "named", "reason", "lost", "why", "won", "rejected", "open", "closed", "qualification", "negotiation"];
             const validMatches = dealMatches.filter(m => !invalidNames.includes(m[1].toLowerCase()));
             if (validMatches.length > 0) specificDealMatch = true;
           }
@@ -889,7 +911,7 @@ export default {
           if (searchTerm.length > 0) {
             let query = { dealName: { $regex: searchTerm, $options: "i" } };
 
-            const hasSubQuery = lower.includes("task") || lower.includes("proposal") || lower.includes("invoice") || lower.includes("balance") || lower.includes("due") || lower.includes("meeting") || lower.includes("email") || lower.includes("follow") || lower.includes("history") || lower.includes("note") || lower.includes("attachment") || lower.includes("target") || lower.includes("score") || lower.includes("detail");
+            const hasSubQuery = lower.includes("task") || lower.includes("proposal") || lower.includes("invoice") || lower.includes("balance") || lower.includes("due") || lower.includes("meeting") || lower.includes("email") || lower.includes("follow") || lower.includes("history") || lower.includes("note") || lower.includes("attachment") || lower.includes("document") || lower.includes("file") || lower.includes("target") || lower.includes("score") || lower.includes("detail");
 
             let specificMatchedStage = dealStages.find(s => s.keys.some(k => lower.includes(k)));
 
@@ -949,7 +971,7 @@ export default {
                 responseMsg = `Deal scores are not currently tracked in the database for deal "${firstDeal.dealName}".`;
               } else if (lower.includes("target")) {
                 responseMsg = `Targets are typically managed per salesperson. Check the Tasks & Targets tab in Deal "${firstDeal.dealName}" for specifics.`;
-              } else if (lower.includes("attachment")) {
+              } else if (lower.includes("attachment") || lower.includes("document") || lower.includes("file")) {
                 const countAtt = firstDeal.attachments ? firstDeal.attachments.length : 0;
                 responseMsg = `Deal "${firstDeal.dealName}" has ${countAtt} uploaded attachments.`;
                 finalIntent = "attachment-search";
@@ -1117,10 +1139,28 @@ export default {
 
             if (userIds.length > 0) {
               let query = { assignTo: { $in: userIds } };
-              if (dateFilter) query.createdAt = dateFilter;
+              let statusLabel = "";
+              
+              if (lower.includes("hot") || lower.includes("highly interested")) {
+                query.status = "Hot"; statusLabel = "hot ";
+              } else if (lower.includes("warm") || lower.includes("interested")) {
+                query.status = "Warm"; statusLabel = "warm ";
+              } else if (lower.includes("cold") || lower.includes("not interested")) {
+                query.status = "Cold"; statusLabel = "cold ";
+              } else if (lower.includes("converted") || lower.includes("won lead") || lower.includes("successful lead")) {
+                query.status = "Converted"; statusLabel = "converted ";
+                if (dateFilter) query.updatedAt = dateFilter;
+              } else if (lower.includes("junk") || lower.includes("spam") || lower.includes("fake") || lower.includes("garbage")) {
+                query.status = "Junk"; statusLabel = "junk ";
+              } else if (lower.includes("rejected") || lower.includes("declined") || lower.includes("unqualified") || lower.includes("dropped")) {
+                query.status = "Rejected"; statusLabel = "rejected ";
+              }
+
+              if (dateFilter && !lower.includes("converted")) query.createdAt = dateFilter;
+
               const leads = await Lead.find(query).populate("assignTo", "firstName lastName email").sort({ createdAt: -1 });
               const salespersonNames = matchingUsers.map((sp) => `${sp.firstName} ${sp.lastName}`).join(", ");
-              const responseMsg = leads.length > 0 ? `Found ${leads.length} leads assigned to ${salespersonNames}${dateLabel}.` : `No leads found for ${salespersonNames}${dateLabel}.`;
+              const responseMsg = leads.length > 0 ? `Found ${leads.length} ${statusLabel}leads assigned to ${salespersonNames}${dateLabel}.` : `No ${statusLabel}leads found for ${salespersonNames}${dateLabel}.`;
               await saveChat(AiChat, userId, message, "leads-by-salesperson", responseMsg, leads.length);
               return res.json({ success: true, intent: "leads-by-salesperson", message: responseMsg, count: leads.length, data: leads.map(formatLead) });
             } else {
@@ -1136,7 +1176,7 @@ export default {
         let specificLeadName = "";
         const leadMatches = [...message.matchAll(/lead\s+([A-Za-z0-9_-]+)/gi)];
         if (leadMatches.length > 0) {
-          const invalidNames = ["score", "tasks", "task", "invoice", "invoices", "activity", "activities", "history", "notes", "proposal", "proposals", "attachment", "attachments", "details", "info", "target", "targets", "meeting", "email", "follow", "status", "by", "for", "with", "of", "to", "in", "on", "at", "about", "called", "named"];
+          const invalidNames = ["score", "tasks", "task", "invoice", "invoices", "activity", "activities", "history", "notes", "proposal", "proposals", "attachment", "attachments", "document", "documents", "file", "files", "details", "info", "target", "targets", "meeting", "email", "follow", "status", "by", "for", "with", "of", "to", "in", "on", "at", "about", "called", "named"];
           const validMatches = leadMatches.filter(m => !invalidNames.includes(m[1].toLowerCase()));
           if (validMatches.length > 0) {
             specificLeadName = validMatches[validMatches.length - 1][1].trim();
@@ -1157,7 +1197,7 @@ export default {
           };
           if (roleName !== "Admin") query.assignTo = userId;
 
-          const hasSubQuery = lower.includes("attachment") || lower.includes("task") || lower.includes("activity");
+          const hasSubQuery = lower.includes("attachment") || lower.includes("document") || lower.includes("file") || lower.includes("task") || lower.includes("activity");
           if (dateFilter && !hasSubQuery) query.createdAt = dateFilter;
 
           const leads = await Lead.find(query).populate("assignTo", "firstName lastName email").sort({ createdAt: -1 });
@@ -1169,7 +1209,7 @@ export default {
             let count = 1;
             let returnData = [formatLead(firstLead)];
 
-            if (lower.includes("attachment")) {
+            if (lower.includes("attachment") || lower.includes("document") || lower.includes("file")) {
               const countAtt = firstLead.attachments ? firstLead.attachments.length : 0;
               responseMsg = `Lead "${firstLead.leadName}" has ${countAtt} uploaded attachments.`;
               finalIntent = "attachment-search";
@@ -1200,24 +1240,24 @@ export default {
         let intentName = "leads-list";
         let statusLabel = "";
 
-        if (lower.includes("hot")) {
+        if (lower.includes("hot") || lower.includes("highly interested")) {
           query.status = "Hot";
           intentName = "leads-hot";
           statusLabel = "hot ";
-        } else if (lower.includes("warm")) {
+        } else if (lower.includes("warm") || lower.includes("interested")) {
           query.status = "Warm";
           intentName = "leads-warm";
           statusLabel = "warm ";
-        } else if (lower.includes("cold")) {
+        } else if (lower.includes("cold") || lower.includes("not interested")) {
           query.status = "Cold";
           intentName = "leads-cold";
           statusLabel = "cold ";
-        } else if (lower.includes("converted")) {
+        } else if (lower.includes("converted") || lower.includes("won lead") || lower.includes("successful lead")) {
           query.status = "Converted";
           intentName = "leads-converted";
           statusLabel = "converted ";
           if (dateFilter) query.updatedAt = dateFilter; // Converted leads are filtered by conversion/updated time
-        } else if (lower.includes("junk")) {
+        } else if (lower.includes("junk") || lower.includes("spam") || lower.includes("fake") || lower.includes("garbage")) {
           query.status = "Junk";
           intentName = "leads-junk";
           statusLabel = "junk ";

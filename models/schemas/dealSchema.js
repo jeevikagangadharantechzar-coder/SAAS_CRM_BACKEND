@@ -31,6 +31,12 @@ const dealSchema = new mongoose.Schema({
   rejectionReason: { type: String, default: "" },
   rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   rejectedAt:       { type: Date, default: null },
+
+  // Admin-only soft-hide: trashed deals are excluded from getAllDeals but
+  // never deleted, so the record stays intact for anyone querying the DB directly.
+  // trashedAt anchors the 30-day auto-purge window (cron/trashCron.js).
+  trash:     { type: Boolean, default: false },
+  trashedAt: { type: Date, default: null },
   convertedAt:      { type: Date, default: null },
   notes:            { type: String },
   notesUpdatedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
