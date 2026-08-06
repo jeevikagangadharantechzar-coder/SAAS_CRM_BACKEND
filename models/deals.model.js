@@ -99,11 +99,26 @@ const dealSchema = new mongoose.Schema({
   requirement: { 
     type: String 
   },
-  address: { 
-    type: String 
+  address: {
+    type: String
   },
-  country: { 
-    type: String 
+  city: {
+    type: String
+  },
+  state: {
+    type: String
+  },
+  pincode: {
+    type: String
+  },
+  country: {
+    type: String
+  },
+  latitude: {
+    type: Number
+  },
+  longitude: {
+    type: Number
   },
   attachments: [
   {

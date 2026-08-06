@@ -56,7 +56,12 @@ const dealSchema = new mongoose.Schema({
   industry:         { type: String },
   requirement:      { type: String },
   address:          { type: String },
+  city:             { type: String },
+  state:            { type: String },
+  pincode:          { type: String },
   country:          { type: String },
+  latitude:         { type: Number },
+  longitude:        { type: Number },
   attachments: [
     {
       name:       { type: String, default: "" },
