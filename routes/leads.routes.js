@@ -47,6 +47,9 @@ router.patch("/:id/followup", protect, indexControllers.leadsController.updateFo
 router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);
 router.patch("/:id/followup-notes/:noteId", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.editFollowUpNote);
 router.delete("/:id/followup-notes/:noteId", adminOrAssigned, indexControllers.leadsController.deleteFollowUpNote);
+router.get("/:id/activity", adminOrAssigned, indexControllers.leadsController.getLeadActivityLog);
+router.get("/:id/meetings", adminOrAssigned, indexControllers.leadsController.getLeadMeetings);
+router.get("/:id/emails", adminOrAssigned, indexControllers.leadsController.getLeadEmails);
 
 //  GENERIC ROUTE WITH :id LAST (catch-all for /:id)
 router.get("/getLead/:id", adminOrAssigned, indexControllers.leadsController.getLeadById);

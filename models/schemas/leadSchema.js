@@ -22,6 +22,25 @@ const leadSchema = new mongoose.Schema(
 
 
     assignTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    // Who last touched a plain field (name/phone/company/etc.), and when —
+    // same idea as notesUpdatedBy, just for everything else. Only stamped
+    // when a plain field actually changes, not on saves that only touch
+    // status/assignTo/notes/attachments (those already have their own
+    // attributed history below).
+    lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    lastUpdatedAt: { type: Date, default: null },
+
+    // Reassignment history — mirrors Deal's assignmentHistory. Only records
+    // actual changes via updateLead, not the initial assignment at creation
+    // (that's already implicit in the "Lead created" event itself).
+    assignmentHistory: [
+      {
+        assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        assignedAt: { type: Date, default: Date.now },
+      },
+    ],
 
     // False while the item is overdue on an expired Target and awaiting admin
     // reassignment — the owning sales person keeps seeing it (read-only) until
@@ -69,8 +88,20 @@ const leadSchema = new mongoose.Schema(
     lastReminderAt:  { type: Date, default: null },
 
     notes: { type: String },
+    // Latest-edit snapshot — kept as-is since other UI already reads it
+    // directly (e.g. a "notes last updated by X" preview card).
     notesUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     notesUpdatedAt: { type: Date, default: null },
+    // Full history alongside the snapshot above — notesUpdatedBy/At only
+    // ever holds the MOST RECENT change (overwritten every save), so the
+    // Activity Timeline needs its own append-only record to show every
+    // occasion notes were touched, not just the latest one.
+    notesHistory: [
+      {
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        changedAt: { type: Date, default: Date.now },
+      },
+    ],
 
     followUpNotes: [
       {
@@ -117,6 +148,7 @@ const leadSchema = new mongoose.Schema(
         type:       { type: String },
         size:       { type: Number },
         uploadedAt: { type: Date, default: Date.now },
+        uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
       },
     ],
 
@@ -124,6 +156,7 @@ const leadSchema = new mongoose.Schema(
       {
         status:    { type: String },
         changedAt: { type: Date, default: Date.now },
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
       },
     ],
 
