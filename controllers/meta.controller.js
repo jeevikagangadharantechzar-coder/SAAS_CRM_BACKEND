@@ -346,9 +346,9 @@ export default {
                   || (`${fields.first_name || ""} ${fields.last_name || ""}`).trim()
                   || fields.name
                   || "Facebook Lead";
-                const email = fields.email || `fb_${leadData.id}@noreply.com`;
-                const phone = fields.phone_number || fields.phone || fields.mobile_number || "N/A";
-                const company = fields.company_name || fields.company || integration.pageName;
+                const email = fields.email || "";
+                const phone = fields.phone_number || fields.phone || fields.mobile_number || "";
+                const company = fields.company_name || fields.company || "";
 
                 let source = "Facebook Ads";
                 if (leadData.platform === "instagram" || leadData.platform === "ig") source = "Instagram Ads";
@@ -606,8 +606,8 @@ const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
 
       const fullName = fields["full_name"] || `${fields["first_name"] || ""} ${fields["last_name"] || ""}`.trim() || "Lead";
       const email = fields["email"] || "";
-      const phone = fields["phone_number"] || fields["phone"] || "N/A";
-      const company = fields["company_name"] || fields["company"] || pageName || "Unknown";
+      const phone = fields["phone_number"] || fields["phone"] || "";
+      const company = fields["company_name"] || fields["company"] || "";
 
       // ── Dedup ────────────────────────────────────────────────────────────
       const existing = await Lead.findOne({ "meta.leadgenId": leadgen_id });
