@@ -126,6 +126,24 @@ const dealSchema = new mongoose.Schema({
   createdAt:     { type: Date, default: Date.now },
   updatedAt:     { type: Date, default: Date.now },
   lastReminderAt:{ type: Date, default: null },
+
+  // User-defined fields added via the "+ Add Field" button on the Create/Edit
+  // Deal form. cardTitle ties each field back to the section it was added
+  // from (Deal Information, Location, Follow-up, Management) so the form can
+  // re-render it in the right card on edit.
+  customFields: [
+    {
+      cardTitle: { type: String, default: "" },
+      name:      { type: String, required: true },
+      type: {
+        type: String,
+        enum: ["text", "number", "date", "textarea", "dropdown"],
+        default: "text",
+      },
+      options: [{ type: String }],
+      value:   { type: String, default: "" },
+    },
+  ],
 });
 
 dealSchema.pre("save", function (next) {
