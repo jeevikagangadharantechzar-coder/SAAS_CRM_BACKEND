@@ -126,6 +126,24 @@ const leadSchema = new mongoose.Schema(
         changedAt: { type: Date, default: Date.now },
       },
     ],
+
+    // User-defined fields added via the "+ Add Field" button on the Create/Edit
+    // Lead form. cardTitle ties each field back to the section it was added
+    // from (Basic Information, Business Details, etc.) so the form can
+    // re-render it in the right card on edit.
+    customFields: [
+      {
+        cardTitle: { type: String, default: "" },
+        name:      { type: String, required: true },
+        type: {
+          type: String,
+          enum: ["text", "number", "date", "textarea", "dropdown"],
+          default: "text",
+        },
+        options: [{ type: String }],
+        value:   { type: String, default: "" },
+      },
+    ],
   },
   { timestamps: true }
 );

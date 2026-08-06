@@ -54,6 +54,10 @@ export default {
         try { existingAttachments = JSON.parse(req.body.existingAttachments); } catch {}
       }
 
+      if (req.body.customFields) {
+        try { data.customFields = JSON.parse(req.body.customFields); } catch { data.customFields = []; }
+      }
+
       let newAttachments = [];
       if (req.files?.length > 0) {
         newAttachments = req.files.map((file) => ({
@@ -443,6 +447,11 @@ const leads = await leadQuery;
       if (req.body.existingAttachments) {
         try { existingAttachments = JSON.parse(req.body.existingAttachments); } catch {}
       }
+
+      if (req.body.customFields) {
+        try { patch.customFields = JSON.parse(req.body.customFields); } catch { delete patch.customFields; }
+      }
+
       let newFiles = [];
       if (req.files?.length > 0) {
         newFiles = req.files.map((file) => ({
