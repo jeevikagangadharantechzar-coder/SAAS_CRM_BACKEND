@@ -124,11 +124,16 @@ export default {
         source, companyName, companyId, industry, requirement, address, city, state, pincode, country,
         latitude, longitude,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
-        preferredCurrency, preferredCurrencyValue,
+        preferredCurrency, preferredCurrencyValue, customFields,
       } = req.body;
 
       if (!dealName || !phoneNumber || !companyName)
         return res.status(400).json({ message: "dealName, phoneNumber & companyName are required" });
+
+      let parsedCustomFields = [];
+      if (customFields) {
+        try { parsedCustomFields = JSON.parse(customFields); } catch { parsedCustomFields = []; }
+      }
 
       const allowedStages = ["Qualification","Proposal Sent-Negotiation","Invoice Sent","Closed Won","Closed Lost"];
       const dealStage = stage && allowedStages.includes(stage) ? stage : "Qualification";
@@ -176,6 +181,7 @@ export default {
         lossReason: lossReason || "",
         lossNotes: lossNotes || "",
         attachments,
+        customFields: parsedCustomFields,
         // Record the starting stage so the journey view isn't missing steps
         // when a deal is created directly at a later stage (e.g. Closed Won).
         stageHistory: [{ stage: dealStage, movedAt: new Date(), movedBy: req.user._id }],
@@ -415,6 +421,7 @@ export default {
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
         taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription,
         targetAction, extendedTargetEndDate, extendedTargetDescription,
+        customFields,
       } = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
       const deal = await Deal.findById(req.params.id).populate("assignedTo");
@@ -524,6 +531,12 @@ export default {
         keptAttachments = (deal.attachments || []).map(normalizeAttachment).filter(Boolean);
       }
       updateFields.attachments = [...keptAttachments, ...(req.files || []).map((f) => mapFileToAttachment(f, req.user._id))];
+
+      if (customFields !== undefined) {
+        try {
+          updateFields.customFields = typeof customFields === "string" ? JSON.parse(customFields) : customFields;
+        } catch { /* leave customFields untouched on parse failure */ }
+      }
 
       const updatedDeal = await Deal.findByIdAndUpdate(req.params.id, updateFields, { new: true })
         .populate("assignedTo", "firstName lastName email")
