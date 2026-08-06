@@ -7,9 +7,9 @@ const VALID_FEATURE_KEYS = [
   "dashboard", "leads", "create_lead", "deals_all", "create_deal", "deals_pipeline",
   "invoices", "proposal", "documents", "activities", "activities_calendar", "activities_list",
   "users_roles", "admin_access", "email_chat", "email_campaigns", "whatsapp_chat",
-  "reports", "analytics", "settings", "streak_leaderboard", "assigned_tasks", "task_management",
+  "reports", "analytics", "won_analysis", "loss_analysis", "deal_analysis", "settings", "streak_leaderboard", "assigned_tasks", "task_management",
   "target_management", "meetings", "schedule_view", "google_meet_sync", "zoom_meetings", "messages", "chatbot",
-  "integration_facebook", "integration_linkedin", "integration_justdial",
+  "integration_facebook", "integration_instagram", "integration_whatsapp", "integration_linkedin", "integration_justdial",
   "integration_indiamart", "integration_99acres", "integration_sulekha",
   "live_tracking", "device_login_requests",
 ];

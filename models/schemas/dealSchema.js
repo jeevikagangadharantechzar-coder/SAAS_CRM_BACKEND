@@ -31,6 +31,12 @@ const dealSchema = new mongoose.Schema({
   rejectionReason: { type: String, default: "" },
   rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   rejectedAt:       { type: Date, default: null },
+
+  // Admin-only soft-hide: trashed deals are excluded from getAllDeals but
+  // never deleted, so the record stays intact for anyone querying the DB directly.
+  // trashedAt anchors the 30-day auto-purge window (cron/trashCron.js).
+  trash:     { type: Boolean, default: false },
+  trashedAt: { type: Date, default: null },
   convertedAt:      { type: Date, default: null },
   notes:            { type: String },
   notesUpdatedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
@@ -50,7 +56,12 @@ const dealSchema = new mongoose.Schema({
   industry:         { type: String },
   requirement:      { type: String },
   address:          { type: String },
+  city:             { type: String },
+  state:            { type: String },
+  pincode:          { type: String },
   country:          { type: String },
+  latitude:         { type: Number },
+  longitude:        { type: Number },
   attachments: [
     {
       name:       { type: String, default: "" },
@@ -115,6 +126,24 @@ const dealSchema = new mongoose.Schema({
   createdAt:     { type: Date, default: Date.now },
   updatedAt:     { type: Date, default: Date.now },
   lastReminderAt:{ type: Date, default: null },
+
+  // User-defined fields added via the "+ Add Field" button on the Create/Edit
+  // Deal form. cardTitle ties each field back to the section it was added
+  // from (Deal Information, Location, Follow-up, Management) so the form can
+  // re-render it in the right card on edit.
+  customFields: [
+    {
+      cardTitle: { type: String, default: "" },
+      name:      { type: String, required: true },
+      type: {
+        type: String,
+        enum: ["text", "number", "date", "textarea", "dropdown"],
+        default: "text",
+      },
+      options: [{ type: String }],
+      value:   { type: String, default: "" },
+    },
+  ],
 });
 
 dealSchema.pre("save", function (next) {

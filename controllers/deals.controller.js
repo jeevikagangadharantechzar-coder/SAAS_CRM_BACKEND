@@ -121,13 +121,19 @@ export default {
       const {
         dealName, assignTo, dealValue, currency, stage, notes, phoneNumber, email,
         alternativeNumber, alternativeEmail,
-        source, companyName, companyId, industry, requirement, address, country,
+        source, companyName, companyId, industry, requirement, address, city, state, pincode, country,
+        latitude, longitude,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
-        preferredCurrency, preferredCurrencyValue,
+        preferredCurrency, preferredCurrencyValue, customFields,
       } = req.body;
 
       if (!dealName || !phoneNumber || !companyName)
         return res.status(400).json({ message: "dealName, phoneNumber & companyName are required" });
+
+      let parsedCustomFields = [];
+      if (customFields) {
+        try { parsedCustomFields = JSON.parse(customFields); } catch { parsedCustomFields = []; }
+      }
 
       const allowedStages = ["Qualification","Proposal Sent-Negotiation","Invoice Sent","Closed Won","Closed Lost"];
       const dealStage = stage && allowedStages.includes(stage) ? stage : "Qualification";
@@ -160,7 +166,12 @@ export default {
         industry: industry || "",
         requirement: requirement || "",
         address: address || "",
+        city: city || "",
+        state: state || "",
+        pincode: pincode || "",
         country: country || "",
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
         clientType: clientType || null,
         preferredCurrency: preferredCurrency || null,
         preferredCurrencyValue: preferredCurrencyValue ? parseFloat(preferredCurrencyValue) : null,
@@ -170,6 +181,7 @@ export default {
         lossReason: lossReason || "",
         lossNotes: lossNotes || "",
         attachments,
+        customFields: parsedCustomFields,
         // Record the starting stage so the journey view isn't missing steps
         // when a deal is created directly at a later stage (e.g. Closed Won).
         stageHistory: [{ stage: dealStage, movedAt: new Date(), movedBy: req.user._id }],
@@ -220,6 +232,9 @@ export default {
       // them to see it on otherwise.
       query.stage = { $nin: ["Rejected"] };
 
+      // Trashed deals never show in the main list for anyone.
+      query.trash = { $ne: true };
+
       const { start, end } = req.query;
       const dealTypes = (req.query.dealType || "").split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -240,19 +255,6 @@ export default {
         } else {
           query.createdAt = { $gte: rangeStart, $lte: rangeEnd };
         }
-      } else if (!isAdmin) {
-        // Default (non-search) fetch for a sales person: previous-day Closed
-        // Won / Closed Lost deals stay out of the list — only today's wins
-        // and losses show at initial render. Older ones are only reachable
-        // through the Custom Range search above. Pending (still-open) deals
-        // always show regardless of age.
-        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-        query.$or = [
-          { stage: { $nin: ["Closed Won", "Closed Lost"] } },
-          { stage: "Closed Won", wonAt: { $gte: todayStart, $lte: todayEnd } },
-          { stage: "Closed Lost", lostDate: { $gte: todayStart, $lte: todayEnd } },
-        ];
       }
 
       const deals = await Deal.find(query)
@@ -414,10 +416,12 @@ export default {
       const {
         dealName, dealValue, currency, stage, assignTo, notes, phoneNumber, email, source,
         alternativeNumber, alternativeEmail,
-        companyName, companyId, industry, requirement, address, country, existingAttachments,
+        companyName, companyId, industry, requirement, address, city, state, pincode, country,
+        latitude, longitude, existingAttachments,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
         taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription,
         targetAction, extendedTargetEndDate, extendedTargetDescription,
+        customFields,
       } = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
       const deal = await Deal.findById(req.params.id).populate("assignedTo");
@@ -447,7 +451,12 @@ export default {
         ...(industry    !== undefined && { industry }),
         ...(requirement !== undefined && { requirement }),
         ...(address     !== undefined && { address }),
+        ...(city        !== undefined && { city }),
+        ...(state       !== undefined && { state }),
+        ...(pincode     !== undefined && { pincode }),
         ...(country     !== undefined && { country }),
+        ...(latitude    !== undefined && { latitude: latitude ? parseFloat(latitude) : null }),
+        ...(longitude   !== undefined && { longitude: longitude ? parseFloat(longitude) : null }),
         ...(lossReason  !== undefined && { lossReason }),
         ...(lossNotes   !== undefined && { lossNotes }),
         ...(clientType  !== undefined && { clientType }),
@@ -522,6 +531,12 @@ export default {
         keptAttachments = (deal.attachments || []).map(normalizeAttachment).filter(Boolean);
       }
       updateFields.attachments = [...keptAttachments, ...(req.files || []).map((f) => mapFileToAttachment(f, req.user._id))];
+
+      if (customFields !== undefined) {
+        try {
+          updateFields.customFields = typeof customFields === "string" ? JSON.parse(customFields) : customFields;
+        } catch { /* leave customFields untouched on parse failure */ }
+      }
 
       const updatedDeal = await Deal.findByIdAndUpdate(req.params.id, updateFields, { new: true })
         .populate("assignedTo", "firstName lastName email")
@@ -691,6 +706,58 @@ export default {
     } catch (err) { console.error("Schedule follow-up error:", err); res.status(500).json({ message: err.message }); }
   },
 
+  editFollowUpTime: async (req, res) => {
+    try {
+      const { Deal } = getModels(req);
+      const { id } = req.params;
+      const { newTime, editReason } = req.body;
+      const deal = await Deal.findById(id);
+      
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const assignedToId = deal.assignedTo?._id?.toString() || deal.assignedTo?.toString();
+      if (req.user.role.name !== "Admin" && assignedToId !== req.user._id.toString())
+        return res.status(403).json({ message: "Access denied" });
+        
+      if (!deal.followUpDate) return res.status(400).json({ message: "No active follow-up to edit" });
+      if (!newTime) return res.status(400).json({ message: "New time is required" });
+      if (!editReason || !editReason.trim()) return res.status(400).json({ message: "Edit reason is required" });
+
+      const parsedDate = new Date(newTime);
+      if (isNaN(parsedDate.getTime())) return res.status(400).json({ message: "Invalid date format" });
+
+      // Verify it's on the same day
+      const oldDate = new Date(deal.followUpDate);
+      if (
+        oldDate.getFullYear() !== parsedDate.getFullYear() ||
+        oldDate.getMonth() !== parsedDate.getMonth() ||
+        oldDate.getDate() !== parsedDate.getDate()
+      ) {
+        return res.status(400).json({ message: "You can only change the time, not the date." });
+      }
+
+      const updatedDeal = await Deal.findByIdAndUpdate(id, {
+        followUpDate: parsedDate,
+        lastReminderAt: null, // Reset reminder
+        followUpHistory: [...(deal.followUpHistory || []), {
+          date: new Date(),
+          followUpDate: parsedDate,
+          followUpComment: deal.followUpComment,
+          changedBy: req.user._id,
+          action: "Updated",
+          notes: editReason.trim()
+        }],
+        updatedAt: new Date(),
+      }, { new: true })
+        .populate("assignedTo", "firstName lastName email")
+        .populate("followUpHistory.changedBy", "firstName lastName email");
+
+      res.status(200).json({ message: "Follow-up time updated successfully", deal: updatedDeal });
+    } catch (err) {
+      console.error("Edit follow-up time error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  },
+
   deleteDeal: async (req, res) => {
     try {
       const { Deal, Notification } = getModels(req);
@@ -765,6 +832,148 @@ export default {
       res.status(200).json({ message: "Deal rejected", deal });
     } catch (error) {
       console.error("Error rejecting deal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: soft-hide a deal from the main list without deleting it.
+  trashDeal: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal } = getModels(req);
+      const deal = await Deal.findById(req.params.id);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+
+      deal.trash = true;
+      deal.trashedAt = new Date();
+      await deal.save();
+
+      res.status(200).json({ message: "Deal moved to trash", deal });
+    } catch (error) {
+      console.error("Error trashing deal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: restore a single trashed deal back to the main list.
+  restoreDeal: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal } = getModels(req);
+      const deal = await Deal.findById(req.params.id);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+
+      deal.trash = false;
+      deal.trashedAt = null;
+      await deal.save();
+
+      res.status(200).json({ message: "Deal restored", deal });
+    } catch (error) {
+      console.error("Error restoring deal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: dedicated list of trashed deals — search, filter, and paginate
+  // independently of the main Deals list. Mirrors getRejectedDeals.
+  getTrashDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal, User } = getModels(req);
+      const { search = "", assignee, page = 1, limit = 10 } = req.query;
+      const query = { trash: true };
+
+      if (search?.trim()) {
+        query.$or = [
+          { dealName:    { $regex: search, $options: "i" } },
+          { email:       { $regex: search, $options: "i" } },
+          { phoneNumber: { $regex: search, $options: "i" } },
+          { companyName: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      if (assignee && assignee !== "") {
+        if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
+          query.assignedTo = assignee;
+        } else {
+          const nameParts = assignee.split(" ");
+          const firstName = nameParts[0];
+          const lastName  = nameParts.slice(1).join(" ");
+          const userQuery = lastName
+            ? { firstName: { $regex: firstName, $options: "i" }, lastName: { $regex: lastName, $options: "i" } }
+            : { $or: [{ firstName: { $regex: firstName, $options: "i" } }, { lastName: { $regex: firstName, $options: "i" } }] };
+          const users   = await User.find(userQuery).select("_id");
+          const userIds = users.map((u) => u._id);
+          if (!userIds.length)
+            return res.status(200).json({ deals: [], totalDeals: 0, totalPages: 0, currentPage: Number(page) });
+          query.assignedTo = { $in: userIds };
+        }
+      }
+
+      const skip       = (page - 1) * limit;
+      const totalDeals = await Deal.countDocuments(query);
+      const deals      = await Deal.find(query)
+        .populate("assignedTo", "firstName lastName email")
+        .sort({ trashedAt: -1 })
+        .skip(skip)
+        .limit(Number(limit));
+
+      res.status(200).json({ deals, totalDeals, totalPages: Math.ceil(totalDeals / limit), currentPage: Number(page) });
+    } catch (error) {
+      console.error("Get trash deals error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: restore multiple trashed deals at once
+  bulkRestoreDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const result = await Deal.updateMany(
+        { _id: { $in: ids }, trash: true },
+        { $set: { trash: false, trashedAt: null } }
+      );
+
+      res.status(200).json({ message: "Deals restored", restoredCount: result.modifiedCount });
+    } catch (error) {
+      console.error("Bulk restore deals error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  // Admin: permanently delete multiple trashed deals at once
+  bulkDeleteTrashDeals: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") {
+        return res.status(403).json({ message: "Access denied: Admins only" });
+      }
+      const { Deal, Notification } = getModels(req);
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+
+      const trashIds = await Deal.find({ _id: { $in: ids }, trash: true }).distinct("_id");
+      await Notification.deleteMany({ "meta.dealId": { $in: trashIds.map(String) } });
+      await Deal.deleteMany({ _id: { $in: trashIds } });
+
+      res.status(200).json({ message: "Trashed deals deleted", deletedCount: trashIds.length });
+    } catch (error) {
+      console.error("Bulk delete trash deals error:", error);
       res.status(500).json({ message: error.message });
     }
   },
@@ -976,66 +1185,86 @@ export default {
       const allowedStages = ["Qualification", "Proposal Sent-Negotiation", "Invoice Sent", "Closed Won", "Closed Lost"];
       const results = { created: 0, failed: 0, errors: [] };
 
+      // Resolve all users once, up front, instead of a findOne per row.
+      const users = await User.find({}).select("_id email").lean();
+      const emailToUserId = new Map(
+        users.filter((u) => u.email).map((u) => [String(u.email).toLowerCase(), u._id])
+      );
+
+      const ops = [];
+      const opRowNums = [];
+
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i] || {};
         const rowNum = i + 2;
 
-        try {
-          const dealName    = String(row.dealName || "").trim();
-          const companyName = String(row.companyName || "").trim();
-          const phoneNumber = String(row.phoneNumber || "").trim();
+        const dealName    = String(row.dealName || "").trim();
+        const companyName = String(row.companyName || "").trim();
+        const phoneNumber = String(row.phoneNumber || "").trim();
 
-          if (!dealName || !phoneNumber || !companyName) {
-            results.failed++;
-            results.errors.push(`Row ${rowNum}: dealName, phoneNumber, and companyName are required`);
-            continue;
-          }
-
-          let assignedTo = null;
-          const assignedToEmail = String(row.assignedTo || "").trim();
-          if (assignedToEmail) {
-            const matchedUser = await User.findOne({ email: new RegExp(`^${assignedToEmail}$`, "i") });
-            assignedTo = matchedUser?._id || null;
-          }
-
-          const stage = allowedStages.includes(row.stage) ? row.stage : "Qualification";
-          const currency = String(row.currency || "INR").trim() || "INR";
-          const formattedValue = row.value && String(row.value).trim() !== "" ? formatDealValue(row.value, currency) : "0";
-          const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
-          const companySize = ["Small", "Medium", "Large", "Enterprise"].includes(row.companySize) ? row.companySize : undefined;
-          const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
-            ? new Date(row.followUpDate)
-            : null;
-
-          const deal = new Deal({
-            dealName, companyName, phoneNumber,
-            dealTitle:  String(row.dealTitle || "").trim(),
-            assignedTo,
-            value:      formattedValue,
-            currency,
-            clientType,
-            discountGiven: Number(row.discountGiven) || 0,
-            stage,
-            email:      String(row.email || "").trim(),
-            alternativeNumber: String(row.alternativeNumber || "").trim(),
-            alternativeEmail:  String(row.alternativeEmail || "").trim(),
-            source:     String(row.source || "").trim(),
-            companySize,
-            industry:   String(row.industry || "").trim(),
-            requirement: String(row.requirement || "").trim(),
-            address:    String(row.address || "").trim(),
-            country:    String(row.country || "").trim(),
-            notes:      String(row.notes || "").trim(),
-            followUpDate,
-            followUpComment: String(row.followUpComment || "").trim(),
-            stageHistory: [{ stage, movedAt: new Date(), movedBy: req.user._id }],
-          });
-
-          await deal.save();
-          results.created++;
-        } catch (rowErr) {
+        if (!dealName || !phoneNumber || !companyName) {
           results.failed++;
-          results.errors.push(`Row ${rowNum}: ${rowErr.message}`);
+          results.errors.push(`Row ${rowNum}: dealName, phoneNumber, and companyName are required`);
+          continue;
+        }
+
+        let assignedTo = null;
+        const assignedToEmail = String(row.assignedTo || "").trim();
+        if (assignedToEmail) {
+          assignedTo = emailToUserId.get(assignedToEmail.toLowerCase()) || null;
+        }
+
+        const stage = allowedStages.includes(row.stage) ? row.stage : "Qualification";
+        const currency = String(row.currency || "INR").trim() || "INR";
+        const formattedValue = row.value && String(row.value).trim() !== "" ? formatDealValue(row.value, currency) : "0";
+        const clientType = row.clientType === "B2B" || row.clientType === "B2C" ? row.clientType : undefined;
+        const companySize = ["Small", "Medium", "Large", "Enterprise"].includes(row.companySize) ? row.companySize : undefined;
+        const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
+          ? new Date(row.followUpDate)
+          : null;
+
+        ops.push({
+          insertOne: {
+            document: {
+              dealName, companyName, phoneNumber,
+              dealTitle:  String(row.dealTitle || "").trim(),
+              assignedTo,
+              value:      formattedValue,
+              currency,
+              clientType,
+              discountGiven: Number(row.discountGiven) || 0,
+              stage,
+              email:      String(row.email || "").trim(),
+              alternativeNumber: String(row.alternativeNumber || "").trim(),
+              alternativeEmail:  String(row.alternativeEmail || "").trim(),
+              source:     String(row.source || "").trim(),
+              companySize,
+              industry:   String(row.industry || "").trim(),
+              requirement: String(row.requirement || "").trim(),
+              address:    String(row.address || "").trim(),
+              country:    String(row.country || "").trim(),
+              notes:      String(row.notes || "").trim(),
+              followUpDate,
+              followUpComment: String(row.followUpComment || "").trim(),
+              stageHistory: [{ stage, movedAt: new Date(), movedBy: req.user._id }],
+            },
+          },
+        });
+        opRowNums.push(rowNum);
+      }
+
+      if (ops.length) {
+        try {
+          const bulkResult = await Deal.bulkWrite(ops, { ordered: false });
+          results.created += bulkResult.insertedCount || 0;
+        } catch (bulkErr) {
+          const writeErrors = bulkErr.writeErrors || [];
+          results.created += ops.length - writeErrors.length;
+          for (const we of writeErrors) {
+            results.failed++;
+            const rowNum = opRowNums[we.index];
+            results.errors.push(`Row ${rowNum}: ${we.errmsg || we.err?.errmsg || "Insert failed"}`);
+          }
         }
       }
 

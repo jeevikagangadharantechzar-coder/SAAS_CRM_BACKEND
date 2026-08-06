@@ -148,13 +148,19 @@ export default {
 
       const isAdmin = ["Admin", "admin"].includes(userRoleName);
       const today = new Date();
-      const rangeStart = req.query.startDate ? new Date(req.query.startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
-      const rangeEnd = req.query.endDate ? new Date(req.query.endDate) : new Date(today);
+      let rangeStart, rangeEnd;
+      if (req.query.allTime === 'true' || req.query.allTime === true) {
+        rangeStart = new Date(0);
+        rangeEnd = new Date(today);
+      } else {
+        rangeStart = req.query.startDate ? new Date(req.query.startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
+        rangeEnd = req.query.endDate ? new Date(req.query.endDate) : new Date(today);
+      }
       rangeStart.setHours(0, 0, 0, 0); rangeEnd.setHours(23, 59, 59, 999);
 
       const allUsers = await User.find({}).select("_id firstName lastName email role loginHistory createdAt").populate("role", "name").lean();
       const salesUsers = allUsers.filter(u => { const rn = u.role?.name || u.role || ""; return typeof rn === "string" && rn.toLowerCase() === "sales"; });
-      let targetUsers = isAdmin ? salesUsers : salesUsers.filter(u => u._id.toString() === currentUserId);
+      let targetUsers = salesUsers;
 
       if (!isAdmin && targetUsers.length === 0) {
         return res.json({ success: true, data: [], stats: { totalSalespeople: 0, activeSalespeople: 0, avgConversionRate: 0, totalLeads: 0, totalConvertedLeads: 0, cumulativeTotalLeads: 0 }, dateRange: { start: rangeStart, end: rangeEnd }, userRole: "sales" });
@@ -244,12 +250,33 @@ export default {
 
       // Primary: highest conversion rate (speed); Secondary: most leads total
       const sorted = rows.filter(r => r.totalLeads > 0 || r.cumulativeTotalLeads > 0).sort((a, b) => b.conversionRate !== a.conversionRate ? b.conversionRate - a.conversionRate : b.totalLeads - a.totalLeads);
+
+      let finalRows = sorted;
+      if (!isAdmin) {
+        const currentUserData = sorted.find(r => r.id === currentUserId);
+        
+        // Find the top performer based on highest volume of converted leads first
+        const sortedByLeads = [...sorted].sort((a, b) => b.convertedLeads !== a.convertedLeads ? b.convertedLeads - a.convertedLeads : b.conversionRate - a.conversionRate);
+        const topPerformer = sortedByLeads.length > 0 ? sortedByLeads[0] : null;
+        
+        finalRows = [];
+        if (topPerformer) finalRows.push(topPerformer);
+        if (currentUserData && (!topPerformer || currentUserData.id !== topPerformer.id)) {
+          finalRows.push(currentUserData);
+        }
+      }
+
       const stats = {
         totalSalespeople: sorted.length, activeSalespeople: sorted.filter(r => r.workHours && r.workHours !== "—").length,
         avgConversionRate: sorted.length ? Number((sorted.reduce((s, r) => s + r.conversionRate, 0) / sorted.length).toFixed(1)) : 0,
         totalLeads: sorted.reduce((s, r) => s + r.totalLeads, 0), totalConvertedLeads: sorted.reduce((s, r) => s + r.convertedLeads, 0), cumulativeTotalLeads: sorted.reduce((s, r) => s + r.cumulativeTotalLeads, 0),
+        cumulativeConvertedLeads: sorted.reduce((s, r) => s + r.cumulativeConvertedLeads, 0),
       };
-      res.json({ success: true, data: sorted, stats, dateRange: { start: rangeStart, end: rangeEnd, formatted: `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} - ${rangeEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` }, userRole: isAdmin ? "admin" : "sales" });
+
+      return res.json({
+        success: true,
+        data: finalRows, stats, dateRange: { start: rangeStart, end: rangeEnd, formatted: `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} - ${rangeEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` }, userRole: isAdmin ? "admin" : "sales"
+      });
     } catch (error) {
       console.error("getLeaderboard FATAL ERROR:", error.message);
       res.status(500).json({ success: false, error: error.message, stack: error.stack });

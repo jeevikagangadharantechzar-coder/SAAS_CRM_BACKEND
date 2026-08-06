@@ -6,6 +6,8 @@ const leadSchema = new mongoose.Schema(
     leadName:    { type: String, required: true },
     phoneNumber: { type: String, required: true },
     email:       { type: String },
+    alternatePhoneNumber: { type: String },
+    alternateEmail:       { type: String },
     source:      { type: String },
     sourceId:    { type: String, default: null, index: true },
     companyName: { type: String, required: true },
@@ -27,7 +29,12 @@ const leadSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
 
     address: { type: String },
+    city: { type: String },
+    state: { type: String },
+    pincode: { type: String },
     country: { type: String },
+    latitude: { type: Number },
+    longitude: { type: Number },
 
     status: {
       type: String,
@@ -37,6 +44,12 @@ const leadSchema = new mongoose.Schema(
     rejectionReason: { type: String, default: "" },
     rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     rejectedAt:       { type: Date, default: null },
+
+    // Admin-only soft-hide: trashed leads are excluded from getAllLead but
+    // never deleted, so the record stays intact for anyone querying the DB directly.
+    // trashedAt anchors the 30-day auto-purge window (cron/trashCron.js).
+    trash:     { type: Boolean, default: false },
+    trashedAt: { type: Date, default: null },
 
     // Who actually performed the lead→deal conversion — only set when the
     // converted lead keeps a read-only copy here (currently: admin conversions).
@@ -111,6 +124,24 @@ const leadSchema = new mongoose.Schema(
       {
         status:    { type: String },
         changedAt: { type: Date, default: Date.now },
+      },
+    ],
+
+    // User-defined fields added via the "+ Add Field" button on the Create/Edit
+    // Lead form. cardTitle ties each field back to the section it was added
+    // from (Basic Information, Business Details, etc.) so the form can
+    // re-render it in the right card on edit.
+    customFields: [
+      {
+        cardTitle: { type: String, default: "" },
+        name:      { type: String, required: true },
+        type: {
+          type: String,
+          enum: ["text", "number", "date", "textarea", "dropdown"],
+          default: "text",
+        },
+        options: [{ type: String }],
+        value:   { type: String, default: "" },
       },
     ],
   },
