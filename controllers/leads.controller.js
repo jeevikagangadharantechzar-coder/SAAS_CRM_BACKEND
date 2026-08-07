@@ -1381,10 +1381,19 @@ const leads = await leadQuery;
       const { email, phoneNumber, excludeId } = req.query;
       const result = {};
 
+      // Same visibility rule as every other lead-list endpoint (getLeads,
+      // exportLeads, bulk import): a Sales user only ever sees their own
+      // leads, so flagging a duplicate they have no way to see or act on
+      // would just be a confusing, unexplained warning — and would leak
+      // the existence of another rep's lead they otherwise can't view.
+      const isAdmin = req.user.role?.name === "Admin";
+      const scope = isAdmin ? {} : { assignTo: req.user._id };
+
       if (email && email.trim()) {
         const query = {
           email: { $regex: `^${escapeRegex(email.trim())}$`, $options: "i" },
           trash: { $ne: true },
+          ...scope,
         };
         if (excludeId) query._id = { $ne: excludeId };
         const match = await Lead.findOne(query).select("leadName");
@@ -1392,7 +1401,7 @@ const leads = await leadQuery;
       }
 
       if (phoneNumber && phoneNumber.trim()) {
-        const query = { phoneNumber: phoneNumber.trim(), trash: { $ne: true } };
+        const query = { phoneNumber: phoneNumber.trim(), trash: { $ne: true }, ...scope };
         if (excludeId) query._id = { $ne: excludeId };
         const match = await Lead.findOne(query).select("leadName");
         result.phoneNumber = match ? { exists: true, leadName: match.leadName } : { exists: false };

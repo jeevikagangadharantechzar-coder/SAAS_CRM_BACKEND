@@ -3,6 +3,7 @@ import indexControllers from "../controllers/index.controllers.js";
 import {
   protect,
   adminOnly,
+  adminOrSales,
   adminOrAssignedToDeal,
 } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
@@ -30,7 +31,8 @@ router.get(
 
 // Import / Export routes — must stay above the generic "/:id" routes below
 router.get("/export", indexControllers.dealsController.exportDeals);
-router.post("/bulk-import", adminOnly, indexControllers.dealsController.bulkImportDeals);
+router.post("/bulk-import", adminOrSales, indexControllers.dealsController.bulkImportDeals);
+router.get("/check-duplicate", indexControllers.dealsController.checkDuplicateDeal);
 
 // Rejected deals — dedicated list + bulk delete + reject action (specific
 // routes, must come before the generic "/:id" routes below)

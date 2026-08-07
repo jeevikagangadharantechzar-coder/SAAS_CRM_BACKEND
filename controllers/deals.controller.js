@@ -1112,6 +1112,46 @@ export default {
     } catch (error) { console.error("Update follow-up error:", error); res.status(500).json({ message: error.message }); }
   },
 
+  // GET /deals/check-duplicate?email=&phoneNumber=&excludeId= — live
+  // as-you-type "already exists" hint on the Create/Edit Deal form, same
+  // shape as checkDuplicateLead (leads.controller.js). excludeId is the
+  // deal's own id in edit mode, so a deal never flags itself.
+  checkDuplicateDeal: async (req, res) => {
+    try {
+      const { Deal } = getModels(req);
+      const { email, phoneNumber, excludeId } = req.query;
+      const result = {};
+
+      // Same visibility rule as every other deal-list endpoint (getAllDeals,
+      // exportDeals, bulk import): a Sales user only ever sees their own
+      // deals, so flagging a duplicate they have no way to see or act on
+      // would just be a confusing, unexplained warning — and would leak
+      // the existence of another rep's deal they otherwise can't view.
+      const isAdmin = req.user.role?.name === "Admin";
+      const scope = isAdmin ? {} : { assignedTo: req.user._id };
+
+      if (email && email.trim()) {
+        const escaped = email.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const query = { email: { $regex: `^${escaped}$`, $options: "i" }, trash: { $ne: true }, ...scope };
+        if (excludeId) query._id = { $ne: excludeId };
+        const match = await Deal.findOne(query).select("dealName");
+        result.email = match ? { exists: true, dealName: match.dealName } : { exists: false };
+      }
+
+      if (phoneNumber && phoneNumber.trim()) {
+        const query = { phoneNumber: phoneNumber.trim(), trash: { $ne: true }, ...scope };
+        if (excludeId) query._id = { $ne: excludeId };
+        const match = await Deal.findOne(query).select("dealName");
+        result.phoneNumber = match ? { exists: true, dealName: match.dealName } : { exists: false };
+      }
+
+      res.status(200).json(result);
+    } catch (err) {
+      console.error("Check duplicate deal error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  },
+
   // Full, unpaginated dataset for the Export-to-Excel button — same
   // visibility rules as getAllDeals (own deals only for non-admin, rejected
   // deals always excluded) but ignores any active search/filter state.
@@ -1185,6 +1225,13 @@ export default {
       const allowedStages = ["Qualification", "Proposal Sent-Negotiation", "Invoice Sent", "Closed Won", "Closed Lost"];
       const results = { created: 0, failed: 0, errors: [] };
 
+      // A Sales user's own import always lands on their own desk — the
+      // "Assigned To" column only applies to Admin imports, same as
+      // bulkImportLeads. Without this, a Sales user could hand their own
+      // imported deals to someone else via that column (or an Admin's
+      // half-filled template), which shouldn't be possible for a Sales import.
+      const isAdminImporter = req.user.role?.name === "Admin";
+
       // Resolve all users once, up front, instead of a findOne per row.
       const users = await User.find({}).select("_id email").lean();
       const emailToUserId = new Map(
@@ -1208,10 +1255,15 @@ export default {
           continue;
         }
 
-        let assignedTo = null;
-        const assignedToEmail = String(row.assignedTo || "").trim();
-        if (assignedToEmail) {
-          assignedTo = emailToUserId.get(assignedToEmail.toLowerCase()) || null;
+        let assignedTo;
+        if (isAdminImporter) {
+          assignedTo = null;
+          const assignedToEmail = String(row.assignedTo || "").trim();
+          if (assignedToEmail) {
+            assignedTo = emailToUserId.get(assignedToEmail.toLowerCase()) || null;
+          }
+        } else {
+          assignedTo = req.user._id;
         }
 
         const stage = allowedStages.includes(row.stage) ? row.stage : "Qualification";
