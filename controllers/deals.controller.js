@@ -147,7 +147,8 @@ export default {
         followUpHistory = [{ date: new Date(), followUpDate: parsedFollowUpDate, followUpComment: followUpComment || "", changedBy: req.user._id, action: "Created" }];
       }
 
-      const attachments = (req.files || []).map((f) => mapFileToAttachment(f, req.user._id));
+      const attachments = (req.files?.attachments || []).map((f) => mapFileToAttachment(f, req.user._id));
+      const images = (req.files?.images || []).map((f) => mapFileToAttachment(f, req.user._id));
       const deal = new Deal({
         dealName,
         assignedTo: assignTo || null,
@@ -181,6 +182,7 @@ export default {
         lossReason: lossReason || "",
         lossNotes: lossNotes || "",
         attachments,
+        images,
         customFields: parsedCustomFields,
         // Record the starting stage so the journey view isn't missing steps
         // when a deal is created directly at a later stage (e.g. Closed Won).
@@ -317,15 +319,7 @@ export default {
       if (req.user.role.name !== "Admin" && deal.assignedTo && deal.assignedTo._id.toString() !== req.user._id.toString())
         return res.status(403).json({ message: "Access denied: You can only view deals assigned to you" });
 
-      const leadAttachments = deal.leadId?.attachments || [];
-      const allAttachments  = [
-        ...leadAttachments.map(att => ({ name: typeof att === "string" ? att.split("/").pop() : (att.name || att.path?.split("/").pop() || "file"),
-          path: typeof att === "string" ? att : (att.path || ""), type: "lead", size: att.size || 0, uploadedAt: att.uploadedAt || null })),
-        ...(deal.attachments || []).map(att => ({ name: att.name || att.path?.split("/").pop() || "file",
-          path: att.path || "", type: "deal", size: att.size || 0, uploadedAt: att.uploadedAt || null })),
-      ];
-
-      res.status(200).json({ ...deal.toObject(), attachments: allAttachments });
+      res.status(200).json(deal);
     } catch (err) { console.error("Get deal by ID error:", err); res.status(500).json({ message: err.message }); }
   },
 
@@ -522,15 +516,26 @@ export default {
       }
 
       let keptAttachments = [];
-      if (existingAttachments !== undefined) {
+      if (req.body.existingAttachments !== undefined) {
         try {
-          const parsed = typeof existingAttachments === "string" ? JSON.parse(existingAttachments) : existingAttachments;
+          const parsed = typeof req.body.existingAttachments === "string" ? JSON.parse(req.body.existingAttachments) : req.body.existingAttachments;
           keptAttachments = (Array.isArray(parsed) ? parsed : []).map(normalizeAttachment).filter(Boolean);
         } catch { keptAttachments = (deal.attachments || []).map(normalizeAttachment).filter(Boolean); }
       } else {
         keptAttachments = (deal.attachments || []).map(normalizeAttachment).filter(Boolean);
       }
-      updateFields.attachments = [...keptAttachments, ...(req.files || []).map((f) => mapFileToAttachment(f, req.user._id))];
+      updateFields.attachments = [...keptAttachments, ...(req.files?.attachments || []).map((f) => mapFileToAttachment(f, req.user._id))];
+
+      let keptImages = [];
+      if (req.body.existingImages !== undefined) {
+        try {
+          const parsed = typeof req.body.existingImages === "string" ? JSON.parse(req.body.existingImages) : req.body.existingImages;
+          keptImages = (Array.isArray(parsed) ? parsed : []).map(normalizeAttachment).filter(Boolean);
+        } catch { keptImages = (deal.images || []).map(normalizeAttachment).filter(Boolean); }
+      } else {
+        keptImages = (deal.images || []).map(normalizeAttachment).filter(Boolean);
+      }
+      updateFields.images = [...keptImages, ...(req.files?.images || []).map((f) => mapFileToAttachment(f, req.user._id))];
 
       if (customFields !== undefined) {
         try {

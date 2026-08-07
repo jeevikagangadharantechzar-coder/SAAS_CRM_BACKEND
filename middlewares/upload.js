@@ -47,6 +47,22 @@ const AUDIO_EXTENSIONS = [
   ".opus", ".amr", ".mpeg", ".mpga", ".mp4", ".caf", ".3gp",
 ];
 
+const IMAGE_MIMES = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+const DOCUMENT_MIMES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain",
+  "text/csv",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/x-rar-compressed",
+];
+
 //  Allow images + all common document types
 const fileFilter = (req, file, cb) => {
   if (file.fieldname === "audio" || file.fieldname === "recording") {
@@ -57,26 +73,26 @@ const fileFilter = (req, file, cb) => {
     return cb(new Error(`Audio/Video file type "${file.mimetype || ext}" not allowed.`), false);
   }
 
-  const allowedMimes = [
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "text/plain",
-    "text/csv",
-    "application/zip",
-    "application/x-zip-compressed",
-    "application/x-rar-compressed",
-  ];
+  // Leads/Deals split their upload into two dedicated fields — "attachments"
+  // is documents-only and "images" is photos-only, each with its own
+  // upload.fields() config on those routes. Scoped to just those routes (by
+  // URL, same technique storage.destination below already uses) so every
+  // other "attachments" field elsewhere in the app (email, proposal,
+  // contact form, Gmail send/draft) keeps accepting both, unaffected.
+  const url = req.originalUrl || req.baseUrl || "";
+  const isLeadOrDealRoute = url.includes("/leads") || url.includes("/deals");
 
+  if (isLeadOrDealRoute && file.fieldname === "images") {
+    if (IMAGE_MIMES.includes(file.mimetype)) return cb(null, true);
+    return cb(new Error(`Image file type "${file.mimetype}" not allowed — only photos are accepted here.`), false);
+  }
+
+  if (isLeadOrDealRoute && file.fieldname === "attachments") {
+    if (DOCUMENT_MIMES.includes(file.mimetype)) return cb(null, true);
+    return cb(new Error(`Attachment file type "${file.mimetype}" not allowed — only documents are accepted here (use the Images field for photos).`), false);
+  }
+
+  const allowedMimes = [...IMAGE_MIMES, ...DOCUMENT_MIMES];
   if (allowedMimes.includes(file.mimetype)) {
     cb(null, true);
   } else {

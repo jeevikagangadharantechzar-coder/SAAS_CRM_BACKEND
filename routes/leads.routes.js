@@ -30,12 +30,12 @@ router.post("/bulk-import", adminOrSales, indexControllers.leadsController.bulkI
 router.post(
   "/create",
   adminOrSales,
-  upload.array("attachments", 5),
+  upload.fields([{ name: "attachments", maxCount: 5 }, { name: "images", maxCount: 5 }]),
   indexControllers.leadsController.createLead
 );
 
 //  UPDATE/DELETE ROUTES (with :id but still specific paths)
-router.put("/updateLead/:id", upload.array("attachments", 5), adminOrAssigned, indexControllers.leadsController.updateLead);
+router.put("/updateLead/:id", upload.fields([{ name: "attachments", maxCount: 5 }, { name: "images", maxCount: 5 }]), adminOrAssigned, indexControllers.leadsController.updateLead);
 router.delete("/deleteLead/:id", adminOrAssigned, indexControllers.leadsController.deleteLead);
 
 //  ACTION ROUTES (these have :id but are still specific action paths)(convert, show status, create follow-up)
