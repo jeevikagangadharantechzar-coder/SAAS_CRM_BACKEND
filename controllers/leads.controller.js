@@ -44,6 +44,12 @@ import { pickNextSalesUser } from "../services/leadAssignment.js";
 const nameOf = (u) => (u ? `${u.firstName || ""} ${u.lastName || ""}`.trim() || "Unknown" : null);
 const asPerson = (u) => (u ? { id: u._id, name: nameOf(u) } : null);
 
+// Standard MDN escape so a raw email/phone value can be dropped into a
+// case-insensitive RegExp for the duplicate check below without a stray
+// regex special character (e.g. a "+" in a phone number) breaking the
+// match or being misinterpreted.
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export default {
   createLead: async (req, res) => {
     try {
@@ -1207,6 +1213,14 @@ const leads = await leadQuery;
       const allowedStatuses = ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"];
       const results = { created: 0, failed: 0, errors: [] };
 
+      // A Sales user's own import always lands on their own desk — the
+      // "Assign To" column (and round-robin) only apply to Admin imports,
+      // same as CreateLeads.jsx already auto-assigns a single lead to self
+      // for non-Admins. Without this, a blank/mismatched Assign To cell in
+      // a sales person's file could hand their own leads to a *different*
+      // sales user via round-robin.
+      const isAdminImporter = req.user.role?.name === "Admin";
+
       // Resolve all users and the round-robin starting point once, up front,
       // instead of re-querying per row (which was the bottleneck at scale).
       const users = await User
@@ -1259,12 +1273,17 @@ const leads = await leadQuery;
           continue;
         }
 
-        let assignTo = null;
-        const assignToEmail = String(row.assignTo || "").trim();
-        if (assignToEmail) {
-          assignTo = emailToUserId.get(assignToEmail.toLowerCase()) || null;
+        let assignTo;
+        if (isAdminImporter) {
+          assignTo = null;
+          const assignToEmail = String(row.assignTo || "").trim();
+          if (assignToEmail) {
+            assignTo = emailToUserId.get(assignToEmail.toLowerCase()) || null;
+          }
+          if (!assignTo) assignTo = nextSalesUser();
+        } else {
+          assignTo = req.user._id;
         }
-        if (!assignTo) assignTo = nextSalesUser();
 
         const status = allowedStatuses.includes(row.status) ? row.status : "Cold";
         const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
@@ -1348,6 +1367,40 @@ const leads = await leadQuery;
       res.status(200).json(emails);
     } catch (err) {
       console.error("Get lead emails error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  // GET /leads/check-duplicate?email=&phoneNumber=&excludeId= — live
+  // as-you-type check surfaced on the Create/Edit Lead form. excludeId is
+  // the lead's own id in edit mode, so a lead never flags itself as a
+  // duplicate of its own unchanged email/phone.
+  checkDuplicateLead: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const { email, phoneNumber, excludeId } = req.query;
+      const result = {};
+
+      if (email && email.trim()) {
+        const query = {
+          email: { $regex: `^${escapeRegex(email.trim())}$`, $options: "i" },
+          trash: { $ne: true },
+        };
+        if (excludeId) query._id = { $ne: excludeId };
+        const match = await Lead.findOne(query).select("leadName");
+        result.email = match ? { exists: true, leadName: match.leadName } : { exists: false };
+      }
+
+      if (phoneNumber && phoneNumber.trim()) {
+        const query = { phoneNumber: phoneNumber.trim(), trash: { $ne: true } };
+        if (excludeId) query._id = { $ne: excludeId };
+        const match = await Lead.findOne(query).select("leadName");
+        result.phoneNumber = match ? { exists: true, leadName: match.leadName } : { exists: false };
+      }
+
+      res.status(200).json(result);
+    } catch (err) {
+      console.error("Check duplicate lead error:", err);
       res.status(500).json({ message: err.message });
     }
   },

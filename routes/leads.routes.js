@@ -15,6 +15,7 @@ router.get("/getAllLead", indexControllers.leadsController.getLeads);
 router.get("/recent", indexControllers.leadsController.getRecentLeads);
 router.get("/pending", indexControllers.leadsController.getPendingLeads);
 router.get("/missed-followups", indexControllers.leadsController.getMissedFollowUps);
+router.get("/check-duplicate", indexControllers.leadsController.checkDuplicateLead);
 router.get("/rejected", adminOnly, indexControllers.leadsController.getRejectedLeads);
 router.post("/rejected/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteRejectedLeads);
 router.get("/trash", adminOnly, indexControllers.leadsController.getTrashLeads);
