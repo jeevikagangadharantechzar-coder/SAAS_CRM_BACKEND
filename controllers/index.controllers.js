@@ -8,6 +8,7 @@ import dealsController from "./deals.controller.js";
 import dealDetailController from "./dealDetail.controller.js";
 import calendarController from "./calendar.controller.js";
 import adminDashboardController from "./adminDashboard.controller.js";
+import dashboardOverviewController from "./dashboardOverview.controller.js";
 
 import googleAuthController from './googleAuth.controller.js';
 
@@ -36,6 +37,7 @@ export default {
   invoiceController,
   proposalController,
   adminDashboardController,
+  dashboardOverviewController,
   salesReportsController,
   googleAuthController,
 

@@ -111,12 +111,18 @@ export default {
       if (!req.user) return res.status(401).json({ error: "Unauthorized: No user found" });
       const Invoice = getInvoice(req);
       const roleName = req.user.role?.name?.toLowerCase();
-      let query;
-      if (roleName === "admin")       query = Invoice.find();
-      else if (roleName === "sales")  query = Invoice.find({ assignTo: req.user._id });
-      else return res.status(403).json({ error: "Access denied" });
+      const filter = {};
+      // Only applied when a caller actually asks for a range (the dashboard
+      // does) — callers that fetch without start/end, like the Invoices page,
+      // keep getting every invoice exactly as before.
+      const { start, end } = req.query;
+      if (start && end) {
+        filter.createdAt = { $gte: new Date(start), $lte: new Date(end + "T23:59:59.999Z") };
+      }
+      if (roleName === "sales") filter.assignTo = req.user._id;
+      else if (roleName !== "admin") return res.status(403).json({ error: "Access denied" });
 
-      const invoices = await query
+      const invoices = await Invoice.find(filter)
         .populate("assignTo", "firstName lastName email")
         .populate("items.deal", "dealName value stage")
         .sort({ createdAt: -1 });
