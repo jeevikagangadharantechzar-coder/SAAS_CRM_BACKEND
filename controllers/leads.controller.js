@@ -778,6 +778,7 @@ const leads = await leadQuery;
         lastReminderAt:   lead.lastReminderAt ?? null,
         companyId:        lead.companyId || null,
         companySize:      lead.companySize || "Medium",
+        customFields:     lead.customFields || [],
         leadStatusHistory: leadStatusHistory,
         leadCreatedAt:    lead.createdAt,
         stageHistory:     [{ stage: finalStage, movedAt: new Date(), movedBy: req.user._id }],
