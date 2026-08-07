@@ -28,12 +28,20 @@ const leadSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Hot", "Warm", "Cold", "Junk", "Converted"],
-      default: "Cold",
+      enum: ["New", "Hot", "Warm", "Cold", "Junk", "Rejected", "Converted"],
+      default: "New",
     },
+
+    lossStage: { type: String, enum: ["New", "Hot", "Warm", "Cold", null], default: null },
+    rejectionReason: { type: String, default: null },
+    customRejectionReason: { type: String, default: null },
+    junkReason: { type: String, default: null },
+    followUpCountAtLoss: { type: Number, default: 0 },
+    leadAgeAtLossDays: { type: Number, default: 0 },
 
     // Create date same follow up date
     followUpDate: { type: Date, default: Date.now },
+    followUpUpdateCount: { type: Number, default: 0 },
 
     emailSentAt: { type: Date, default: null },
     lastReminderAt: { type: Date, default: null },
