@@ -14,7 +14,7 @@ import { getBulkLinkage } from "../services/linkageService.js";
 const getModels = (req) => getTenantModels(req.tenantDB);
 
 // Compute actual counts for a user within a date range, scoped to linked leads/deals if provided
-async function computeActuals(models, userId, startDate, endDate, linkedLeadIds = null, linkedDealIds = null, targetLeadsGoal = 0, targetDealsGoal = 0, reportedCallsCount = 0, reportedMeetingsCount = 0) {
+async function computeActuals(models, userId, startDate, endDate, linkedLeadIds = null, linkedDealIds = null, targetLeadsGoal = 0, targetDealsGoal = 0, reportedCallsCount = 0, reportedMeetingsCount = 0, hadSpecificLeads = false, hadSpecificDeals = false) {
   const { Lead, Deal, CallLog, Activity } = models;
 
   const start = new Date(startDate);
@@ -29,14 +29,17 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   //
   // If this Target didn't link any specific leads, only fall back to a
   // whole-date-range count when a leads GOAL was actually set (targetLeads >
-  // 0) — that's a genuine "convert N leads this period" quota with no
-  // pre-picked list. If no goal was set either, there's nothing this Target
-  // is tracking for this metric, so it must read 0 rather than pulling in
-  // every unrelated lead the sales person happened to convert elsewhere that
-  // period (which used to leak onto Targets/Tasks that never asked for it).
+  // 0) AND it wasn't originally a specific-lead target (which would have hadSpecificLeads=true).
   const leadsConvertedQuery = linkedLeadIds && linkedLeadIds.length > 0
-    ? Deal.countDocuments({ leadId: { $in: linkedLeadIds } })
-    : targetLeadsGoal > 0
+    ? Deal.distinct("leadId", { 
+        leadId: { $in: linkedLeadIds },
+        $or: [
+          { convertedBy: userId },
+          { convertedBy: null, assignedTo: userId },
+          { convertedBy: { $exists: false }, assignedTo: userId }
+        ]
+      }).then(ids => ids.length)
+    : targetLeadsGoal > 0 && !hadSpecificLeads
       ? Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
@@ -47,14 +50,18 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   // double-count it in a later one). Same no-goal-means-zero rule as leads
   // converted above.
   const dealsWonQuery = linkedDealIds && linkedDealIds.length > 0
-    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won" })
-    : targetDealsGoal > 0
+    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won", wonBy: userId })
+    : targetDealsGoal > 0 && !hadSpecificDeals
       ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const leadDealWonQuery = linkedLeadIds && linkedLeadIds.length > 0
-    ? Deal.countDocuments({ leadId: { $in: linkedLeadIds }, stage: "Closed Won" })
-    : targetLeadsGoal > 0
+    ? Deal.distinct("leadId", { 
+        leadId: { $in: linkedLeadIds }, 
+        stage: "Closed Won",
+        wonBy: userId
+      }).then(ids => ids.length)
+    : targetLeadsGoal > 0 && !hadSpecificLeads
       ? Deal.countDocuments({ assignedTo: userId, leadId: { $ne: null }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
@@ -153,7 +160,7 @@ async function computeFallbackSnapshotsForTasks(models, userId, tasks) {
     }
 
     const [leadsConverted, dealsWon, convertedLeadDeals, existingDeals] = await Promise.all([
-      linkedLeadIds.length ? Deal.countDocuments({ leadId: { $in: linkedLeadIds }, convertedBy: userId }) : 0,
+      linkedLeadIds.length ? Deal.distinct("leadId", { leadId: { $in: linkedLeadIds }, convertedBy: userId }).then(ids => ids.length) : 0,
       linkedDealIds.length ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won", wonBy: userId }) : 0,
       linkedLeadIds.length
         ? Deal.find({ leadId: { $in: linkedLeadIds } }).select("stage wonBy stageHistory").populate(STAGE_HISTORY_MOVER_POPULATE).lean()
@@ -165,7 +172,8 @@ async function computeFallbackSnapshotsForTasks(models, userId, tasks) {
 
     // Same split as the real-Target flow: "leads to deals won" only counts
     // deals that came FROM a linked lead; "deals lost" counts either kind.
-    const leadDealWon = convertedLeadDeals.filter((d) => d.stage === "Closed Won" && String(d.wonBy || "") === idStr).length;
+    const wonDealsForLeads = convertedLeadDeals.filter((d) => d.stage === "Closed Won" && String(d.wonBy || "") === idStr);
+    const leadDealWon = new Set(wonDealsForLeads.map(d => String(d.leadId))).size;
     const dealsLost =
       existingDeals.filter((d) => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, idStr)).length +
       convertedLeadDeals.filter((d) => d.stage === "Closed Lost" && wasLostBySelf(d.stageHistory, idStr)).length;
@@ -238,7 +246,10 @@ export default {
         const rawLeadIds = (t.linkedLeads || []);
         const rawDealIds = (t.linkedDeals || []);
 
-        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length);
+        const hadSpecificLeads = t.reasonNotes && t.reasonNotes.some(r => r.itemType === "lead");
+        const hadSpecificDeals = t.reasonNotes && t.reasonNotes.some(r => r.itemType === "deal");
+
+        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length, hadSpecificLeads, hadSpecificDeals);
 
         const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
           .select("leadName companyName phoneNumber email status createdAt statusHistory")
@@ -287,17 +298,26 @@ export default {
             };
           }));
 
-        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, 0);
-        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, 0);
+        const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
+        const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
 
-        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
-        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
-        const leadDealWonPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) : 0;
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
+
+        const leadsPercent = effTargetLeads > 0 
+          ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) 
+          : (t.targetLeads > 0 && adminConvertedLeadsCount >= rawLeadIds.length && rawLeadIds.length > 0 ? 100 : 0);
+        const dealsPercent = effTargetDeals > 0 
+          ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) 
+          : (t.targetDeals > 0 && adminWonDealsCount >= rawDealIds.length && rawDealIds.length > 0 ? 100 : 0);
+        const leadDealWonPercent = effTargetLeads > 0 
+          ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) 
+          : (t.targetLeads > 0 && adminConvertedLeadsCount >= rawLeadIds.length && rawLeadIds.length > 0 ? 100 : 0);
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
-          effTargetLeads > 0 ? leadsPercent : null,
-          effTargetDeals > 0 ? dealsPercent : null,
+          t.targetLeads > 0 ? leadsPercent : null,
+          t.targetDeals > 0 ? dealsPercent : null,
           t.targetCalls > 0 ? callsPercent : null,
           t.targetMeetings > 0 ? meetingsPercent : null,
         ].filter(v => v !== null);
@@ -364,8 +384,11 @@ export default {
         const rawLeadIds = (t.linkedLeads || []);
         const rawDealIds = (t.linkedDeals || []);
 
+        const hadSpecificLeads = t.reasonNotes && t.reasonNotes.some(r => r.itemType === "lead");
+        const hadSpecificDeals = t.reasonNotes && t.reasonNotes.some(r => r.itemType === "deal");
+
         // Counts use raw IDs (works even for deleted leads)
-        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length);
+        const actuals = await computeActuals(models, t.salesPerson._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length, hadSpecificLeads, hadSpecificDeals);
 
         // Populate existing leads (deleted ones are simply absent)
         const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
@@ -427,17 +450,23 @@ export default {
         const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
         const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
 
-        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, 0);
-        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, 0);
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
 
-        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
-        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
-        const leadDealWonPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) : 0;
+        const leadsPercent = effTargetLeads > 0 
+          ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) 
+          : (t.targetLeads > 0 && adminConvertedLeadsCount >= rawLeadIds.length && rawLeadIds.length > 0 ? 100 : 0);
+        const dealsPercent = effTargetDeals > 0 
+          ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) 
+          : (t.targetDeals > 0 && adminWonDealsCount >= rawDealIds.length && rawDealIds.length > 0 ? 100 : 0);
+        const leadDealWonPercent = effTargetLeads > 0 
+          ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) 
+          : (t.targetLeads > 0 && adminConvertedLeadsCount >= rawLeadIds.length && rawLeadIds.length > 0 ? 100 : 0);
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
-          effTargetLeads > 0 ? leadsPercent : null,
-          effTargetDeals > 0 ? dealsPercent : null,
+          t.targetLeads > 0 ? leadsPercent : null,
+          t.targetDeals > 0 ? dealsPercent : null,
           t.targetCalls > 0 ? callsPercent : null,
           t.targetMeetings > 0 ? meetingsPercent : null,
         ].filter(v => v !== null);
@@ -500,7 +529,10 @@ export default {
         const rawLeadIds = (t.linkedLeads || []);
         const rawDealIds = (t.linkedDeals || []);
 
-        const actuals = await computeActuals(models, req.user._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length);
+        const hadSpecificLeads = t.reasonNotes && t.reasonNotes.some(r => r.itemType === "lead");
+        const hadSpecificDeals = t.reasonNotes && t.reasonNotes.some(r => r.itemType === "deal");
+
+        const actuals = await computeActuals(models, req.user._id, t.startDate, t.endDate, rawLeadIds, rawDealIds, t.targetLeads, t.targetDeals, (t.reportedCalls || []).length, (t.reportedMeetings || []).length, hadSpecificLeads, hadSpecificDeals);
 
         const existingLeads = await Lead.find({ _id: { $in: rawLeadIds } })
           .select("leadName companyName phoneNumber email status createdAt statusHistory")
@@ -556,17 +588,23 @@ export default {
         const adminConvertedLeadsCount = convertedLeadDeals.filter(d => d.convertedBy?.role?.name === "Admin").length;
         const adminWonDealsCount = existingDeals.filter(d => d.stage === "Closed Won" && d.wonBy?.role?.name === "Admin").length;
 
-        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, 0);
-        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, 0);
+        const effTargetLeads = effectiveGoal(t.targetLeads, rawLeadIds.length, adminConvertedLeadsCount);
+        const effTargetDeals = effectiveGoal(t.targetDeals, rawDealIds.length, adminWonDealsCount);
 
-        const leadsPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) : 0;
-        const dealsPercent = effTargetDeals > 0 ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) : 0;
-        const leadDealWonPercent = effTargetLeads > 0 ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) : 0;
+        const leadsPercent = effTargetLeads > 0 
+          ? Math.min(100, Math.round((actuals.leadsConverted / effTargetLeads) * 100)) 
+          : (t.targetLeads > 0 && adminConvertedLeadsCount >= rawLeadIds.length && rawLeadIds.length > 0 ? 100 : 0);
+        const dealsPercent = effTargetDeals > 0 
+          ? Math.min(100, Math.round((actuals.dealsWon / effTargetDeals) * 100)) 
+          : (t.targetDeals > 0 && adminWonDealsCount >= rawDealIds.length && rawDealIds.length > 0 ? 100 : 0);
+        const leadDealWonPercent = effTargetLeads > 0 
+          ? Math.min(100, Math.round((actuals.leadDealWon / effTargetLeads) * 100)) 
+          : (t.targetLeads > 0 && adminConvertedLeadsCount >= rawLeadIds.length && rawLeadIds.length > 0 ? 100 : 0);
         const callsPercent = t.targetCalls > 0 ? Math.min(100, Math.round((actuals.calls / t.targetCalls) * 100)) : 0;
         const meetingsPercent = t.targetMeetings > 0 ? Math.min(100, Math.round((actuals.meetings / t.targetMeetings) * 100)) : 0;
         const activePercentages = [
-          effTargetLeads > 0 ? leadsPercent : null,
-          effTargetDeals > 0 ? dealsPercent : null,
+          t.targetLeads > 0 ? leadsPercent : null,
+          t.targetDeals > 0 ? dealsPercent : null,
           t.targetCalls > 0 ? callsPercent : null,
           t.targetMeetings > 0 ? meetingsPercent : null,
         ].filter(v => v !== null);
@@ -758,12 +796,13 @@ export default {
         return res.status(403).json({ message: "Access denied: Admins only" });
       }
       const { Target, Notification } = getModels(req);
-      const { salesPerson, period, startDate, endDate, targetLeads, targetDeals, targetCalls, targetMeetings, linkedLeads, linkedDeals, description } = req.body;
+      const { title, salesPerson, period, startDate, endDate, targetLeads, targetDeals, targetCalls, targetMeetings, linkedLeads, linkedDeals, description } = req.body;
 
       const dateError = validateTargetDates(startDate, endDate, { isCreate: true });
       if (dateError) return res.status(400).json({ message: dateError });
 
       const target = await Target.create({
+        title: title || "Untitled Target",
         salesPerson,
         period,
         startDate,
@@ -1160,8 +1199,30 @@ export default {
       const models = getModels(req);
       const { Lead, Deal, CallLog, Activity } = models;
 
+      const { period, startDate, endDate } = req.query;
+      
+      let dateFilterCreatedAt = {};
+      let dateFilterUpdatedAt = {};
+      let dateFilterStartDate = {};
+
+      if (period === "this_month") {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        dateFilterCreatedAt = { createdAt: { $gte: monthStart } };
+        dateFilterUpdatedAt = { updatedAt: { $gte: monthStart } };
+        dateFilterStartDate = { startDate: { $gte: monthStart } };
+      } else if (period === "custom" && startDate && endDate) {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilterCreatedAt = { createdAt: { $gte: start, $lte: end } };
+        dateFilterUpdatedAt = { updatedAt: { $gte: start, $lte: end } };
+        dateFilterStartDate = { startDate: { $gte: start, $lte: end } };
+      }
+      // if period === "all", the filters remain empty {}
+
+      // Keep week filters for the weekly stats object (which isn't affected by the new filter)
       const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - now.getDay());
 
@@ -1169,6 +1230,7 @@ export default {
         totalLeadsCreated,
         activeLeads,
         convertedLeads,
+        totalDealsCreated,
         activeDeals,
         wonDeals,
         lostDeals,
@@ -1177,29 +1239,25 @@ export default {
         weekCalls,
         weekMeetings,
       ] = await Promise.all([
-        Lead.countDocuments({ createdAt: { $gte: monthStart } }),
-        // "Assigned Leads" — leads still open (not yet converted/rejected), so
-        // this count naturally drops to 0 as they get converted to deals,
-        // instead of double-counting a lead that's already become a deal.
-        Lead.countDocuments({ createdAt: { $gte: monthStart }, status: { $nin: ["Converted", "Rejected"] } }),
-        Lead.countDocuments({ status: "Converted", updatedAt: { $gte: monthStart } }),
-        // "Assigned Deals" — deals still active in the pipeline (not yet
-        // Closed Won/Lost), so this drops to 0 once they're all won/lost.
-        Deal.countDocuments({ createdAt: { $gte: monthStart }, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
-        Deal.countDocuments({ stage: "Closed Won", updatedAt: { $gte: monthStart } }),
-        Deal.countDocuments({ stage: "Closed Lost", updatedAt: { $gte: monthStart } }),
-        CallLog.countDocuments({ userId: { $exists: true }, createdAt: { $gte: monthStart } }),
-        Activity.countDocuments({ activityCategory: "Meeting", startDate: { $gte: monthStart } }),
+        Lead.countDocuments({ ...dateFilterCreatedAt }),
+        Lead.countDocuments({ ...dateFilterCreatedAt, status: { $nin: ["Converted", "Rejected"] } }),
+        Lead.countDocuments({ status: "Converted", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ ...dateFilterCreatedAt }),
+        Deal.countDocuments({ ...dateFilterCreatedAt, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
+        Deal.countDocuments({ stage: "Closed Won", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ stage: "Closed Lost", ...dateFilterUpdatedAt }),
+        CallLog.countDocuments({ userId: { $exists: true }, ...dateFilterCreatedAt }),
+        Activity.countDocuments({ activityCategory: "Meeting", ...dateFilterStartDate }),
         CallLog.countDocuments({ userId: { $exists: true }, createdAt: { $gte: weekStart } }),
         Activity.countDocuments({ activityCategory: "Meeting", startDate: { $gte: weekStart } }),
       ]);
 
       res.status(200).json({
-        monthly: {
-          totalLeads: activeLeads,
+        monthly: { // kept as 'monthly' for backwards compatibility in frontend
+          totalLeads: totalLeadsCreated,
           convertedLeads,
           leadToDealRate: totalLeadsCreated > 0 ? Math.round((convertedLeads / totalLeadsCreated) * 100) : 0,
-          totalDeals: activeDeals,
+          totalDeals: totalDealsCreated,
           wonDeals,
           lostDeals,
           calls: monthCalls,
@@ -1226,8 +1284,28 @@ export default {
       const { Lead, Deal, CallLog, Activity } = models;
       const userId = req.user._id;
 
+      const { period, startDate, endDate } = req.query;
+      
+      let dateFilterCreatedAt = {};
+      let dateFilterUpdatedAt = {};
+      let dateFilterStartDate = {};
+
+      if (period === "this_month") {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        dateFilterCreatedAt = { createdAt: { $gte: monthStart } };
+        dateFilterUpdatedAt = { updatedAt: { $gte: monthStart } };
+        dateFilterStartDate = { startDate: { $gte: monthStart } };
+      } else if (period === "custom" && startDate && endDate) {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilterCreatedAt = { createdAt: { $gte: start, $lte: end } };
+        dateFilterUpdatedAt = { updatedAt: { $gte: start, $lte: end } };
+        dateFilterStartDate = { startDate: { $gte: start, $lte: end } };
+      }
+      
       const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - now.getDay());
 
@@ -1235,6 +1313,7 @@ export default {
         totalLeadsCreated,
         activeLeads,
         convertedLeads,
+        totalDealsCreated,
         activeDeals,
         wonDeals,
         lostDeals,
@@ -1243,28 +1322,25 @@ export default {
         weekCalls,
         weekMeetings,
       ] = await Promise.all([
-        Lead.countDocuments({ assignTo: userId, createdAt: { $gte: monthStart } }),
-        // "Assigned Leads" — leads still open (not yet converted/rejected), so
-        // this count naturally drops to 0 as they get converted to deals.
-        Lead.countDocuments({ assignTo: userId, createdAt: { $gte: monthStart }, status: { $nin: ["Converted", "Rejected"] } }),
-        Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: monthStart } }),
-        // "Assigned Deals" — deals still active in the pipeline (not yet
-        // Closed Won/Lost), so this drops to 0 once they're all won/lost.
-        Deal.countDocuments({ assignedTo: userId, createdAt: { $gte: monthStart }, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
-        Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", updatedAt: { $gte: monthStart } }),
-        Deal.countDocuments({ assignedTo: userId, stage: "Closed Lost", updatedAt: { $gte: monthStart } }),
-        CallLog.countDocuments({ userId, createdAt: { $gte: monthStart } }),
-        Activity.countDocuments({ userId, activityCategory: "Meeting", startDate: { $gte: monthStart } }),
+        Lead.countDocuments({ assignTo: userId, ...dateFilterCreatedAt }),
+        Lead.countDocuments({ assignTo: userId, ...dateFilterCreatedAt, status: { $nin: ["Converted", "Rejected"] } }),
+        Lead.countDocuments({ assignTo: userId, status: "Converted", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ assignedTo: userId, ...dateFilterCreatedAt }),
+        Deal.countDocuments({ assignedTo: userId, ...dateFilterCreatedAt, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
+        Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ assignedTo: userId, stage: "Closed Lost", ...dateFilterUpdatedAt }),
+        CallLog.countDocuments({ userId, ...dateFilterCreatedAt }),
+        Activity.countDocuments({ userId, activityCategory: "Meeting", ...dateFilterStartDate }),
         CallLog.countDocuments({ userId, createdAt: { $gte: weekStart } }),
         Activity.countDocuments({ userId, activityCategory: "Meeting", startDate: { $gte: weekStart } }),
       ]);
 
       res.status(200).json({
         monthly: {
-          totalLeads: activeLeads,
+          totalLeads: totalLeadsCreated,
           convertedLeads,
           leadToDealRate: totalLeadsCreated > 0 ? Math.round((convertedLeads / totalLeadsCreated) * 100) : 0,
-          totalDeals: activeDeals,
+          totalDeals: totalDealsCreated,
           wonDeals,
           lostDeals,
           calls: monthCalls,
@@ -1382,10 +1458,16 @@ export default {
   // Sales: flag a lead/deal with a reason note (visible to admin)
   addReasonNote: async (req, res) => {
     try {
+      const fs = (await import('fs')).default;
+      const logFile = "d:/SAAS_CRM_BACKEND/debug.log";
+      fs.appendFileSync(logFile, "\n--- addReasonNote started for Target ---\n");
+
       const { Target, Notification, User, Role } = getModels(req);
       const { itemType, itemId, itemName, note, companyName, phoneNumber, email, value, currency, stageOrStatus } = req.body;
+      fs.appendFileSync(logFile, `Req body: ${JSON.stringify(req.body)}\n`);
+
       if (!note?.trim()) return res.status(400).json({ message: "Note is required" });
-      if (!["lead", "deal"].includes(itemType)) return res.status(400).json({ message: "itemType must be lead or deal" });
+      if (!["lead", "deal", "target"].includes(itemType)) return res.status(400).json({ message: "itemType must be lead, deal, or target" });
 
       const target = await Target.findById(req.params.id);
       if (!target) return res.status(404).json({ message: "Target not found" });
@@ -1408,7 +1490,9 @@ export default {
         currency: currency || "",
         stageOrStatus: stageOrStatus || "",
       });
+      fs.appendFileSync(logFile, "Saving target...\n");
       await target.save();
+      fs.appendFileSync(logFile, "Target saved!\n");
 
       // Notify all admins
       const adminRole = await Role.findOne({ name: "Admin" });
@@ -1433,7 +1517,10 @@ export default {
       }
 
       res.status(200).json({ message: "Reason note sent to admin", reasonNotes: target.reasonNotes });
+      fs.appendFileSync(logFile, "Success sent.\n");
     } catch (err) {
+      const fs = (await import('fs')).default;
+      fs.appendFileSync("d:/SAAS_CRM_BACKEND/debug.log", `ERROR in addReasonNote target: ${err.stack}\n`);
       console.error("Error adding reason note:", err);
       res.status(500).json({ message: "Internal server error" });
     }
@@ -1470,17 +1557,65 @@ export default {
   getAllReasonNotes: async (req, res) => {
     try {
       if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied" });
-      const { Target } = getModels(req);
+      const { Target, Task } = getModels(req);
       const targets = await Target.find({ "reasonNotes.0": { $exists: true } })
         .populate("salesPerson", "firstName lastName email")
         .populate("reasonNotes.addedBy", "firstName lastName")
         .populate("reasonNotes.reassignedTo", "firstName lastName")
+        .populate("linkedLeads", "status")
+        .populate("linkedDeals", "stage")
         .lean();
+
+      const allSalesPersonIds = [...new Set(targets.map(t => String(t.salesPerson._id)))];
+      const activeTasks = await Task.find({
+        assignedTo: { $in: allSalesPersonIds },
+        status: { $nin: ["Completed", "Closed", "Rejected"] }
+      }).lean();
 
       const allNotes = [];
       for (const t of targets) {
+        const remainingLeads = (t.linkedLeads || []).filter(l => l && l.status !== "Converted");
+        const remainingDeals = (t.linkedDeals || []).filter(d => d && d.stage !== "Closed Won" && d.stage !== "Closed Lost");
+        const remainingCallsCount = Math.max(0, (t.targetCalls || 0) - (t.reportedCalls || []).length);
+        const remainingMeetingsCount = Math.max(0, (t.targetMeetings || 0) - (t.reportedMeetings || []).length);
+
+        const userTasks = activeTasks.filter(task => String(task.assignedTo) === String(t.salesPerson._id));
+        const overlappingTaskLeads = [];
+        const overlappingTaskDeals = [];
+
+        remainingLeads.forEach(lead => {
+          const leadIdStr = String(lead._id);
+          const foundTask = userTasks.find(task => 
+            (task.leadRef && String(task.leadRef) === leadIdStr) || 
+            (task.leadRefs && task.leadRefs.some(ref => String(ref) === leadIdStr))
+          );
+          if (foundTask) overlappingTaskLeads.push({ _id: lead._id, name: lead.leadName, taskId: foundTask._id, taskTitle: foundTask.title });
+        });
+
+        remainingDeals.forEach(deal => {
+          const dealIdStr = String(deal._id);
+          const foundTask = userTasks.find(task => 
+            (task.dealRef && String(task.dealRef) === dealIdStr) || 
+            (task.dealRefs && task.dealRefs.some(ref => String(ref) === dealIdStr))
+          );
+          if (foundTask) overlappingTaskDeals.push({ _id: deal._id, name: deal.dealName || deal.dealTitle, taskId: foundTask._id, taskTitle: foundTask.title });
+        });
+
         for (let i = 0; i < t.reasonNotes.length; i++) {
-          allNotes.push({ ...t.reasonNotes[i], noteIdx: i, targetId: t._id, salesPerson: t.salesPerson });
+          allNotes.push({ 
+            ...t.reasonNotes[i], 
+            noteIdx: i, 
+            targetId: t._id, 
+            salesPerson: t.salesPerson,
+            remainingLeadsCount: remainingLeads.length,
+            remainingDealsCount: remainingDeals.length,
+            remainingCallsCount,
+            remainingMeetingsCount,
+            remainingLeads,
+            remainingDeals,
+            overlappingTaskLeads,
+            overlappingTaskDeals
+          });
         }
       }
       allNotes.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
@@ -1535,20 +1670,23 @@ export default {
           if (!target.linkedLeads.some(id => String(id) === String(rn.itemId))) {
             target.linkedLeads.push(rn.itemId);
           }
-        } else if (!target.linkedDeals.some(id => String(id) === String(rn.itemId))) {
-          target.linkedDeals.push(rn.itemId);
+        } else if (rn.itemType === "deal") {
+          if (!target.linkedDeals.some(id => String(id) === String(rn.itemId))) {
+            target.linkedDeals.push(rn.itemId);
+          }
         }
 
         // Re-enable the item itself — it was disabled (read-only) while pending reassignment
         if (rn.itemType === "lead") await Lead.findByIdAndUpdate(rn.itemId, { isActive: true });
-        else await Deal.findByIdAndUpdate(rn.itemId, { isActive: true });
+        else if (rn.itemType === "deal") await Deal.findByIdAndUpdate(rn.itemId, { isActive: true });
+        else if (rn.itemType === "target") target.status = "In Progress";
 
         // Extending the due date for the same person must also restart the
         // reminder cycle, otherwise the cron thinks it already notified for
         // this target and stays silent until the (now stale) old deadline.
         if (extendEndDate) {
           target.endDate = new Date(extendEndDate);
-          target.reminderSentAt = null;
+          target.reminderSentAt = null; 
           target.dueTodaySentAt = null;
           target.expiredAt = null;
         }
@@ -1572,12 +1710,15 @@ export default {
 
         // 1. Re-assign lead/deal ownership + remove from original target
         let sourceLeadId = null; // populated when deal is a converted-lead-deal
+        const oldAssigneeId = String(target.salesPerson._id);
+        let skipNewTargetCreation = false;
+
         if (rn.itemType === "lead") {
           // Re-assigning to a different person also re-enables the item for
           // its new owner — it was disabled (read-only) on the old owner's view.
           await Lead.findByIdAndUpdate(rn.itemId, { assignTo: reassignToUserId, isActive: true });
           target.linkedLeads = target.linkedLeads.filter(id => String(id) !== String(rn.itemId));
-        } else {
+        } else if (rn.itemType === "deal") {
           await Deal.findByIdAndUpdate(rn.itemId, { assignedTo: reassignToUserId, isActive: true });
           target.linkedDeals = target.linkedDeals.filter(id => String(id) !== String(rn.itemId));
           // Also handle converted-lead-deals: the source lead sits in linkedLeads, not linkedDeals
@@ -1587,6 +1728,75 @@ export default {
             target.linkedLeads = target.linkedLeads.filter(id => String(id) !== sourceLeadId);
             console.log("[reassignItem] Converted-lead-deal — removed source lead:", sourceLeadId);
           }
+        } else if (rn.itemType === "target") {
+          // Reassigning the overall target itself to a new person
+          
+          const actuals = await computeActuals(
+            getModels(req), 
+            oldAssigneeId, 
+            target.startDate, 
+            target.endDate, 
+            target.linkedLeads, 
+            target.linkedDeals, 
+            target.targetLeads, 
+            target.targetDeals, 
+            (target.reportedCalls || []).length, 
+            (target.reportedMeetings || []).length, 
+            target.linkedLeads && target.linkedLeads.length > 0, 
+            target.linkedDeals && target.linkedDeals.length > 0
+          );
+          
+          const leadsData = await Lead.find({ _id: { $in: target.linkedLeads } }).select("status");
+          const completedLeads = [];
+          const remainingLeads = [];
+          for (const l of leadsData) {
+            if (l.status === "Converted") completedLeads.push(l._id);
+            else remainingLeads.push(l._id);
+          }
+
+          const dealsData = await Deal.find({ _id: { $in: target.linkedDeals } }).select("stage");
+          const completedDeals = [];
+          const remainingDeals = [];
+          for (const d of dealsData) {
+            if (d.stage === "Closed Won" || d.stage === "Closed Lost") completedDeals.push(d._id);
+            else remainingDeals.push(d._id);
+          }
+
+          const totalActuals = actuals.leadsConverted + actuals.dealsWon + actuals.calls + actuals.meetings;
+          
+          if (totalActuals > 0 || completedLeads.length > 0 || completedDeals.length > 0) {
+            // SPLIT TARGET
+            // Store original goals for the new target
+            req._splitRemainder = {
+              targetLeads: Math.max(0, target.targetLeads - actuals.leadsConverted),
+              targetDeals: Math.max(0, target.targetDeals - actuals.dealsWon),
+              targetCalls: Math.max(0, target.targetCalls - actuals.calls),
+              targetMeetings: Math.max(0, target.targetMeetings - actuals.meetings),
+              linkedLeads: remainingLeads,
+              linkedDeals: remainingDeals
+            };
+            
+            // Old target stays with old assignee, scaled down to actuals
+            target.targetLeads = actuals.leadsConverted;
+            target.targetDeals = actuals.dealsWon;
+            target.targetCalls = actuals.calls;
+            target.targetMeetings = actuals.meetings;
+            target.linkedLeads = completedLeads;
+            target.linkedDeals = completedDeals;
+            target.status = "Completed";
+            
+            skipNewTargetCreation = false;
+          } else {
+            // Nothing completed, reassign fully
+            target.salesPerson = reassignToUserId;
+            skipNewTargetCreation = true;
+            if (extendEndDate) {
+              target.endDate = new Date(extendEndDate);
+              target.reminderSentAt = null;
+              target.dueTodaySentAt = null;
+              target.expiredAt = null;
+            }
+          }
         }
         target.reasonNotes[Number(noteIdx)].status      = "resolved";
         target.reasonNotes[Number(noteIdx)].resolvedAt  = new Date();
@@ -1595,39 +1805,137 @@ export default {
         await target.save();
         console.log("[reassignItem] Original target saved — item removed.");
 
-        // 2. ALWAYS create a new target for the new sales person so it appears as "New"
-        const resolvedEndDate = extendEndDate ? new Date(extendEndDate) : null;
+        // 2. Create a new target for the new sales person (unless it's the target itself being reassigned entirely)
+        if (!skipNewTargetCreation) {
+          const resolvedEndDate = extendEndDate ? new Date(extendEndDate) : null;
+  
+          const createPayload = {
+            title:          target.title || "Untitled Target",
+            salesPerson:    reassignToUserId,
+            period:         target.period,
+            startDate:      target.startDate,
+            endDate:        resolvedEndDate || target.endDate,
+            targetLeads:    rn.itemType === "target" ? req._splitRemainder.targetLeads : 0,
+            targetDeals:    rn.itemType === "target" ? req._splitRemainder.targetDeals : 0,
+            targetCalls:    rn.itemType === "target" ? req._splitRemainder.targetCalls : 0,
+            targetMeetings: rn.itemType === "target" ? req._splitRemainder.targetMeetings : 0,
+            description:    `Assigned by admin — ${rn.itemType}: ${rn.itemName}`,
+            createdBy:      req.user._id,
+            linkedLeads:    rn.itemType === "target" ? req._splitRemainder.linkedLeads : (rn.itemType === "lead" ? [rn.itemId] : []),
+            linkedDeals:    rn.itemType === "target" ? req._splitRemainder.linkedDeals : (rn.itemType === "deal" ? [rn.itemId] : []),
+          };
+          console.log("[reassignItem] Creating new target with payload:", JSON.stringify(createPayload));
+          const receiverTarget = await Target.create(createPayload);
+          console.log("[reassignItem] New target created — id:", String(receiverTarget._id));
+        }
 
-        const createPayload = {
-          salesPerson:    reassignToUserId,
-          period:         target.period,
-          startDate:      target.startDate,
-          endDate:        resolvedEndDate || target.endDate,
-          // Set targets to 0 — admin can update later; avoids showing "0/1" with no items
-          targetLeads:    0,
-          targetDeals:    0,
-          targetCalls:    0,
-          targetMeetings: 0,
-          description:    `Assigned by admin — ${rn.itemType}: ${rn.itemName}`,
-          createdBy:      req.user._id,
-          linkedLeads:    rn.itemType === "lead" ? [rn.itemId] : [],
-          linkedDeals:    rn.itemType === "deal" ? [rn.itemId] : [],
-        };
-        console.log("[reassignItem] Creating new target with payload:", JSON.stringify(createPayload));
-        const receiverTarget = await Target.create(createPayload);
-        console.log("[reassignItem] New target created — id:", String(receiverTarget._id));
+        // 2.5 Cascading Task Split
+        const { Task } = getModels(req);
+        const transferredLeadIdsStr = new Set((rn.itemType === "target" ? (req._splitRemainder?.linkedLeads || remainingLeads || []) : (rn.itemType === "lead" ? [rn.itemId] : [])).map(String));
+        const transferredDealIdsStr = new Set((rn.itemType === "target" ? (req._splitRemainder?.linkedDeals || remainingDeals || []) : (rn.itemType === "deal" ? [rn.itemId] : [])).map(String));
+        
+        if (transferredLeadIdsStr.size > 0 || transferredDealIdsStr.size > 0) {
+          const activeTasks = await Task.find({
+            assignedTo: oldAssigneeId,
+            status: { $nin: ["Completed", "Closed", "Rejected"] }
+          });
+          
+          for (const t of activeTasks) {
+            const tLeads = (t.leadRefs || []).map(String);
+            const tDeals = (t.dealRefs || []).map(String);
+            
+            const hasOverlap = tLeads.some(l => transferredLeadIdsStr.has(l)) || tDeals.some(d => transferredDealIdsStr.has(d));
+            
+            if (hasOverlap) {
+              const completedLeadsForTask = [];
+              const remainingLeadsForTask = [];
+              const tLeadsData = await Lead.find({ _id: { $in: t.leadRefs } }).select("status");
+              for (const l of tLeadsData) {
+                if (l.status === "Converted") completedLeadsForTask.push(l._id);
+                else remainingLeadsForTask.push(l._id);
+              }
+
+              const completedDealsForTask = [];
+              const remainingDealsForTask = [];
+              const tDealsData = await Deal.find({ _id: { $in: t.dealRefs } }).select("stage");
+              for (const d of tDealsData) {
+                if (d.stage === "Closed Won" || d.stage === "Closed Lost") completedDealsForTask.push(d._id);
+                else remainingDealsForTask.push(d._id);
+              }
+
+              if (completedLeadsForTask.length > 0 || completedDealsForTask.length > 0) {
+                t.leadRefs = completedLeadsForTask;
+                t.dealRefs = completedDealsForTask;
+                t.leadRef = completedLeadsForTask.length > 0 ? completedLeadsForTask[completedLeadsForTask.length - 1] : null;
+                t.dealRef = completedDealsForTask.length > 0 ? completedDealsForTask[completedDealsForTask.length - 1] : null;
+                t.status = "Completed";
+                t.approvedByAdmin = true;
+                t.history.push({
+                  event: "TaskSplit",
+                  detail: `Task split due to overlapping Target reassignment by Admin ${adminName}.`,
+                  by: req.user._id,
+                  at: new Date(),
+                });
+                await t.save();
+
+                if (remainingLeadsForTask.length > 0) await Lead.updateMany({ _id: { $in: remainingLeadsForTask } }, { assignTo: reassignToUserId });
+                if (remainingDealsForTask.length > 0) await Deal.updateMany({ _id: { $in: remainingDealsForTask } }, { assignedTo: reassignToUserId });
+
+                const newTask = new Task({
+                  title: t.title,
+                  description: t.description,
+                  priority: t.priority,
+                  dueDate: extendEndDate ? new Date(extendEndDate) : t.dueDate,
+                  assignedTo: reassignToUserId,
+                  createdBy: t.createdBy,
+                  leadRefs: remainingLeadsForTask,
+                  dealRefs: remainingDealsForTask,
+                  leadRef: remainingLeadsForTask.length > 0 ? remainingLeadsForTask[remainingLeadsForTask.length - 1] : null,
+                  dealRef: remainingDealsForTask.length > 0 ? remainingDealsForTask[remainingDealsForTask.length - 1] : null,
+                  leadDueDates: t.leadDueDates,
+                  dealDueDates: t.dealDueDates,
+                  status: "Pending",
+                  history: [{
+                    event: "Created",
+                    detail: `Created from split task "${t.title}" cascaded from Target reassignment.`,
+                    by: req.user._id,
+                    at: new Date()
+                  }]
+                });
+                await newTask.save();
+              } else {
+                t.leadRefs = remainingLeadsForTask;
+                t.dealRefs = remainingDealsForTask;
+                t.assignedTo = reassignToUserId;
+                t.markModified("assignedTo");
+                t.reminderSentAt = null;
+                t.dueTodaySentAt = null;
+                if (extendEndDate) t.dueDate = new Date(extendEndDate);
+                t.history.push({
+                  event: "Reassigned",
+                  detail: `Cascaded reassignment from Target by Admin ${adminName}.`,
+                  by: req.user._id,
+                  at: new Date(),
+                });
+                if (remainingLeadsForTask.length > 0) await Lead.updateMany({ _id: { $in: remainingLeadsForTask } }, { assignTo: reassignToUserId });
+                if (remainingDealsForTask.length > 0) await Deal.updateMany({ _id: { $in: remainingDealsForTask } }, { assignedTo: reassignToUserId });
+                await t.save();
+              }
+            }
+          }
+        }
 
         // 3. Notifications
         await createNotification(Notification, {
           userId: reassignToUserId,
-          title:   `New ${rn.itemType === "lead" ? "Lead" : "Deal"} Assigned to You`,
+          title:   rn.itemType === "target" ? "Target Reassigned to You" : `New ${rn.itemType === "lead" ? "Lead" : "Deal"} Assigned to You`,
           message: `Admin ${adminName} assigned "${rn.itemName}" to you. ${quote}`,
           type:    "target_reassign",
           meta:    { itemType: rn.itemType, itemId: String(rn.itemId), itemName: rn.itemName },
         });
         await createNotification(Notification, {
-          userId:  target.salesPerson._id,
-          title:   `${rn.itemType === "lead" ? "Lead" : "Deal"} Reassigned`,
+          userId:  oldAssigneeId,
+          title:   rn.itemType === "target" ? "Target Reassigned" : `${rn.itemType === "lead" ? "Lead" : "Deal"} Reassigned`,
           message: `Admin ${adminName} assigned "${rn.itemName}" to ${newUser.firstName} ${newUser.lastName}.${adminNote ? ` Note: ${adminNote}` : ""} You did well! ${quote}`,
           type:    "target_reassign",
           meta:    { itemType: rn.itemType, itemId: String(rn.itemId), itemName: rn.itemName, removed: true },
@@ -1636,8 +1944,8 @@ export default {
         // 4. Real-time events
         notifyTargetUser(String(reassignToUserId),      "item_reassigned",  { itemType: rn.itemType, itemName: rn.itemName, quote });
         notifyTargetUser(String(reassignToUserId),      "targets_refresh",  {});
-        notifyTargetUser(String(target.salesPerson._id), "item_removed",    { itemType: rn.itemType, itemName: rn.itemName, itemId: String(rn.itemId), sourceLeadId, targetId: String(target._id) });
-        notifyTargetUser(String(target.salesPerson._id), "targets_refresh", {});
+        notifyTargetUser(String(oldAssigneeId),         "item_removed",     { itemType: rn.itemType, itemName: rn.itemName, itemId: String(rn.itemId), sourceLeadId, targetId: String(target._id) });
+        notifyTargetUser(String(oldAssigneeId),         "targets_refresh",  {});
 
         // Notify all admins to refresh their view
         try {
@@ -1651,6 +1959,51 @@ export default {
     } catch (err) {
       console.error("Error reassigning item:", err);
       res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  rejectReasonNote: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied" });
+      const { Target, Notification } = getModels(req);
+      const { noteIdx } = req.params;
+      const { rejectReason } = req.body;
+
+      const target = await Target.findById(req.params.id).populate("salesPerson", "firstName lastName _id");
+      if (!target) return res.status(404).json({ message: "Target not found" });
+
+      const nIdx = parseInt(noteIdx, 10);
+      if (isNaN(nIdx) || nIdx < 0 || nIdx >= target.reasonNotes.length) {
+        return res.status(400).json({ message: "Invalid note index" });
+      }
+
+      const rn = target.reasonNotes[nIdx];
+      if (rn.status !== "pending") {
+        return res.status(400).json({ message: "Reason note is not pending" });
+      }
+
+      rn.status = "rejected";
+      rn.rejectReason = rejectReason || "";
+      rn.resolvedAt = new Date();
+      await target.save();
+
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+      if (target.salesPerson) {
+        const itemText = rn.itemName ? `${rn.itemType === "deal" ? "Deal" : "Lead"} "${rn.itemName}"` : "your delayed item";
+        await createNotification(Notification, {
+          userId: target.salesPerson._id,
+          title: "Delay Reason Rejected",
+          message: `Admin ${adminName} rejected your delay reason for ${itemText}.${rejectReason ? ` Admin note: ${rejectReason}` : ""}\nPlease submit a new valid reason.`,
+          type: "target",
+          meta: { targetId: String(target._id), targetReasonRejected: true },
+        });
+        notifyTargetUser(String(target.salesPerson._id), "targets_refresh", {});
+      }
+
+      res.status(200).json({ message: "Reason note rejected" });
+    } catch (error) {
+      console.error("[rejectReasonNote] error:", error);
+      res.status(500).json({ message: "Server Error", error: error.message });
     }
   },
 
@@ -1718,37 +2071,113 @@ export default {
           admins.forEach((a) => notifyTargetUser(String(a._id), "target_due_today", {}));
         } catch (_) { /* non-critical */ }
       } else {
-        // Move ownership of every still-incomplete item, re-enable them for the
-        // new owner, and unlink them from the old target.
+        // Split the target: the old target retains completed items, the new target gets the remaining items
+        const oldAssigneeId = String(targetLean.salesPerson._id);
+        let skipNewTargetCreation = false;
+
+        const actuals = await computeActuals(
+          getModels(req),
+          oldAssigneeId,
+          targetLean.startDate,
+          targetLean.endDate,
+          (targetLean.linkedLeads || []).map(l => l._id),
+          (targetLean.linkedDeals || []).map(d => d._id),
+          targetLean.targetLeads,
+          targetLean.targetDeals,
+          (targetLean.reportedCalls || []).length,
+          (targetLean.reportedMeetings || []).length,
+          targetLean.linkedLeads && targetLean.linkedLeads.length > 0,
+          targetLean.linkedDeals && targetLean.linkedDeals.length > 0
+        );
+
+        const completedLeads = [];
+        const remainingLeads = [];
+        for (const l of (targetLean.linkedLeads || [])) {
+          if (l.status === "Converted") completedLeads.push(l._id);
+          else remainingLeads.push(l._id);
+        }
+
+        const completedDeals = [];
+        const remainingDeals = [];
+        for (const d of (targetLean.linkedDeals || [])) {
+          if (d.stage === "Closed Won" || d.stage === "Closed Lost") completedDeals.push(d._id);
+          else remainingDeals.push(d._id);
+        }
+
+        const totalActuals = actuals.leadsConverted + actuals.dealsWon + actuals.calls + actuals.meetings;
+        
+        let splitRemainder = { targetLeads: 0, targetDeals: 0, targetCalls: 0, targetMeetings: 0 };
+        
+        if (totalActuals > 0 || completedLeads.length > 0 || completedDeals.length > 0) {
+          // SPLIT TARGET
+          splitRemainder = {
+            targetLeads: Math.max(0, targetLean.targetLeads - actuals.leadsConverted),
+            targetDeals: Math.max(0, targetLean.targetDeals - actuals.dealsWon),
+            targetCalls: Math.max(0, targetLean.targetCalls - actuals.calls),
+            targetMeetings: Math.max(0, targetLean.targetMeetings - actuals.meetings),
+            linkedLeads: remainingLeads,
+            linkedDeals: remainingDeals
+          };
+          
+          // Old target stays with old assignee, scaled down to actuals
+          await Target.findByIdAndUpdate(targetLean._id, {
+            targetLeads: actuals.leadsConverted,
+            targetDeals: actuals.dealsWon,
+            targetCalls: actuals.calls,
+            targetMeetings: actuals.meetings,
+            linkedLeads: completedLeads,
+            linkedDeals: completedDeals,
+            status: "Completed",
+          });
+          
+          skipNewTargetCreation = false;
+        } else {
+          // Nothing completed, reassign fully
+          await Target.findByIdAndUpdate(targetLean._id, {
+            salesPerson: reassignToUserId,
+            endDate: resolvedEndDate || targetLean.endDate,
+            reminderSentAt: null,
+            dueTodaySentAt: null,
+            expiredAt: null
+          });
+          skipNewTargetCreation = true;
+        }
+
         if (leadIds.length) await Lead.updateMany({ _id: { $in: leadIds } }, { assignTo: reassignToUserId, isActive: true });
         if (dealIds.length) await Deal.updateMany({ _id: { $in: dealIds } }, { assignedTo: reassignToUserId, isActive: true });
-        await Target.findByIdAndUpdate(targetLean._id, { $pullAll: { linkedLeads: leadIds, linkedDeals: dealIds } });
 
-        // ALWAYS create a new target for the new sales person so it appears as "New"
-        const receiverTarget = await Target.create({
-          salesPerson:    reassignToUserId,
-          period:         targetLean.period,
-          startDate:      targetLean.startDate,
-          endDate:        resolvedEndDate || targetLean.endDate,
-          targetLeads: 0, targetDeals: 0, targetCalls: 0, targetMeetings: 0,
-          description:    `Assigned by admin — reassigned from ${oldSalesName}'s target`,
-          createdBy:      req.user._id,
-          linkedLeads:    leadIds,
-          linkedDeals:    dealIds,
-        });
+        let receiverTargetId = String(targetLean._id);
+        if (!skipNewTargetCreation) {
+          // ALWAYS create a new target for the new sales person so it appears as "New"
+          const receiverTarget = await Target.create({
+            salesPerson:    reassignToUserId,
+            period:         targetLean.period,
+            startDate:      targetLean.startDate,
+            endDate:        resolvedEndDate || targetLean.endDate,
+            targetLeads:    splitRemainder.targetLeads,
+            targetDeals:    splitRemainder.targetDeals,
+            targetCalls:    splitRemainder.targetCalls,
+            targetMeetings: splitRemainder.targetMeetings,
+            description:    `Assigned by admin — reassigned from ${oldSalesName}'s target`,
+            createdBy:      req.user._id,
+            linkedLeads:    leadIds,
+            linkedDeals:    dealIds,
+          });
+          receiverTargetId = String(receiverTarget._id);
+        }
 
         const itemSummary = [...incompleteLeads.map((l) => l.leadName), ...incompleteDeals.map((d) => d.dealName || d.dealTitle)].join(", ");
 
         await createNotification(Notification, {
           userId: reassignToUserId,
-          title:  "New Leads/Deals Assigned to You",
+          title:  skipNewTargetCreation ? "Target Reassigned to You" : "New Leads/Deals Assigned to You",
           message: `Admin ${adminName} assigned these to you: ${itemSummary}.${adminNote ? ` Note: ${adminNote}` : ""}`,
           type:   "target_reassign",
-          meta:   { targetId: String(receiverTarget._id) },
+          meta:   { targetId: receiverTargetId },
         });
         await createNotification(Notification, {
           userId: targetLean.salesPerson._id,
-          title:  "Leads/Deals Reassigned",
+          title:  skipNewTargetCreation ? "Target Reassigned" : "Leads/Deals Reassigned",
           message: `Admin ${adminName} reassigned these to ${newUser.firstName} ${newUser.lastName}: ${itemSummary}.${adminNote ? ` Note: ${adminNote}` : ""}`,
           type:   "target_reassign",
           meta:   { targetId: String(targetLean._id), removed: true },
@@ -1961,5 +2390,6 @@ export default {
     }
   },
 };
+
 
 

@@ -21,6 +21,7 @@ router.patch("/:id/reassign", protect, taskController.reassignTask);
 router.post("/:id/reason-note", protect, taskController.addReasonNote);
 router.post("/:id/reason-notes/:noteIdx/read", protect, taskController.markReasonNoteRead);
 router.post("/:id/reason-notes/:noteIdx/reassign", protect, taskController.reassignReasonNote);
+router.post("/:id/reason-notes/:noteIdx/reject", protect, taskController.rejectReasonNote);
 router.delete("/:id/reason-notes/:noteIdx", protect, taskController.deleteReasonNote);
 router.delete("/:id", protect, taskController.deleteTask);
 router.get("/linked/:itemType/:itemId", protect, taskController.getLinkedTasks);
