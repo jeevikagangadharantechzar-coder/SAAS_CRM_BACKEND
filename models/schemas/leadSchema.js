@@ -155,9 +155,32 @@ const leadSchema = new mongoose.Schema(
       },
     ],
 
+    images: [
+      {
+        name:       { type: String, default: "" },
+        path:       { type: String, default: "" },
+        type:       { type: String, default: "application/octet-stream" },
+        size:       { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: Date.now },
+        uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      },
+    ],
+
     statusHistory: [
       {
         status:    { type: String },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      },
+    ],
+
+    // Every plain follow-up date reschedule (list-page quick edit or the
+    // edit form) — separate from followUpNotesHistory, which is about the
+    // note text rather than the date itself.
+    followUpDateHistory: [
+      {
+        oldDate:   { type: Date, default: null },
+        newDate:   { type: Date },
         changedAt: { type: Date, default: Date.now },
         changedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
       },

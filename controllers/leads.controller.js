@@ -50,6 +50,29 @@ const asPerson = (u) => (u ? { id: u._id, name: nameOf(u) } : null);
 // match or being misinterpreted.
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Reconstructs a plain object matching the attachments/images sub-schema
+// shape, whether the source is a freshly-parsed JSON value from the client
+// or a raw Mongoose subdocument pulled off the current lead (the fallback
+// path when existingAttachments/existingImages isn't sent). Mongoose
+// subdocuments aren't plain objects — passing one straight back into a
+// findByIdAndUpdate array without normalizing first throws a CastError,
+// since the update path re-casts every element from scratch.
+const normalizeFile = (f) => {
+  if (!f) return null;
+  if (typeof f === "string") {
+    const cleanPath = f.replace(/^\/+/, "");
+    return { name: cleanPath.split("/").pop() || "file", path: cleanPath, type: "application/octet-stream", size: 0, uploadedAt: new Date() };
+  }
+  return {
+    name: f.name || f.path?.split("/").pop() || "file",
+    path: f.path || "",
+    type: f.type || "application/octet-stream",
+    size: f.size || 0,
+    uploadedAt: f.uploadedAt || new Date(),
+    uploadedBy: f.uploadedBy || null,
+  };
+};
+
 export default {
   createLead: async (req, res) => {
     try {
@@ -70,14 +93,19 @@ export default {
       if (req.body.existingAttachments) {
         try { existingAttachments = JSON.parse(req.body.existingAttachments); } catch {}
       }
+      
+      let existingImages = [];
+      if (req.body.existingImages) {
+        try { existingImages = JSON.parse(req.body.existingImages); } catch {}
+      }
 
       if (req.body.customFields) {
         try { data.customFields = JSON.parse(req.body.customFields); } catch { data.customFields = []; }
       }
 
       let newAttachments = [];
-      if (req.files?.length > 0) {
-        newAttachments = req.files.map((file) => ({
+      if (req.files?.attachments?.length > 0) {
+        newAttachments = req.files.attachments.map((file) => ({
           name: file.originalname,
           path: `/uploads/leads/${file.filename}`,
           type: file.mimetype,
@@ -88,6 +116,21 @@ export default {
 
       if (existingAttachments.length > 0 || newAttachments.length > 0) {
         data.attachments = [...existingAttachments, ...newAttachments];
+      }
+      
+      let newImages = [];
+      if (req.files?.images?.length > 0) {
+        newImages = req.files.images.map((file) => ({
+          name: file.originalname,
+          path: `/uploads/leads/${file.filename}`,
+          type: file.mimetype,
+          size: file.size,
+          uploadedAt: new Date(),
+        }));
+      }
+
+      if (existingImages.length > 0 || newImages.length > 0) {
+        data.images = [...existingImages, ...newImages];
       }
 
       if (!data.assignTo || data.assignTo === "") {
@@ -263,7 +306,12 @@ export default {
       //   .sort({ createdAt: -1 })
       //   .skip(skip)
       //   .limit(Number(limit));
-const totalLeads = await Lead.countDocuments(query);
+      if (req.query.sequenceOnly === "true") {
+        const sequence = await Lead.find(query).select("_id leadName").sort({ createdAt: -1 });
+        return res.status(200).json({ sequence });
+      }
+
+      const totalLeads = await Lead.countDocuments(query);
 
 let leadQuery = Lead.find(query)
   .populate("assignTo", "firstName lastName email role")
@@ -473,24 +521,53 @@ const leads = await leadQuery;
         pushOps.notesHistory = { changedBy: req.user._id, changedAt: new Date() };
       }
 
-      let existingAttachments = [];
-      if (req.body.existingAttachments) {
-        try { existingAttachments = JSON.parse(req.body.existingAttachments); } catch {}
+      // Falls back to the lead's own current attachments/images (not []) when
+      // the caller doesn't send this field at all — same pattern updateDeal
+      // already uses. Without this, any caller that forgets to resend
+      // existingAttachments/existingImages (e.g. a tab that only uploads one
+      // of the two) would silently wipe out the other, since both fields are
+      // unconditionally rebuilt below on every save.
+      let existingAttachments;
+      if (req.body.existingAttachments !== undefined) {
+        try { existingAttachments = JSON.parse(req.body.existingAttachments); }
+        catch { existingAttachments = before.attachments || []; }
+      } else {
+        existingAttachments = before.attachments || [];
       }
+      existingAttachments = existingAttachments.map(normalizeFile).filter(Boolean);
+
+      let existingImages;
+      if (req.body.existingImages !== undefined) {
+        try { existingImages = JSON.parse(req.body.existingImages); }
+        catch { existingImages = before.images || []; }
+      } else {
+        existingImages = before.images || [];
+      }
+      existingImages = existingImages.map(normalizeFile).filter(Boolean);
 
       if (req.body.customFields) {
         try { patch.customFields = JSON.parse(req.body.customFields); } catch { delete patch.customFields; }
       }
 
       let newFiles = [];
-      if (req.files?.length > 0) {
-        newFiles = req.files.map((file) => ({
+      if (req.files?.attachments?.length > 0) {
+        newFiles = req.files.attachments.map((file) => ({
           name: file.originalname, path: `/uploads/leads/${file.filename}`,
           type: file.mimetype, size: file.size, uploadedAt: new Date(),
           uploadedBy: req.user._id,
         }));
       }
       patch.attachments = [...existingAttachments, ...newFiles];
+
+      let newImages = [];
+      if (req.files?.images?.length > 0) {
+        newImages = req.files.images.map((file) => ({
+          name: file.originalname, path: `/uploads/leads/${file.filename}`,
+          type: file.mimetype, size: file.size, uploadedAt: new Date(),
+          uploadedBy: req.user._id,
+        }));
+      }
+      patch.images = [...existingImages, ...newImages];
 
       const oldFollowUpDate = before.followUpDate;
       const newFollowUpDate = patch.followUpDate ? new Date(patch.followUpDate) : null;
@@ -520,6 +597,11 @@ const leads = await leadQuery;
         }
       }
       if (patch.followUpDate) patch.lastReminderAt = null;
+      if (patch.followUpDate && followUpChanged) {
+        pushOps.followUpDateHistory = {
+          oldDate: oldFollowUpDate, newDate: newFollowUpDate, changedAt: new Date(), changedBy: req.user._id,
+        };
+      }
 
       const oldAssignedToId = before.assignTo?._id?.toString() || before.assignTo?.toString() || null;
       if (patch.assignTo && String(patch.assignTo) !== oldAssignedToId) {
@@ -646,6 +728,12 @@ const leads = await leadQuery;
 
       lead.followUpDate   = newDate;
       lead.lastReminderAt = null;
+      if (dateChanged) {
+        lead.followUpDateHistory = [
+          ...(lead.followUpDateHistory || []),
+          { oldDate, newDate, changedAt: new Date(), changedBy: req.user._id },
+        ];
+      }
       await lead.save();
 
       if (dateChanged) {
@@ -692,18 +780,27 @@ const leads = await leadQuery;
         stage:            finalStage,
         email:            lead.email || "",
         phoneNumber:      lead.phoneNumber || "",
+        alternativeNumber: lead.alternatePhoneNumber || "",
+        alternativeEmail: lead.alternateEmail || "",
         source:           lead.source || "",
         companyName:      lead.companyName || "",
         industry:         lead.industry || "",
         requirement:      lead.requirement || "",
         country:          lead.country || "",
         address:          lead.address || "",
+        city:             lead.city || "",
+        state:            lead.state || "",
+        pincode:          lead.pincode || "",
+        latitude:         lead.latitude ?? null,
+        longitude:        lead.longitude ?? null,
         ...(lead.clientType && { clientType: lead.clientType }),
         attachments:      lead.attachments || [],
+        images:           lead.images || [],
         followUpDate:     lead.followUpDate ?? null,
         lastReminderAt:   lead.lastReminderAt ?? null,
         companyId:        lead.companyId || null,
         companySize:      lead.companySize || "Medium",
+        customFields:     lead.customFields || [],
         leadStatusHistory: leadStatusHistory,
         leadCreatedAt:    lead.createdAt,
         stageHistory:     [{ stage: finalStage, movedAt: new Date(), movedBy: req.user._id }],
@@ -831,7 +928,10 @@ const leads = await leadQuery;
 
       const oldStatus = lead.status;
       lead.status = status;
-      if (status !== oldStatus) lead.lastReminderAt = null;
+      if (status !== oldStatus) {
+        lead.lastReminderAt = null;
+        lead.statusHistory = [...(lead.statusHistory || []), { status, changedAt: new Date(), changedBy: req.user._id }];
+      }
       await lead.save();
 
       if (oldStatus !== "Converted" && status === "Converted") {
@@ -1453,6 +1553,7 @@ const leads = await leadQuery;
         .populate("rejectedBy", "firstName lastName")
         .populate("convertedBy", "firstName lastName")
         .populate("statusHistory.changedBy", "firstName lastName")
+        .populate("followUpDateHistory.changedBy", "firstName lastName")
         .populate("assignmentHistory.assignedTo", "firstName lastName")
         .populate("assignmentHistory.assignedBy", "firstName lastName")
         .populate("followUpNotesHistory.performedBy", "firstName lastName")
@@ -1473,6 +1574,16 @@ const leads = await leadQuery;
         events.push({
           type: "status_changed",
           description: `Status changed to "${h.status}"`,
+          performedBy: asPerson(h.changedBy),
+          timestamp: h.changedAt,
+        });
+      });
+
+      (lead.followUpDateHistory || []).forEach((h) => {
+        const newDateStr = h.newDate ? new Date(h.newDate).toISOString().slice(0, 10) : "";
+        events.push({
+          type: "followup_rescheduled",
+          description: `Follow-up date ${h.oldDate ? "rescheduled" : "set"} to ${newDateStr}`,
           performedBy: asPerson(h.changedBy),
           timestamp: h.changedAt,
         });

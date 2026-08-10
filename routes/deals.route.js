@@ -63,7 +63,7 @@ router.patch(
 router.post(
   "/createManual",
   adminOnly,
-  upload.array("attachments", 10),
+  upload.fields([{ name: "attachments", maxCount: 10 }, { name: "images", maxCount: 10 }]),
   indexControllers.dealsController.createManualDeal
 );
 
@@ -79,7 +79,7 @@ router.post(
 router.patch(
   "/update-deal/:id",
   adminOrAssignedToDeal,
-  upload.array("attachments"),
+  upload.fields([{ name: "attachments", maxCount: 10 }, { name: "images", maxCount: 10 }]),
   indexControllers.dealsController.updateDeal
 );
 
