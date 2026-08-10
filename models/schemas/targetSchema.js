@@ -12,6 +12,11 @@ const targetSchema = new mongoose.Schema(
       enum: ["weekly", "monthly"],
       required: true,
     },
+    title: {
+      type: String,
+      required: true,
+      default: "Untitled Target",
+    },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
     status: {
@@ -39,16 +44,17 @@ const targetSchema = new mongoose.Schema(
     },
     reasonNotes: [
       {
-        itemType: { type: String, enum: ["lead", "deal"] },
+        itemType: { type: String, enum: ["lead", "deal", "target"] },
         itemId:   { type: mongoose.Schema.Types.ObjectId },
         itemName: { type: String },
         note:     { type: String, required: true },
         addedBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         addedAt:  { type: Date, default: Date.now },
-        status:   { type: String, enum: ["pending", "resolved", "reactivated"], default: "pending" },
+        status:   { type: String, enum: ["pending", "resolved", "reactivated", "rejected"], default: "pending" },
         resolvedAt:    { type: Date },
         reassignedTo:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         reassignNote:  { type: String },
+        rejectReason:  { type: String },
         // Snapshot details at time of report
         companyName:   { type: String },
         phoneNumber:   { type: String },
