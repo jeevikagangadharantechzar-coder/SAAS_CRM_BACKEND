@@ -57,6 +57,16 @@ function getDateFilter(lower) {
     const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
     return { filter: { $gte: start, $lte: end }, label: " last month" };
   }
+  if (lower.includes("this year")) {
+    const start = new Date(now.getFullYear(), 0, 1);
+    const end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+    return { filter: { $gte: start, $lte: end }, label: " this year" };
+  }
+  if (lower.includes("last year") && !lower.match(/last\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?/i)) {
+    const start = new Date(now.getFullYear() - 1, 0, 1);
+    const end = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+    return { filter: { $gte: start, $lte: end }, label: " last year" };
+  }
 
   // Parse "last X days/weeks/months/years"
   const textToNum = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
@@ -254,6 +264,152 @@ export default {
 
         await saveChat(AiChat, userId, message, "proposals-list", responseMsg, proposals.length);
         return res.json({ success: true, intent: "proposals-list", message: responseMsg, count: proposals.length, data: proposals.map(formatProposal) });
+      }
+      // --- X. LEAD LOSS ANALYSIS ---
+      if (Lead && (lower.includes("lead") || lower.includes("leads")) && 
+          (lower.includes("loss") || lower.includes("lost") || lower.includes("reject") || lower.includes("junk") || lower.includes("reason") || lower.includes("follow up") || lower.includes("follow-up") || lower.includes("follow uo") || lower.includes("age"))) {
+        
+        let query = { status: { $in: ["Cold", "Junk"] } };
+        let responseMsg = "";
+        let intentName = "lead-loss-analysis";
+        
+        const searchTerms = getSearchTerms(lower);
+        let matchingUsers = [];
+        if (searchTerms.length > 0) {
+          const firstMatchedTerm = searchTerms[0];
+          matchingUsers = await User.find({
+            $or: [
+              { firstName: { $regex: `^${firstMatchedTerm}`, $options: "i" } },
+              { lastName: { $regex: `^${firstMatchedTerm}`, $options: "i" } }
+            ]
+          }).select("_id firstName lastName");
+        }
+
+        if (matchingUsers.length > 0) {
+          let userIds = matchingUsers.map(u => u._id);
+          if (roleName !== "Admin") {
+            userIds = userIds.filter(id => id.toString() === userId.toString());
+          }
+          if (userIds.length > 0) {
+            query.assignTo = { $in: userIds };
+          } else {
+            const responseMsg = `You do not have permission to view lead loss data for other users.`;
+            await saveChat(AiChat, userId, message, "lead-loss-analysis", responseMsg, 0);
+            return res.json({ success: true, intent: "lead-loss-analysis", message: responseMsg, count: 0, data: [] });
+          }
+        } else if (roleName !== "Admin") {
+          query.assignTo = userId;
+        }
+
+        if (dateFilter) query.createdAt = dateFilter;
+
+        // Specific queries
+        if ((lower.includes("top") || lower.includes("main") || lower.includes("most") || lower.includes("highest")) && lower.includes("reason")) {
+           const leads = await Lead.find(query).populate("assignTo", "firstName lastName email").sort({ createdAt: -1 });
+           const reasons = {};
+           leads.forEach(l => {
+             const r = l.rejectionReason || l.junkReason || "Unspecified";
+             reasons[r] = (reasons[r] || 0) + 1;
+           });
+           let topReason = "N/A";
+           let topCount = 0;
+           for (const [r, count] of Object.entries(reasons)) {
+             if (count > topCount && r !== "Unspecified") {
+               topReason = r;
+               topCount = count;
+             }
+           }
+           responseMsg = `The top lead loss reason${dateLabel} is "${topReason}" with ${topCount} leads.`;
+           await saveChat(AiChat, userId, message, intentName, responseMsg, topCount);
+           return res.json({ success: true, intent: intentName, message: responseMsg, count: topCount, data: leads.filter(l => (l.rejectionReason || l.junkReason) === topReason).map(formatLead) });
+        }
+        
+        if ((lower.includes("top") || lower.includes("highest")) && (lower.includes("stage") || lower.includes("phase"))) {
+           const leads = await Lead.find(query).populate("assignTo", "firstName lastName email").sort({ createdAt: -1 });
+           const stages = {};
+           leads.forEach(l => {
+             if (l.lossStage) {
+               stages[l.lossStage] = (stages[l.lossStage] || 0) + 1;
+             }
+           });
+           let topStage = "N/A";
+           let topCount = 0;
+           for (const [s, count] of Object.entries(stages)) {
+             if (count > topCount) {
+               topStage = s;
+               topCount = count;
+             }
+           }
+           responseMsg = `The highest lead loss stage${dateLabel} is "${topStage}" with ${topCount} leads.`;
+           await saveChat(AiChat, userId, message, intentName, responseMsg, topCount);
+           return res.json({ success: true, intent: intentName, message: responseMsg, count: topCount, data: leads.filter(l => l.lossStage === topStage).map(formatLead) });
+        }
+
+        if (lower.includes("junk")) {
+           query.status = "Junk";
+           const leads = await Lead.find(query).populate("assignTo", "firstName lastName email").sort({ createdAt: -1 });
+           responseMsg = `There are ${leads.length} junk leads${dateLabel}. Junk leads are disqualified before the sales process.`;
+           await saveChat(AiChat, userId, message, intentName, responseMsg, leads.length);
+           return res.json({ success: true, intent: intentName, message: responseMsg, count: leads.length, data: leads.map(formatLead) });
+        }
+
+        if (lower.includes("follow up") || lower.includes("follow-up") || lower.includes("followups") || lower.includes("follow uo")) {
+           const leads = await Lead.find(query).populate("assignTo", "firstName lastName email").sort({ createdAt: -1 });
+           const avg = leads.length > 0 ? (leads.reduce((sum, l) => sum + (l.followUpCountAtLoss || 0), 0) / leads.length).toFixed(1) : 0;
+           responseMsg = `The average follow-up count for lost leads${dateLabel} is ${avg}.`;
+           await saveChat(AiChat, userId, message, intentName, responseMsg, leads.length);
+           return res.json({ success: true, intent: intentName, message: responseMsg, count: leads.length, data: leads.map(formatLead) });
+        }
+
+        // Reason match
+        let reasonString = null;
+        let displayReason = null;
+        
+        if (lower.includes("competitor")) { reasonString = "Choosen competitor"; displayReason = "Choosen competitor"; }
+        else if (lower.includes("price") || lower.includes("pricing")) { reasonString = "Price too high"; displayReason = "Price too high"; }
+        else if (lower.includes("budget")) { reasonString = "No budget"; displayReason = "No budget"; }
+        else if (lower.includes("timing") || lower.includes("time")) { reasonString = "Timing is not right"; displayReason = "Timing is not right"; }
+        else if (lower.includes("feature")) { reasonString = "Missing features"; displayReason = "Missing features"; }
+        else if (lower.includes("interested")) { reasonString = "Not interested"; displayReason = "Not interested"; }
+        else if (lower.includes("fit")) { reasonString = "Poor fit"; displayReason = "Poor fit"; }
+        else {
+           // Regex fallback for custom reasons
+           const reasonMatch = lower.match(/(?:reason is|reason was|reason for|reason by|reason|because of|due to|caused by|account of|result of|why|explanation for|loss by|lost by)\s+([a-z0-9\s]+?)(?:\s+(?:in|last|this|today|yesterday|week|month|year)|$)/i);
+           if (reasonMatch && reasonMatch[1]) {
+             let extracted = reasonMatch[1].trim();
+             extracted = extracted.replace(/leads?\s+lost/gi, "").trim();
+             const ignoreList = ["for leads lost", "leads lost", "for", "leads", "all", "by"];
+             if (extracted.length > 0 && !ignoreList.includes(extracted.toLowerCase())) {
+               reasonString = extracted;
+               displayReason = extracted;
+             }
+           }
+        }
+
+        if (reasonString) {
+           query.$or = [
+             { rejectionReason: { $regex: new RegExp(reasonString, 'i') } },
+             { junkReason: { $regex: new RegExp(reasonString, 'i') } },
+             { rejectionReason: reasonString },
+             { junkReason: reasonString }
+           ];
+        }
+
+        const leads = await Lead.find(query).populate("assignTo", "firstName lastName email").sort({ createdAt: -1 });
+        
+        if (reasonString) {
+           responseMsg = `You have ${leads.length} lost leads${dateLabel} due to "${displayReason}".`;
+        } else {
+           let totalQuery = {};
+           if (roleName !== "Admin") totalQuery.assignTo = userId;
+           if (dateFilter) totalQuery.createdAt = dateFilter;
+           const totalLeads = await Lead.countDocuments(totalQuery);
+           const lossRate = totalLeads > 0 ? ((leads.length / totalLeads) * 100).toFixed(1) : 0;
+           responseMsg = `You have ${leads.length} lost leads${dateLabel} (Loss Rate: ${lossRate}%).`;
+        }
+
+        await saveChat(AiChat, userId, message, intentName, responseMsg, leads.length);
+        return res.json({ success: true, intent: intentName, message: responseMsg, count: leads.length, data: leads.map(formatLead) });
       }
 
       // --- 4. ANALYSIS ---
@@ -1141,7 +1297,9 @@ export default {
               let query = { assignTo: { $in: userIds } };
               let statusLabel = "";
               
-              if (lower.includes("hot") || lower.includes("highly interested")) {
+              if (lower.includes("new") || lower.includes("recent lead")) {
+                query.status = "New"; statusLabel = "new ";
+              } else if (lower.includes("hot") || lower.includes("highly interested")) {
                 query.status = "Hot"; statusLabel = "hot ";
               } else if (lower.includes("warm") || lower.includes("interested")) {
                 query.status = "Warm"; statusLabel = "warm ";
@@ -1240,7 +1398,11 @@ export default {
         let intentName = "leads-list";
         let statusLabel = "";
 
-        if (lower.includes("hot") || lower.includes("highly interested")) {
+        if (lower.includes("new") || lower.includes("recent lead")) {
+          query.status = "New";
+          intentName = "leads-new";
+          statusLabel = "new ";
+        } else if (lower.includes("hot") || lower.includes("highly interested")) {
           query.status = "Hot";
           intentName = "leads-hot";
           statusLabel = "hot ";
