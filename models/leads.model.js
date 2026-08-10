@@ -57,11 +57,30 @@ const leadSchema = new mongoose.Schema(
     ],
     attachments: [
       {
-        name: { type: String, required: true },
-        path: { type: String, required: true },
-        type: { type: String },
-        size: { type: Number },
+        name: { type: String, default: "" },
+        path: { type: String, default: "" },
+        type: { type: String, default: "application/octet-stream" },
+        size: { type: Number, default: 0 },
         uploadedAt: { type: Date, default: Date.now },
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+      },
+    ],
+    images: [
+      {
+        name: { type: String, default: "" },
+        path: { type: String, default: "" },
+        type: { type: String, default: "application/octet-stream" },
+        size: { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: Date.now },
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
       },
     ],
   },

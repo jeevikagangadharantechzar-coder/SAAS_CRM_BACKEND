@@ -17,6 +17,7 @@ import LeadLegacy         from "../models/leads.model.js";
 import UserLegacy         from "../models/user.model.js";
 import DealLegacy         from "../models/deals.model.js";
 import NotificationLegacy from "../models/notification.model.js";
+import MassEmailLegacy    from "../models/massEmail.model.js";
 
 // Resolve models from tenant or legacy connection
 const getModels = (req) => {
@@ -26,12 +27,51 @@ const getModels = (req) => {
     User:         UserLegacy,
     Deal:         DealLegacy,
     Notification: NotificationLegacy,
+    MassEmail:    MassEmailLegacy,
     Task:         null, // Task fallback if ever needed without tenantDB
     Target:       null, // Target fallback
+    Meeting:      null, // Meeting fallback — tenant-only, same as Task/Target
   };
 };
 
 import { pickNextSalesUser } from "../services/leadAssignment.js";
+
+// Same shape as dealDetail.controller.js's activity-log helpers — kept
+// local here since Lead's activity log lives in this file rather than a
+// separate leadDetail.controller.js (Lead doesn't need the half-dozen
+// other detail endpoints Deal has, so a whole extra file would be more
+// structure than this one function warrants).
+const nameOf = (u) => (u ? `${u.firstName || ""} ${u.lastName || ""}`.trim() || "Unknown" : null);
+const asPerson = (u) => (u ? { id: u._id, name: nameOf(u) } : null);
+
+// Standard MDN escape so a raw email/phone value can be dropped into a
+// case-insensitive RegExp for the duplicate check below without a stray
+// regex special character (e.g. a "+" in a phone number) breaking the
+// match or being misinterpreted.
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Reconstructs a plain object matching the attachments/images sub-schema
+// shape, whether the source is a freshly-parsed JSON value from the client
+// or a raw Mongoose subdocument pulled off the current lead (the fallback
+// path when existingAttachments/existingImages isn't sent). Mongoose
+// subdocuments aren't plain objects — passing one straight back into a
+// findByIdAndUpdate array without normalizing first throws a CastError,
+// since the update path re-casts every element from scratch.
+const normalizeFile = (f) => {
+  if (!f) return null;
+  if (typeof f === "string") {
+    const cleanPath = f.replace(/^\/+/, "");
+    return { name: cleanPath.split("/").pop() || "file", path: cleanPath, type: "application/octet-stream", size: 0, uploadedAt: new Date() };
+  }
+  return {
+    name: f.name || f.path?.split("/").pop() || "file",
+    path: f.path || "",
+    type: f.type || "application/octet-stream",
+    size: f.size || 0,
+    uploadedAt: f.uploadedAt || new Date(),
+    uploadedBy: f.uploadedBy || null,
+  };
+};
 
 export default {
   createLead: async (req, res) => {
@@ -53,14 +93,19 @@ export default {
       if (req.body.existingAttachments) {
         try { existingAttachments = JSON.parse(req.body.existingAttachments); } catch {}
       }
+      
+      let existingImages = [];
+      if (req.body.existingImages) {
+        try { existingImages = JSON.parse(req.body.existingImages); } catch {}
+      }
 
       if (req.body.customFields) {
         try { data.customFields = JSON.parse(req.body.customFields); } catch { data.customFields = []; }
       }
 
       let newAttachments = [];
-      if (req.files?.length > 0) {
-        newAttachments = req.files.map((file) => ({
+      if (req.files?.attachments?.length > 0) {
+        newAttachments = req.files.attachments.map((file) => ({
           name: file.originalname,
           path: `/uploads/leads/${file.filename}`,
           type: file.mimetype,
@@ -72,6 +117,21 @@ export default {
       if (existingAttachments.length > 0 || newAttachments.length > 0) {
         data.attachments = [...existingAttachments, ...newAttachments];
       }
+      
+      let newImages = [];
+      if (req.files?.images?.length > 0) {
+        newImages = req.files.images.map((file) => ({
+          name: file.originalname,
+          path: `/uploads/leads/${file.filename}`,
+          type: file.mimetype,
+          size: file.size,
+          uploadedAt: new Date(),
+        }));
+      }
+
+      if (existingImages.length > 0 || newImages.length > 0) {
+        data.images = [...existingImages, ...newImages];
+      }
 
       if (!data.assignTo || data.assignTo === "") {
         data.assignTo = await pickNextSalesUser(User, Lead);
@@ -79,6 +139,7 @@ export default {
       if (!data.followUpDate || data.followUpDate === "") data.followUpDate = new Date();
       if (!data.status) data.status = "Cold";
       data.lastReminderAt = null;
+      data.createdBy = req.user?._id || null;
 
       const lead      = new Lead(data);
       const savedLead = await lead.save();
@@ -245,7 +306,12 @@ export default {
       //   .sort({ createdAt: -1 })
       //   .skip(skip)
       //   .limit(Number(limit));
-const totalLeads = await Lead.countDocuments(query);
+      if (req.query.sequenceOnly === "true") {
+        const sequence = await Lead.find(query).select("_id leadName").sort({ createdAt: -1 });
+        return res.status(200).json({ sequence });
+      }
+
+      const totalLeads = await Lead.countDocuments(query);
 
 let leadQuery = Lead.find(query)
   .populate("assignTo", "firstName lastName email role")
@@ -436,30 +502,72 @@ const leads = await leadQuery;
         patch.clientType = null;
       }
 
+      // Every distinct kind of change gets pushed to its own history array —
+      // several can legitimately fire from a single save (e.g. status +
+      // assignee changed together), so this accumulates into one $push
+      // rather than a pattern that could only ever record one array per
+      // request.
+      const pushOps = {};
+
       // Track who last wrote/changed the notes, and when — only stamped when
-      // the text actually changes, not on every save that happens to include it.
+      // the text actually changes, not on every save that happens to include
+      // it. notesUpdatedBy/At stay as the latest-edit snapshot (other UI
+      // reads them directly); notesHistory is the append-only record the
+      // Activity Timeline needs to show every occasion notes were touched,
+      // not just the most recent one.
       if ("notes" in patch && patch.notes !== (before.notes || "")) {
         patch.notesUpdatedBy = req.user._id;
         patch.notesUpdatedAt = new Date();
+        pushOps.notesHistory = { changedBy: req.user._id, changedAt: new Date() };
       }
 
-      let existingAttachments = [];
-      if (req.body.existingAttachments) {
-        try { existingAttachments = JSON.parse(req.body.existingAttachments); } catch {}
+      // Falls back to the lead's own current attachments/images (not []) when
+      // the caller doesn't send this field at all — same pattern updateDeal
+      // already uses. Without this, any caller that forgets to resend
+      // existingAttachments/existingImages (e.g. a tab that only uploads one
+      // of the two) would silently wipe out the other, since both fields are
+      // unconditionally rebuilt below on every save.
+      let existingAttachments;
+      if (req.body.existingAttachments !== undefined) {
+        try { existingAttachments = JSON.parse(req.body.existingAttachments); }
+        catch { existingAttachments = before.attachments || []; }
+      } else {
+        existingAttachments = before.attachments || [];
       }
+      existingAttachments = existingAttachments.map(normalizeFile).filter(Boolean);
+
+      let existingImages;
+      if (req.body.existingImages !== undefined) {
+        try { existingImages = JSON.parse(req.body.existingImages); }
+        catch { existingImages = before.images || []; }
+      } else {
+        existingImages = before.images || [];
+      }
+      existingImages = existingImages.map(normalizeFile).filter(Boolean);
 
       if (req.body.customFields) {
         try { patch.customFields = JSON.parse(req.body.customFields); } catch { delete patch.customFields; }
       }
 
       let newFiles = [];
-      if (req.files?.length > 0) {
-        newFiles = req.files.map((file) => ({
+      if (req.files?.attachments?.length > 0) {
+        newFiles = req.files.attachments.map((file) => ({
           name: file.originalname, path: `/uploads/leads/${file.filename}`,
           type: file.mimetype, size: file.size, uploadedAt: new Date(),
+          uploadedBy: req.user._id,
         }));
       }
       patch.attachments = [...existingAttachments, ...newFiles];
+
+      let newImages = [];
+      if (req.files?.images?.length > 0) {
+        newImages = req.files.images.map((file) => ({
+          name: file.originalname, path: `/uploads/leads/${file.filename}`,
+          type: file.mimetype, size: file.size, uploadedAt: new Date(),
+          uploadedBy: req.user._id,
+        }));
+      }
+      patch.images = [...existingImages, ...newImages];
 
       const oldFollowUpDate = before.followUpDate;
       const newFollowUpDate = patch.followUpDate ? new Date(patch.followUpDate) : null;
@@ -467,18 +575,25 @@ const leads = await leadQuery;
         oldFollowUpDate.toISOString() !== newFollowUpDate.toISOString();
 
       const isAdminLead = req.user.role?.name === "Admin";
+
       if (patch.status && patch.status !== before.status) {
         patch.lastReminderAt = null;
         // Always record status moves for full journey tracking (admin + salesperson)
-        patch.$push = { statusHistory: { status: patch.status, changedAt: new Date() } };
+        pushOps.statusHistory = { status: patch.status, changedAt: new Date(), changedBy: req.user._id };
       }
       if (patch.followUpDate) patch.lastReminderAt = null;
+      if (patch.followUpDate && followUpChanged) {
+        pushOps.followUpDateHistory = {
+          oldDate: oldFollowUpDate, newDate: newFollowUpDate, changedAt: new Date(), changedBy: req.user._id,
+        };
+      }
 
       const oldAssignedToId = before.assignTo?._id?.toString() || before.assignTo?.toString() || null;
       if (patch.assignTo && String(patch.assignTo) !== oldAssignedToId) {
+        pushOps.assignmentHistory = { assignedTo: patch.assignTo, assignedBy: req.user._id, assignedAt: new Date() };
         if ((taskAction || targetAction) && oldAssignedToId) {
           await handleReassignmentOptions(
-            req, getModels(req), "lead", req.params.id, oldAssignedToId, patch.assignTo, 
+            req, getModels(req), "lead", req.params.id, oldAssignedToId, patch.assignTo,
             {
               taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription,
               targetAction, extendedTargetEndDate, extendedTargetDescription
@@ -487,6 +602,25 @@ const leads = await leadQuery;
         }
       }
 
+      // Generic "lead edited" attribution — only stamped when a plain field
+      // actually changes, so it doesn't create a redundant duplicate entry
+      // alongside the more specific status/assignment/notes events above
+      // when a save only touches one of those.
+      const plainEditPairs = [
+        [patch.leadName, before.leadName], [patch.phoneNumber, before.phoneNumber], [patch.email, before.email],
+        [patch.alternateEmail, before.alternateEmail], [patch.alternatePhoneNumber, before.alternatePhoneNumber],
+        [patch.companyName, before.companyName], [patch.source, before.source], [patch.requirement, before.requirement],
+        [patch.industry, before.industry], [patch.address, before.address], [patch.city, before.city],
+        [patch.state, before.state], [patch.pincode, before.pincode], [patch.country, before.country],
+        [patch.clientType, before.clientType], [patch.NumberOfEmployees, before.NumberOfEmployees],
+      ];
+      const hasPlainEdit = plainEditPairs.some(([next, prev]) => next !== undefined && String(next) !== String(prev ?? ""));
+      if (hasPlainEdit) {
+        patch.lastUpdatedBy = req.user._id;
+        patch.lastUpdatedAt = new Date();
+      }
+
+      if (Object.keys(pushOps).length > 0) patch.$push = pushOps;
       const { $push, ...patchWithoutPush } = patch;
       const updateOp = $push ? { ...patchWithoutPush, $push } : patchWithoutPush;
       const updated = await Lead.findByIdAndUpdate(req.params.id, updateOp, { new: true })
@@ -579,6 +713,12 @@ const leads = await leadQuery;
 
       lead.followUpDate   = newDate;
       lead.lastReminderAt = null;
+      if (dateChanged) {
+        lead.followUpDateHistory = [
+          ...(lead.followUpDateHistory || []),
+          { oldDate, newDate, changedAt: new Date(), changedBy: req.user._id },
+        ];
+      }
       await lead.save();
 
       if (dateChanged) {
@@ -625,18 +765,27 @@ const leads = await leadQuery;
         stage:            finalStage,
         email:            lead.email || "",
         phoneNumber:      lead.phoneNumber || "",
+        alternativeNumber: lead.alternatePhoneNumber || "",
+        alternativeEmail: lead.alternateEmail || "",
         source:           lead.source || "",
         companyName:      lead.companyName || "",
         industry:         lead.industry || "",
         requirement:      lead.requirement || "",
         country:          lead.country || "",
         address:          lead.address || "",
+        city:             lead.city || "",
+        state:            lead.state || "",
+        pincode:          lead.pincode || "",
+        latitude:         lead.latitude ?? null,
+        longitude:        lead.longitude ?? null,
         ...(lead.clientType && { clientType: lead.clientType }),
         attachments:      lead.attachments || [],
+        images:           lead.images || [],
         followUpDate:     lead.followUpDate ?? null,
         lastReminderAt:   lead.lastReminderAt ?? null,
         companyId:        lead.companyId || null,
         companySize:      lead.companySize || "Medium",
+        customFields:     lead.customFields || [],
         leadStatusHistory: leadStatusHistory,
         leadCreatedAt:    lead.createdAt,
         stageHistory:     [{ stage: finalStage, movedAt: new Date(), movedBy: req.user._id }],
@@ -764,7 +913,10 @@ const leads = await leadQuery;
 
       const oldStatus = lead.status;
       lead.status = status;
-      if (status !== oldStatus) lead.lastReminderAt = null;
+      if (status !== oldStatus) {
+        lead.lastReminderAt = null;
+        lead.statusHistory = [...(lead.statusHistory || []), { status, changedAt: new Date(), changedBy: req.user._id }];
+      }
       await lead.save();
 
       if (oldStatus !== "Converted" && status === "Converted") {
@@ -1161,6 +1313,14 @@ const leads = await leadQuery;
       const allowedStatuses = ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"];
       const results = { created: 0, failed: 0, errors: [] };
 
+      // A Sales user's own import always lands on their own desk — the
+      // "Assign To" column (and round-robin) only apply to Admin imports,
+      // same as CreateLeads.jsx already auto-assigns a single lead to self
+      // for non-Admins. Without this, a blank/mismatched Assign To cell in
+      // a sales person's file could hand their own leads to a *different*
+      // sales user via round-robin.
+      const isAdminImporter = req.user.role?.name === "Admin";
+
       // Resolve all users and the round-robin starting point once, up front,
       // instead of re-querying per row (which was the bottleneck at scale).
       const users = await User
@@ -1213,12 +1373,17 @@ const leads = await leadQuery;
           continue;
         }
 
-        let assignTo = null;
-        const assignToEmail = String(row.assignTo || "").trim();
-        if (assignToEmail) {
-          assignTo = emailToUserId.get(assignToEmail.toLowerCase()) || null;
+        let assignTo;
+        if (isAdminImporter) {
+          assignTo = null;
+          const assignToEmail = String(row.assignTo || "").trim();
+          if (assignToEmail) {
+            assignTo = emailToUserId.get(assignToEmail.toLowerCase()) || null;
+          }
+          if (!assignTo) assignTo = nextSalesUser();
+        } else {
+          assignTo = req.user._id;
         }
-        if (!assignTo) assignTo = nextSalesUser();
 
         const status = allowedStatuses.includes(row.status) ? row.status : "Cold";
         const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
@@ -1242,6 +1407,7 @@ const leads = await leadQuery;
               notes:       String(row.notes || "").trim(),
               followUpDate,
               lastReminderAt: null,
+              createdBy: req.user?._id || null,
             },
           },
         });
@@ -1267,6 +1433,322 @@ const leads = await leadQuery;
     } catch (error) {
       console.error("Error bulk-importing leads:", error);
       res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  // GET /leads/:id/meetings — same shape as getDealMeetings (dealDetail.controller.js).
+  getLeadMeetings: async (req, res) => {
+    try {
+      const { Meeting } = getModels(req);
+      if (!Meeting) return res.status(200).json([]);
+      const meetings = await Meeting.find({ leadId: req.params.id })
+        .populate("createdBy", "firstName lastName")
+        .sort({ startDateTime: -1 });
+      res.status(200).json(meetings);
+    } catch (err) {
+      console.error("Get lead meetings error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  // GET /leads/:id/emails — massEmailSchema has no lead link, so this
+  // matches on the lead's own contact email against MassEmail.recipients,
+  // same approach as getDealEmails (dealDetail.controller.js).
+  getLeadEmails: async (req, res) => {
+    try {
+      const { Lead, MassEmail } = getModels(req);
+      const lead = await Lead.findById(req.params.id).select("email");
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (!lead.email) return res.status(200).json([]);
+
+      const emails = await MassEmail.find({ recipients: lead.email })
+        .populate("createdBy", "firstName lastName")
+        .sort({ createdAt: -1 });
+      res.status(200).json(emails);
+    } catch (err) {
+      console.error("Get lead emails error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  // GET /leads/check-duplicate?email=&phoneNumber=&excludeId= — live
+  // as-you-type check surfaced on the Create/Edit Lead form. excludeId is
+  // the lead's own id in edit mode, so a lead never flags itself as a
+  // duplicate of its own unchanged email/phone.
+  checkDuplicateLead: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const { email, phoneNumber, excludeId } = req.query;
+      const result = {};
+
+      // Same visibility rule as every other lead-list endpoint (getLeads,
+      // exportLeads, bulk import): a Sales user only ever sees their own
+      // leads, so flagging a duplicate they have no way to see or act on
+      // would just be a confusing, unexplained warning — and would leak
+      // the existence of another rep's lead they otherwise can't view.
+      const isAdmin = req.user.role?.name === "Admin";
+      const scope = isAdmin ? {} : { assignTo: req.user._id };
+
+      if (email && email.trim()) {
+        const query = {
+          email: { $regex: `^${escapeRegex(email.trim())}$`, $options: "i" },
+          trash: { $ne: true },
+          ...scope,
+        };
+        if (excludeId) query._id = { $ne: excludeId };
+        const match = await Lead.findOne(query).select("leadName");
+        result.email = match ? { exists: true, leadName: match.leadName } : { exists: false };
+      }
+
+      if (phoneNumber && phoneNumber.trim()) {
+        const query = { phoneNumber: phoneNumber.trim(), trash: { $ne: true }, ...scope };
+        if (excludeId) query._id = { $ne: excludeId };
+        const match = await Lead.findOne(query).select("leadName");
+        result.phoneNumber = match ? { exists: true, leadName: match.leadName } : { exists: false };
+      }
+
+      res.status(200).json(result);
+    } catch (err) {
+      console.error("Check duplicate lead error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  // GET /leads/:id/activity — unified, always-live feed, same "nothing
+  // duplicated/stored" principle as the Deal Activity Log — every event is
+  // read straight from its source at request time.
+  getLeadActivityLog: async (req, res) => {
+    try {
+      const { Lead, Deal, Task, Target, Meeting, MassEmail } = getModels(req);
+      const leadId = req.params.id;
+
+      const lead = await Lead.findById(leadId)
+        .populate("createdBy", "firstName lastName")
+        .populate("lastUpdatedBy", "firstName lastName")
+        .populate("notesUpdatedBy", "firstName lastName")
+        .populate("rejectedBy", "firstName lastName")
+        .populate("convertedBy", "firstName lastName")
+        .populate("statusHistory.changedBy", "firstName lastName")
+        .populate("followUpDateHistory.changedBy", "firstName lastName")
+        .populate("assignmentHistory.assignedTo", "firstName lastName")
+        .populate("assignmentHistory.assignedBy", "firstName lastName")
+        .populate("followUpNotesHistory.performedBy", "firstName lastName")
+        .populate("notesHistory.changedBy", "firstName lastName")
+        .populate("attachments.uploadedBy", "firstName lastName");
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      const events = [];
+
+      events.push({
+        type: "lead_created",
+        description: "Lead created",
+        performedBy: asPerson(lead.createdBy),
+        timestamp: lead.createdAt,
+      });
+
+      (lead.statusHistory || []).forEach((h) => {
+        events.push({
+          type: "status_changed",
+          description: `Status changed to "${h.status}"`,
+          performedBy: asPerson(h.changedBy),
+          timestamp: h.changedAt,
+        });
+      });
+
+      (lead.followUpDateHistory || []).forEach((h) => {
+        const newDateStr = h.newDate ? new Date(h.newDate).toISOString().slice(0, 10) : "";
+        events.push({
+          type: "followup_rescheduled",
+          description: `Follow-up date ${h.oldDate ? "rescheduled" : "set"} to ${newDateStr}`,
+          performedBy: asPerson(h.changedBy),
+          timestamp: h.changedAt,
+        });
+      });
+
+      (lead.assignmentHistory || []).forEach((h) => {
+        events.push({
+          type: "assignee_changed",
+          description: `Lead reassigned to ${nameOf(h.assignedTo) || "Unknown"}`,
+          performedBy: asPerson(h.assignedBy),
+          timestamp: h.assignedAt,
+        });
+      });
+
+      // Generic "plain field edited" catch-all — a single latest-edit
+      // snapshot, not a history array, so at most one of these ever shows.
+      if (lead.lastUpdatedBy && lead.lastUpdatedAt) {
+        events.push({
+          type: "lead_edited",
+          description: "Lead details updated",
+          performedBy: asPerson(lead.lastUpdatedBy),
+          timestamp: lead.lastUpdatedAt,
+        });
+      }
+
+      // One event per change, not just the latest — notesUpdatedBy/At on the
+      // lead itself is only ever a single overwritable snapshot, so without
+      // this history array, editing notes multiple times would silently
+      // collapse down to just the most recent occasion in the timeline.
+      (lead.notesHistory || []).forEach((h) => {
+        events.push({
+          type: "notes_updated",
+          description: "Notes updated",
+          performedBy: asPerson(h.changedBy),
+          timestamp: h.changedAt,
+        });
+      });
+
+      (lead.followUpNotesHistory || []).forEach((h) => {
+        const label = {
+          added: "Follow-up note added", edited: "Follow-up note edited", deleted: "Follow-up note deleted",
+        }[h.action] || `Follow-up note ${h.action}`;
+        events.push({
+          type: "followup_note",
+          description: h.note ? `${label}: "${h.note.length > 120 ? h.note.slice(0, 120) + "…" : h.note}"` : label,
+          performedBy: asPerson(h.performedBy),
+          timestamp: h.createdAt,
+        });
+      });
+
+      (lead.attachments || []).forEach((a) => {
+        events.push({
+          type: "attachment_uploaded",
+          description: `Attachment uploaded: ${a.name}`,
+          performedBy: asPerson(a.uploadedBy),
+          timestamp: a.uploadedAt,
+        });
+      });
+
+      if (lead.rejectedAt) {
+        events.push({
+          type: "lead_rejected",
+          description: `Lead rejected${lead.rejectionReason ? `: ${lead.rejectionReason}` : ""}`,
+          performedBy: asPerson(lead.rejectedBy),
+          timestamp: lead.rejectedAt,
+        });
+      }
+
+      // Conversion to Deal — Lead has no convertedAt of its own, so the
+      // resulting Deal's own createdAt (created at the exact moment of
+      // conversion) is a more precise timestamp than falling back to the
+      // lead's updatedAt, which could reflect any later, unrelated edit.
+      if (lead.convertedBy) {
+        const convertedDeal = Deal ? await Deal.findOne({ leadId: lead._id }).select("dealName createdAt") : null;
+        events.push({
+          type: "lead_converted",
+          description: `Lead converted to Deal${convertedDeal ? `: ${convertedDeal.dealName}` : ""}`,
+          performedBy: asPerson(lead.convertedBy),
+          dealId: convertedDeal?._id || null,
+          timestamp: convertedDeal?.createdAt || lead.updatedAt,
+        });
+      }
+
+      // Linked Tasks — reuses each task's own already-attributed history[]
+      // (created/assigned/status changes/notes/reassignment/completion)
+      // rather than re-deriving anything, same "always live" principle.
+      if (Task) {
+        const tasks = await Task.find({ $or: [{ leadRef: leadId }, { leadRefs: leadId }] })
+          .populate("history.by", "firstName lastName")
+          .select("title history");
+        tasks.forEach((t) => {
+          (t.history || []).forEach((h) => {
+            events.push({
+              type: "task_activity",
+              description: `Task "${t.title}": ${h.event}${h.detail ? ` — ${h.detail}` : ""}`,
+              performedBy: asPerson(h.by),
+              timestamp: h.at,
+            });
+          });
+        });
+      }
+
+      // Linked Targets — linkedLeads itself has no per-entry timestamp, so
+      // the target's own createdAt/createdBy is used for the "linked" event.
+      // That's precise for the common case (lead linked right when the
+      // target was created) but can be off for the less common admin
+      // reassignment/reactivation flows that re-add a lead to an existing
+      // target's linkedLeads later — there's no per-item link timestamp
+      // anywhere to be more exact than that.
+      if (Target) {
+        const targets = await Target.find({ linkedLeads: leadId })
+          .populate("createdBy", "firstName lastName")
+          .populate("reasonNotes.addedBy", "firstName lastName")
+          .select("period reasonNotes createdBy createdAt");
+        targets.forEach((tg) => {
+          events.push({
+            type: "target_linked",
+            description: `Linked to ${tg.period} target`,
+            performedBy: asPerson(tg.createdBy),
+            timestamp: tg.createdAt,
+          });
+          (tg.reasonNotes || [])
+            .filter((n) => n.itemType === "lead" && String(n.itemId) === String(leadId))
+            .forEach((n) => {
+              events.push({
+                type: "target_reason_note",
+                description: `Note on ${tg.period} target: "${n.note}"`,
+                performedBy: asPerson(n.addedBy),
+                timestamp: n.addedAt,
+              });
+            });
+        });
+      }
+
+      // Meetings — scheduled + cancelled, same as the Deal Activity Log.
+      if (Meeting) {
+        const meetings = await Meeting.find({ leadId })
+          .populate("createdBy", "firstName lastName")
+          .populate("cancelledBy", "firstName lastName")
+          .sort({ createdAt: -1 });
+        meetings.forEach((m) => {
+          events.push({
+            type: "meeting_scheduled",
+            description: `Meeting "${m.title}" scheduled for ${new Date(m.startDateTime).toLocaleString()}`,
+            performedBy: asPerson(m.createdBy),
+            timestamp: m.createdAt,
+          });
+          if (m.status === "cancelled") {
+            events.push({
+              type: "meeting_cancelled",
+              description: `Meeting "${m.title}" cancelled`,
+              performedBy: asPerson(m.cancelledBy),
+              timestamp: m.cancelledAt || m.updatedAt,
+            });
+          }
+        });
+      }
+
+      // Scheduled/sent emails — massEmailSchema has no lead link, so this
+      // matches on the lead's own contact email, same as getLeadEmails above.
+      if (lead.email) {
+        const emails = await MassEmail.find({ recipients: lead.email })
+          .populate("createdBy", "firstName lastName")
+          .populate("cancelledBy", "firstName lastName")
+          .sort({ createdAt: -1 });
+        emails.forEach((e) => {
+          events.push({
+            type: e.status === "sent" ? "email_sent" : "email_scheduled",
+            description: `Email "${e.subject}" ${e.status === "sent" ? "sent" : e.status} to ${lead.email}`,
+            performedBy: asPerson(e.createdBy),
+            timestamp: e.createdAt,
+          });
+          if (e.status === "cancelled") {
+            events.push({
+              type: "email_cancelled",
+              description: `Email "${e.subject}" cancelled`,
+              performedBy: asPerson(e.cancelledBy),
+              timestamp: e.cancelledAt || e.updatedAt,
+            });
+          }
+        });
+      }
+
+      events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+      res.status(200).json({ leadId, activity: events });
+    } catch (err) {
+      console.error("Get lead activity log error:", err);
+      res.status(500).json({ message: err.message });
     }
   },
 };

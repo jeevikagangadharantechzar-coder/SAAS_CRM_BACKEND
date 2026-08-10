@@ -141,7 +141,7 @@ export default {
 
   createMeeting: async (req, res) => {
     try {
-      const { title, description, startDateTime, endDateTime, attendees, reminderMinutes, provider, dealId } = req.body;
+      const { title, description, startDateTime, endDateTime, attendees, reminderMinutes, provider, dealId, leadId } = req.body;
       const { Meeting, User } = getModels(req);
       const meetingProvider = provider === "zoom" ? "zoom" : "google_meet";
 
@@ -247,6 +247,7 @@ export default {
         createdBy:       req.user._id,
         creatorEmail:    user.email,
         dealId:          dealId || null,
+        leadId:          leadId || null,
       });
 
       // Google Calendar already emails attendees itself (sendUpdates: "all"

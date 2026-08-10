@@ -5,6 +5,7 @@ const meetingSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
     dealId: { type: mongoose.Schema.Types.ObjectId, ref: "Deal", default: null, index: true },
+    leadId: { type: mongoose.Schema.Types.ObjectId, ref: "Lead", default: null, index: true },
     startDateTime: { type: Date, required: true },
     endDateTime: { type: Date, required: true },
     attendees: [{ type: String, trim: true }],

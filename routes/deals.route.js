@@ -3,6 +3,7 @@ import indexControllers from "../controllers/index.controllers.js";
 import {
   protect,
   adminOnly,
+  adminOrSales,
   adminOrAssignedToDeal,
 } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
@@ -30,7 +31,8 @@ router.get(
 
 // Import / Export routes — must stay above the generic "/:id" routes below
 router.get("/export", indexControllers.dealsController.exportDeals);
-router.post("/bulk-import", adminOnly, indexControllers.dealsController.bulkImportDeals);
+router.post("/bulk-import", adminOrSales, indexControllers.dealsController.bulkImportDeals);
+router.get("/check-duplicate", indexControllers.dealsController.checkDuplicateDeal);
 
 // Rejected deals — dedicated list + bulk delete + reject action (specific
 // routes, must come before the generic "/:id" routes below)
@@ -61,7 +63,7 @@ router.patch(
 router.post(
   "/createManual",
   adminOnly,
-  upload.array("attachments", 10),
+  upload.fields([{ name: "attachments", maxCount: 10 }, { name: "images", maxCount: 10 }]),
   indexControllers.dealsController.createManualDeal
 );
 
@@ -77,7 +79,7 @@ router.post(
 router.patch(
   "/update-deal/:id",
   adminOrAssignedToDeal,
-  upload.array("attachments"),
+  upload.fields([{ name: "attachments", maxCount: 10 }, { name: "images", maxCount: 10 }]),
   indexControllers.dealsController.updateDeal
 );
 

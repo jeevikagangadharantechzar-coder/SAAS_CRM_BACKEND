@@ -15,6 +15,7 @@ router.get("/getAllLead", indexControllers.leadsController.getLeads);
 router.get("/recent", indexControllers.leadsController.getRecentLeads);
 router.get("/pending", indexControllers.leadsController.getPendingLeads);
 router.get("/missed-followups", indexControllers.leadsController.getMissedFollowUps);
+router.get("/check-duplicate", indexControllers.leadsController.checkDuplicateLead);
 router.get("/rejected", adminOnly, indexControllers.leadsController.getRejectedLeads);
 router.post("/rejected/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteRejectedLeads);
 router.get("/trash", adminOnly, indexControllers.leadsController.getTrashLeads);
@@ -29,12 +30,12 @@ router.post("/bulk-import", adminOrSales, indexControllers.leadsController.bulkI
 router.post(
   "/create",
   adminOrSales,
-  upload.array("attachments", 5),
+  upload.fields([{ name: "attachments", maxCount: 5 }, { name: "images", maxCount: 5 }]),
   indexControllers.leadsController.createLead
 );
 
 //  UPDATE/DELETE ROUTES (with :id but still specific paths)
-router.put("/updateLead/:id", upload.array("attachments", 5), adminOrAssigned, indexControllers.leadsController.updateLead);
+router.put("/updateLead/:id", upload.fields([{ name: "attachments", maxCount: 5 }, { name: "images", maxCount: 5 }]), adminOrAssigned, indexControllers.leadsController.updateLead);
 router.delete("/deleteLead/:id", adminOrAssigned, indexControllers.leadsController.deleteLead);
 
 //  ACTION ROUTES (these have :id but are still specific action paths)(convert, show status, create follow-up)
@@ -47,6 +48,9 @@ router.patch("/:id/followup", protect, indexControllers.leadsController.updateFo
 router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);
 router.patch("/:id/followup-notes/:noteId", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.editFollowUpNote);
 router.delete("/:id/followup-notes/:noteId", adminOrAssigned, indexControllers.leadsController.deleteFollowUpNote);
+router.get("/:id/activity", adminOrAssigned, indexControllers.leadsController.getLeadActivityLog);
+router.get("/:id/meetings", adminOrAssigned, indexControllers.leadsController.getLeadMeetings);
+router.get("/:id/emails", adminOrAssigned, indexControllers.leadsController.getLeadEmails);
 
 //  GENERIC ROUTE WITH :id LAST (catch-all for /:id)
 router.get("/getLead/:id", adminOrAssigned, indexControllers.leadsController.getLeadById);

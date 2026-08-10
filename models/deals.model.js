@@ -130,6 +130,16 @@ const dealSchema = new mongoose.Schema({
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
 ],
+  images: [
+  {
+    name: { type: String, default: "" },
+    path: { type: String, default: "" },
+    type: { type: String, default: "application/octet-stream" },
+    size: { type: Number, default: 0 },
+    uploadedAt: { type: Date, default: Date.now },
+    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  },
+],
   // Lost deal fields
   lossReason: {
     type: String,
