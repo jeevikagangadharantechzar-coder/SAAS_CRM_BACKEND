@@ -57,9 +57,12 @@ const leadSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"],
-      default: "Cold",
+      enum: ["New", "Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"],
+      default: "New",
     },
+    lossStage: { type: String, enum: ["New", "Hot", "Warm", "Cold", null], default: null },
+    followUpCountAtLoss: { type: Number, default: 0 },
+    leadAgeAtLossDays: { type: Number, default: 0 },
     rejectionReason: { type: String, default: "" },
     rejectedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     rejectedAt:       { type: Date, default: null },

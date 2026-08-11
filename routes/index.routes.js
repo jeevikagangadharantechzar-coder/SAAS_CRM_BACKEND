@@ -18,6 +18,7 @@ import clientLTVRoutes from "./clientLTVRoutes.js";
 import contactFormRoutes from "./public.routes.js";
 import emailTemplateRoutes from "./emailTemplate.routes.js";
 import lostDealRoutes from "./lostDealRoutes.js";
+import leadLossRoutes from "./leadLossRoutes.js";
 import settingsRoutes from "./settingsRoutes.js";
 import emailRoutes from "./email.routes.js"
 import gmailRoutes from "./gmailRoutes.js"; 
@@ -57,6 +58,7 @@ router.use("/public", contactFormRoutes);
 router.use("/email-templates", emailTemplateRoutes);
 router.use("/lost-deals", lostDealRoutes);
 router.use("/settings", settingsRoutes);
+router.use("/lead-loss", leadLossRoutes);
 router.use("/client-ltv", clientLTVRoutes);
 router.use("/email",emailRoutes);
 router.use("/linkedin", linkedinRoutes);

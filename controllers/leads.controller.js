@@ -137,7 +137,7 @@ export default {
         data.assignTo = await pickNextSalesUser(User, Lead);
       }
       if (!data.followUpDate || data.followUpDate === "") data.followUpDate = new Date();
-      if (!data.status) data.status = "Cold";
+      if (!data.status) data.status = "New";
       data.lastReminderAt = null;
       data.createdBy = req.user?._id || null;
 
@@ -574,12 +574,27 @@ const leads = await leadQuery;
       const followUpChanged = !oldFollowUpDate || !newFollowUpDate ||
         oldFollowUpDate.toISOString() !== newFollowUpDate.toISOString();
 
+      if (followUpChanged) {
+        patch.followUpUpdateCount = (before.followUpUpdateCount || 0) + 1;
+      }
+
       const isAdminLead = req.user.role?.name === "Admin";
 
       if (patch.status && patch.status !== before.status) {
         patch.lastReminderAt = null;
         // Always record status moves for full journey tracking (admin + salesperson)
         pushOps.statusHistory = { status: patch.status, changedAt: new Date(), changedBy: req.user._id };
+
+        if (patch.status === "Rejected" || patch.status === "Junk" || (patch.status === "Cold" && patch.rejectionReason)) {
+          const creationDate = before.createdAt || new Date();
+          const diffTime = Math.abs(new Date() - creationDate);
+          patch.leadAgeAtLossDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          
+          // Calculate follow up count by tracking how many times the followUpDate was created/updated
+          patch.followUpCountAtLoss = 1 + (patch.followUpUpdateCount || before.followUpUpdateCount || 0);
+            
+          patch.lossStage = before.status;
+        }
       }
       if (patch.followUpDate) patch.lastReminderAt = null;
       if (patch.followUpDate && followUpChanged) {
@@ -1028,17 +1043,26 @@ const leads = await leadQuery;
         return res.status(403).json({ message: "Access denied: Admins only" });
       }
       const { Lead } = getModels(req);
-      const { reason } = req.body;
+      const { reason, customReason } = req.body;
       if (!reason?.trim()) return res.status(400).json({ message: "Rejection reason is required" });
 
       const lead = await Lead.findById(req.params.id).populate("assignTo");
       if (!lead) return res.status(404).json({ message: "Lead not found" });
 
+      const previousStatus = lead.status;
       lead.status = "Rejected";
       lead.rejectionReason = reason.trim();
+      if (customReason) lead.customRejectionReason = customReason.trim();
       lead.rejectedBy = req.user._id;
       lead.rejectedAt = new Date();
       lead.statusHistory = [...(lead.statusHistory || []), { status: "Rejected", changedAt: new Date() }];
+      
+      // Analytics calculations
+      const createdAt = new Date(lead.createdAt || Date.now());
+      lead.leadAgeAtLossDays = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)));
+      lead.followUpCountAtLoss = lead.followUpNotes ? lead.followUpNotes.length : 0;
+      lead.lossStage = previousStatus;
+      
       await lead.save();
 
       if (lead.assignTo) {
@@ -1310,7 +1334,7 @@ const leads = await leadQuery;
         return res.status(400).json({ success: false, message: "No lead rows provided" });
       }
 
-      const allowedStatuses = ["Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"];
+      const allowedStatuses = ["New", "Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"];
       const results = { created: 0, failed: 0, errors: [] };
 
       // A Sales user's own import always lands on their own desk — the
@@ -1385,7 +1409,7 @@ const leads = await leadQuery;
           assignTo = req.user._id;
         }
 
-        const status = allowedStatuses.includes(row.status) ? row.status : "Cold";
+        const status = allowedStatuses.includes(row.status) ? row.status : "New";
         const followUpDate = row.followUpDate && !isNaN(new Date(row.followUpDate).getTime())
           ? new Date(row.followUpDate)
           : new Date();

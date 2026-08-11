@@ -185,6 +185,7 @@ const createUser = async (req, res) => {
       const user = await User.create({
         firstName, lastName, email, password: hashedPassword, mobileNumber,
         role, status, gender, address, dateOfBirth, profileImage,
+        currency: req.user.currency,
       });
       res.status(201).json(user);
 

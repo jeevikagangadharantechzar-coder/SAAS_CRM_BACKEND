@@ -117,7 +117,9 @@ export default {
     try {
       const { Meeting } = getModels(req);
       const isAdmin = req.user.role?.name === "Admin";
-      const query = isAdmin ? {} : { attendees: req.user.email };
+      const query = isAdmin
+        ? {}
+        : { $or: [{ attendees: req.user.email }, { createdBy: req.user._id }] };
       const meetings = await Meeting.find(query)
         .populate("createdBy", "firstName lastName email")
         .sort({ startDateTime: 1 });
