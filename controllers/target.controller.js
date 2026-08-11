@@ -1458,13 +1458,8 @@ export default {
   // Sales: flag a lead/deal with a reason note (visible to admin)
   addReasonNote: async (req, res) => {
     try {
-      const fs = (await import('fs')).default;
-      const logFile = "d:/SAAS_CRM_BACKEND/debug.log";
-      fs.appendFileSync(logFile, "\n--- addReasonNote started for Target ---\n");
-
       const { Target, Notification, User, Role } = getModels(req);
       const { itemType, itemId, itemName, note, companyName, phoneNumber, email, value, currency, stageOrStatus } = req.body;
-      fs.appendFileSync(logFile, `Req body: ${JSON.stringify(req.body)}\n`);
 
       if (!note?.trim()) return res.status(400).json({ message: "Note is required" });
       if (!["lead", "deal", "target"].includes(itemType)) return res.status(400).json({ message: "itemType must be lead, deal, or target" });
@@ -1474,6 +1469,8 @@ export default {
       if (String(target.salesPerson) !== String(req.user._id) && req.user.role?.name !== "Admin") {
         return res.status(403).json({ message: "Access denied" });
       }
+
+      if (!target.reasonNotes) target.reasonNotes = [];
 
       target.reasonNotes.push({
         itemType,
@@ -1490,9 +1487,7 @@ export default {
         currency: currency || "",
         stageOrStatus: stageOrStatus || "",
       });
-      fs.appendFileSync(logFile, "Saving target...\n");
       await target.save();
-      fs.appendFileSync(logFile, "Target saved!\n");
 
       // Notify all admins
       const adminRole = await Role.findOne({ name: "Admin" });
@@ -1517,10 +1512,7 @@ export default {
       }
 
       res.status(200).json({ message: "Reason note sent to admin", reasonNotes: target.reasonNotes });
-      fs.appendFileSync(logFile, "Success sent.\n");
     } catch (err) {
-      const fs = (await import('fs')).default;
-      fs.appendFileSync("d:/SAAS_CRM_BACKEND/debug.log", `ERROR in addReasonNote target: ${err.stack}\n`);
       console.error("Error adding reason note:", err);
       res.status(500).json({ message: "Internal server error" });
     }

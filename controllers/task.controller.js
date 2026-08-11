@@ -1004,13 +1004,8 @@ export default {
   // scoped to a single task (no itemType/itemId needed).
   addReasonNote: async (req, res) => {
     try {
-      const fs = (await import('fs')).default;
-      const logFile = "d:/SAAS_CRM_BACKEND/debug.log";
-      fs.appendFileSync(logFile, "\n--- addReasonNote started for Task ---\n");
-
       const { Task, Notification, User, Role } = getModels(req);
       const { note } = req.body;
-      fs.appendFileSync(logFile, `Req body: ${JSON.stringify(req.body)}\n`);
       if (!note?.trim()) return res.status(400).json({ message: "Note is required" });
 
       const task = await Task.findById(req.params.id).populate("assignedTo", "firstName lastName");
@@ -1021,6 +1016,9 @@ export default {
       if (!isAdmin && !isAssigned) return res.status(403).json({ message: "Access denied" });
 
       const actorName = `${req.user.firstName} ${req.user.lastName}`;
+
+      if (!task.reasonNotes) task.reasonNotes = [];
+      if (!task.history) task.history = [];
 
       task.reasonNotes.push({
         note: note.trim(),
@@ -1034,9 +1032,7 @@ export default {
         by: req.user._id,
         at: new Date(),
       });
-      fs.appendFileSync(logFile, "Saving task...\n");
       await task.save();
-      fs.appendFileSync(logFile, "Task saved!\n");
 
       const admins = await findAdmins(User, Role);
       await Promise.all(admins.map((admin) => createNotification(Notification, {
@@ -1050,10 +1046,7 @@ export default {
       await broadcastTasksRefresh(User, Role, [task.assignedTo._id]);
 
       res.status(200).json({ message: "Issue reported to admin", reasonNotes: task.reasonNotes });
-      fs.appendFileSync(logFile, "Success sent.\n");
     } catch (err) {
-      const fs = (await import('fs')).default;
-      fs.appendFileSync("d:/SAAS_CRM_BACKEND/debug.log", `ERROR in addReasonNote task: ${err.stack}\n`);
       console.error("Error adding task reason note:", err);
       res.status(500).json({ message: "Internal server error" });
     }
