@@ -73,6 +73,46 @@ const normalizeFile = (f) => {
   };
 };
 
+// One-time, lazy migration from the old JSON-stringified `notes` field into
+// the real notesList subdocument array — runs the first time a lead with
+// leftover legacy notes is fetched, then clears the old field so it never
+// runs again for that lead.
+const migrateLegacyNotes = async (lead) => {
+  if ((lead.notesList?.length || 0) > 0 || !lead.notes) return lead;
+
+  let entries = [];
+  try {
+    const parsed = JSON.parse(lead.notes);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      entries = parsed.map((n) => ({
+        text: n?.text ?? String(n ?? ""),
+        createdAt: n?.createdAt ? new Date(n.createdAt) : lead.createdAt,
+        createdBy: null,
+      }));
+    }
+  } catch { /* not JSON — plain legacy text, handled below */ }
+  if (entries.length === 0) entries = [{ text: lead.notes, createdAt: lead.createdAt, createdBy: null }];
+
+  lead.notesList = entries;
+  lead.notes = null;
+  await lead.save();
+  return lead;
+};
+
+// Self-heals leads whose notesList fell out of newest-first order from the
+// updateLead $push-appends-to-end bug (fixed, but already-written data needs
+// a one-time re-sort) — a no-op save skip when the order's already correct.
+const ensureNotesListSorted = async (lead) => {
+  if (!lead.notesList || lead.notesList.length < 2) return lead;
+  const sorted = [...lead.notesList].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const alreadySorted = sorted.every((n, i) => String(n._id) === String(lead.notesList[i]._id));
+  if (!alreadySorted) {
+    lead.notesList = sorted;
+    await lead.save();
+  }
+  return lead;
+};
+
 export default {
   createLead: async (req, res) => {
     try {
@@ -88,6 +128,13 @@ export default {
       if (!data.clientType || data.clientType === "") {
         delete data.clientType;
       }
+
+      // notesList (not the deprecated `notes` string) is the real storage —
+      // seed the first entry from whatever plain text the create form sent.
+      if (data.notes && data.notes.trim()) {
+        data.notesList = [{ text: data.notes.trim(), createdBy: req.user?._id || null, createdAt: new Date() }];
+      }
+      delete data.notes;
 
       let existingAttachments = [];
       if (req.body.existingAttachments) {
@@ -461,11 +508,14 @@ const leads = await leadQuery;
   getLeadById: async (req, res) => {
     try {
       const { Lead } = getModels(req);
-      const lead = await Lead.findById(req.params.id)
+      let lead = await Lead.findById(req.params.id)
         .populate("assignTo", "firstName lastName email role")
         .populate("notesUpdatedBy", "firstName lastName")
         .populate("followUpNotesHistory.performedBy", "firstName lastName email");
       if (!lead) return res.status(404).json({ message: "Lead not found" });
+      lead = await migrateLegacyNotes(lead);
+      lead = await ensureNotesListSorted(lead);
+      await lead.populate("notesList.createdBy", "firstName lastName");
       res.status(200).json(lead);
     } catch (error) {
       res.status(500).json({ message: error.message });
@@ -509,17 +559,21 @@ const leads = await leadQuery;
       // request.
       const pushOps = {};
 
-      // Track who last wrote/changed the notes, and when — only stamped when
-      // the text actually changes, not on every save that happens to include
-      // it. notesUpdatedBy/At stay as the latest-edit snapshot (other UI
-      // reads them directly); notesHistory is the append-only record the
-      // Activity Timeline needs to show every occasion notes were touched,
-      // not just the most recent one.
-      if ("notes" in patch && patch.notes !== (before.notes || "")) {
-        patch.notesUpdatedBy = req.user._id;
-        patch.notesUpdatedAt = new Date();
+      // The generic edit form's "Notes" box is a quick "add a note" input,
+      // not an editor of the existing thread — a non-empty value here
+      // prepends a new notesList entry rather than overwriting anything.
+      // $position: 0 keeps this consistent with addNote's unshift(), so the
+      // list stays newest-first regardless of which endpoint added a note.
+      // Individual notes are otherwise managed through the dedicated
+      // add/edit/deleteNote endpoints.
+      if (patch.notes && patch.notes.trim()) {
+        pushOps.notesList = {
+          $each: [{ text: patch.notes.trim(), createdBy: req.user._id, createdAt: new Date() }],
+          $position: 0,
+        };
         pushOps.notesHistory = { changedBy: req.user._id, changedAt: new Date() };
       }
+      delete patch.notes;
 
       // Falls back to the lead's own current attachments/images (not []) when
       // the caller doesn't send this field at all — same pattern updateDeal
@@ -625,7 +679,8 @@ const leads = await leadQuery;
       const updateOp = $push ? { ...patchWithoutPush, $push } : patchWithoutPush;
       const updated = await Lead.findByIdAndUpdate(req.params.id, updateOp, { new: true })
         .populate("assignTo", "firstName lastName email profileImage")
-        .populate("notesUpdatedBy", "firstName lastName");
+        .populate("notesUpdatedBy", "firstName lastName")
+        .populate("notesList.createdBy", "firstName lastName");
 
       if (followUpChanged) {
         await deleteAllNotificationsByEntity("lead", req.params.id, tDB);
@@ -1020,6 +1075,81 @@ const leads = await leadQuery;
     }
   },
 
+  // Plain Notes tab — a real per-note thread (notesList), not the follow-up
+  // reminder notes above. Mirrors the add/edit/delete pattern of
+  // addFollowUpNote/editFollowUpNote/deleteFollowUpNote.
+  addNote: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const { text } = req.body;
+      if (!text || !text.trim()) return res.status(400).json({ message: "Note text is required" });
+
+      let lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+      lead = await migrateLegacyNotes(lead);
+
+      lead.notesList.unshift({ text: text.trim(), createdBy: req.user._id, createdAt: new Date() });
+      lead.notesHistory.push({ changedBy: req.user._id, changedAt: new Date() });
+      await lead.save();
+
+      const updated = await Lead.findById(req.params.id)
+        .populate("assignTo", "firstName lastName email role")
+        .populate("notesList.createdBy", "firstName lastName");
+      res.status(200).json({ message: "Note added", lead: updated });
+    } catch (error) {
+      res.status(400).json({ message: error.message });
+    }
+  },
+
+  editNote: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+      const { text } = req.body;
+      if (!text || !text.trim()) return res.status(400).json({ message: "Note text is required" });
+
+      const lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      const noteDoc = lead.notesList.id(req.params.noteId);
+      if (!noteDoc) return res.status(404).json({ message: "Note not found" });
+
+      noteDoc.text      = text.trim();
+      noteDoc.updatedAt = new Date();
+      lead.notesHistory.push({ changedBy: req.user._id, changedAt: new Date() });
+      await lead.save();
+
+      const updated = await Lead.findById(req.params.id)
+        .populate("assignTo", "firstName lastName email role")
+        .populate("notesList.createdBy", "firstName lastName");
+      res.status(200).json({ message: "Note updated", lead: updated });
+    } catch (error) {
+      res.status(400).json({ message: error.message });
+    }
+  },
+
+  deleteNote: async (req, res) => {
+    try {
+      const { Lead } = getModels(req);
+
+      const lead = await Lead.findById(req.params.id);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      const noteDoc = lead.notesList.id(req.params.noteId);
+      if (!noteDoc) return res.status(404).json({ message: "Note not found" });
+
+      noteDoc.deleteOne();
+      lead.notesHistory.push({ changedBy: req.user._id, changedAt: new Date() });
+      await lead.save();
+
+      const updated = await Lead.findById(req.params.id)
+        .populate("assignTo", "firstName lastName email role")
+        .populate("notesList.createdBy", "firstName lastName");
+      res.status(200).json({ message: "Note deleted", lead: updated });
+    } catch (error) {
+      res.status(400).json({ message: error.message });
+    }
+  },
+
   // Admin: reject a lead with a reason instead of deleting it — the lead stays
   // in the list, status flips to Rejected, and it shows disabled/blurred to everyone.
   rejectLead: async (req, res) => {
@@ -1286,7 +1416,7 @@ const leads = await leadQuery;
         address:      lead.address || "",
         country:      lead.country || "",
         status:       lead.status || "",
-        notes:        lead.notes || "",
+        notes:        (lead.notesList?.length > 0 ? lead.notesList.map((n) => n.text).join(" | ") : lead.notes) || "",
         followUpDate: lead.followUpDate ? new Date(lead.followUpDate).toISOString().slice(0, 10) : "",
         createdAt:    lead.createdAt ? new Date(lead.createdAt).toISOString().slice(0, 10) : "",
       }));

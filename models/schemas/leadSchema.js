@@ -87,6 +87,11 @@ const leadSchema = new mongoose.Schema(
     emailSentAt:     { type: Date, default: null },
     lastReminderAt:  { type: Date, default: null },
 
+    // Deprecated — legacy free-text notes field. New notes are stored as
+    // proper entries in notesList below; this is only read once per lead
+    // (by migrateLegacyNotes) to seed notesList from whatever's left here,
+    // then cleared. Kept in the schema so that one-time migration has
+    // somewhere to read from.
     notes: { type: String },
     // Latest-edit snapshot — kept as-is since other UI already reads it
     // directly (e.g. a "notes last updated by X" preview card).
@@ -100,6 +105,19 @@ const leadSchema = new mongoose.Schema(
       {
         changedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
         changedAt: { type: Date, default: Date.now },
+      },
+    ],
+
+    // Real per-note thread, newest first — each note is its own subdocument
+    // with a genuine Mongo _id, replacing the old approach of JSON-stringifying
+    // an array of client-generated {id, text, createdAt} objects into the
+    // single `notes` string field above.
+    notesList: [
+      {
+        text:      { type: String, required: true },
+        createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: null },
       },
     ],
 
