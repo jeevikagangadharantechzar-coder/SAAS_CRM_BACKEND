@@ -76,8 +76,7 @@ const sendDueToday = async (t, adminIds, tenantDB, models, today) => {
   const journeyBlock = journeyBlockFor(t);
   const { incompleteLeads, incompleteDeals } = getIncompleteItems(t);
 
-  if (incompleteLeads.length) await Lead.updateMany({ _id: { $in: incompleteLeads.map((l) => l._id) } }, { isActive: false });
-  if (incompleteDeals.length) await Deal.updateMany({ _id: { $in: incompleteDeals.map((d) => d._id) } }, { isActive: false });
+  // No longer setting isActive to false. Items remain fully interactable.
 
   const salesMsg = `🚨 Today (${today.toDateString()}) is the last due date for these leads/deals. Full history so far:\n\n${journeyBlock}\n\nThey are now disabled (read-only, no stage/status changes, no pipeline drag-and-drop) until Admin reassigns them to you or another sales person. Thank you!`;
   await sendNotification(t.salesPerson._id, salesMsg, "target_due_today", { targetId: String(t._id), salesName }, { title: "Today Is the Last Due Date", referenceId: String(t._id) }, tenantDB);
@@ -112,64 +111,12 @@ const expireTarget = async (t, adminIds, tenantDB, models) => {
     },
   });
 
-  // Disable the items themselves (not deleted, not unassigned) so they show as
-  // read-only/greyed-out to the sales person until admin reassigns them.
-  if (incompleteLeads.length) {
-    await Lead.updateMany({ _id: { $in: incompleteLeads.map((l) => l._id) } }, { isActive: false });
-  }
-  if (incompleteDeals.length) {
-    await Deal.updateMany({ _id: { $in: incompleteDeals.map((d) => d._id) } }, { isActive: false });
-  }
-
   if (removedBlock) {
-    const salesMsg = `❌ Today's due date has passed for these leads/deals — full history:\n\n${removedBlock}\n\nThese leads/deals are now disabled for you (read-only) until Admin reassigns them back to you or to another sales person. Thank you!`;
+    const salesMsg = `❌ Today's due date has passed for these leads/deals — full history:\n\n${removedBlock}\n\nThese leads/deals are now overdue. Please navigate to My Targets and submit a reason for the delay.`;
     await sendNotification(t.salesPerson._id, salesMsg, "target_expired", { targetId: String(t._id), salesName }, { title: "Target Deadline Passed", referenceId: String(t._id) }, tenantDB);
     notifyTargetUser(String(t.salesPerson._id), "target_expired", { targetId: String(t._id), message: salesMsg, removed: removedBlock });
 
-    // Auto-create a pending reason note per incomplete item so it shows up in the
-    // existing "Reason Notes" reassignment queue (reuses the existing Reassign button/flow).
-    const targetDoc = await Target.findById(t._id);
-    if (targetDoc) {
-      const alreadyPending = new Set(
-        targetDoc.reasonNotes.filter((n) => n.status === "pending").map((n) => String(n.itemId))
-      );
-
-      for (const l of incompleteLeads) {
-        if (alreadyPending.has(String(l._id))) continue;
-        const full = await Lead.findById(l._id).select("companyName phoneNumber email status").lean();
-        targetDoc.reasonNotes.push({
-          itemType: "lead",
-          itemId: l._id,
-          itemName: l.leadName,
-          note: `Target deadline passed on ${new Date(t.endDate).toDateString()} — automatically removed. Please reassign.`,
-          addedBy: t.salesPerson._id,
-          status: "pending",
-          companyName: full?.companyName || "",
-          phoneNumber: full?.phoneNumber || "",
-          email: full?.email || "",
-          stageOrStatus: full?.status || "",
-        });
-      }
-      for (const d of incompleteDeals) {
-        if (alreadyPending.has(String(d._id))) continue;
-        const full = await Deal.findById(d._id).select("companyName phoneNumber email value currency stage").lean();
-        targetDoc.reasonNotes.push({
-          itemType: "deal",
-          itemId: d._id,
-          itemName: d.dealName || d.dealTitle,
-          note: `Target deadline passed on ${new Date(t.endDate).toDateString()} — automatically removed. Please reassign.`,
-          addedBy: t.salesPerson._id,
-          status: "pending",
-          companyName: full?.companyName || "",
-          phoneNumber: full?.phoneNumber || "",
-          email: full?.email || "",
-          value: full?.value ? String(full.value) : "",
-          currency: full?.currency || "",
-          stageOrStatus: full?.stage || "",
-        });
-      }
-      await targetDoc.save();
-    }
+    // Salesperson will now manually submit reason notes via the blocking modal on the frontend.
 
     const adminMsg = `❌ ${salesName}'s target deadline has passed. Full tracking history:\n\n${removedBlock}\n\nThese items are ready for reassignment — click below to reassign to ${salesName} or another sales person.`;
     for (const adminId of adminIds) {
