@@ -880,15 +880,21 @@ export default {
           updatePayload.status = existing.status;
           updatePayload.rejectionRequested = true;
           updatePayload.rejectionReason = req.body.rejectionReason || "";
-        }
-        
-        if (req.body.status === "In Hold") {
+        } else if (req.body.status === "In Hold") {
           updatePayload.status = existing.status;
           updatePayload.holdRequested = true;
           updatePayload.holdReason = req.body.holdReason || "";
           updatePayload.holdRequestedAt = new Date();
         }
       }
+      
+      if (req.body.status === "In Progress" || req.body.status === "Completed") {
+        updatePayload.holdRequested = false;
+        updatePayload.rejectionRequested = false;
+        updatePayload.holdReason = "";
+        updatePayload.rejectionReason = "";
+      }
+      
       const { startDate, endDate } = req.body;
       let endDateChanged = false;
       if (startDate || endDate) {
@@ -1554,8 +1560,8 @@ export default {
         .populate("salesPerson", "firstName lastName email")
         .populate("reasonNotes.addedBy", "firstName lastName")
         .populate("reasonNotes.reassignedTo", "firstName lastName")
-        .populate("linkedLeads", "status")
-        .populate("linkedDeals", "stage")
+        .populate("linkedLeads", "status leadName companyName")
+        .populate("linkedDeals", "stage dealName dealTitle companyName")
         .lean();
 
       const allSalesPersonIds = [...new Set(targets.map(t => String(t.salesPerson._id)))];
@@ -1855,13 +1861,22 @@ export default {
                 else remainingDealsForTask.push(d._id);
               }
 
-              if (completedLeadsForTask.length > 0 || completedDealsForTask.length > 0) {
-                t.leadRefs = completedLeadsForTask;
-                t.dealRefs = completedDealsForTask;
-                t.leadRef = completedLeadsForTask.length > 0 ? completedLeadsForTask[completedLeadsForTask.length - 1] : null;
-                t.dealRef = completedDealsForTask.length > 0 ? completedDealsForTask[completedDealsForTask.length - 1] : null;
-                t.status = "Completed";
-                t.approvedByAdmin = true;
+              const transferredRemainingLeads = remainingLeadsForTask.filter(id => transferredLeadIdsStr.has(String(id)));
+              const retainedRemainingLeads = remainingLeadsForTask.filter(id => !transferredLeadIdsStr.has(String(id)));
+
+              const transferredRemainingDeals = remainingDealsForTask.filter(id => transferredDealIdsStr.has(String(id)));
+              const retainedRemainingDeals = remainingDealsForTask.filter(id => !transferredDealIdsStr.has(String(id)));
+
+              if (completedLeadsForTask.length > 0 || completedDealsForTask.length > 0 || retainedRemainingLeads.length > 0 || retainedRemainingDeals.length > 0) {
+                t.leadRefs = [...completedLeadsForTask, ...retainedRemainingLeads];
+                t.dealRefs = [...completedDealsForTask, ...retainedRemainingDeals];
+                t.leadRef = t.leadRefs.length > 0 ? t.leadRefs[t.leadRefs.length - 1] : null;
+                t.dealRef = t.dealRefs.length > 0 ? t.dealRefs[t.dealRefs.length - 1] : null;
+                
+                if (retainedRemainingLeads.length === 0 && retainedRemainingDeals.length === 0) {
+                  t.status = "Completed";
+                  t.approvedByAdmin = true;
+                }
                 t.history.push({
                   event: "TaskSplit",
                   detail: `Task split due to overlapping Target reassignment by Admin ${adminName}.`,
@@ -1870,47 +1885,46 @@ export default {
                 });
                 await t.save();
 
-                if (remainingLeadsForTask.length > 0) await Lead.updateMany({ _id: { $in: remainingLeadsForTask } }, { assignTo: reassignToUserId });
-                if (remainingDealsForTask.length > 0) await Deal.updateMany({ _id: { $in: remainingDealsForTask } }, { assignedTo: reassignToUserId });
-
-                const newTask = new Task({
-                  title: t.title,
-                  description: t.description,
-                  priority: t.priority,
-                  dueDate: extendEndDate ? new Date(extendEndDate) : t.dueDate,
-                  assignedTo: reassignToUserId,
-                  createdBy: t.createdBy,
-                  leadRefs: remainingLeadsForTask,
-                  dealRefs: remainingDealsForTask,
-                  leadRef: remainingLeadsForTask.length > 0 ? remainingLeadsForTask[remainingLeadsForTask.length - 1] : null,
-                  dealRef: remainingDealsForTask.length > 0 ? remainingDealsForTask[remainingDealsForTask.length - 1] : null,
-                  leadDueDates: t.leadDueDates,
-                  dealDueDates: t.dealDueDates,
-                  status: "Pending",
-                  history: [{
-                    event: "Created",
-                    detail: `Created from split task "${t.title}" cascaded from Target reassignment.`,
-                    by: req.user._id,
-                    at: new Date()
-                  }]
-                });
-                await newTask.save();
+                if (transferredRemainingLeads.length > 0 || transferredRemainingDeals.length > 0) {
+                  const newTask = new Task({
+                    title: t.title,
+                    description: t.description,
+                    priority: t.priority,
+                    dueDate: extendEndDate ? new Date(extendEndDate) : t.dueDate,
+                    assignedTo: reassignToUserId,
+                    createdBy: t.createdBy,
+                    leadRefs: transferredRemainingLeads,
+                    dealRefs: transferredRemainingDeals,
+                    leadRef: transferredRemainingLeads.length > 0 ? transferredRemainingLeads[transferredRemainingLeads.length - 1] : null,
+                    dealRef: transferredRemainingDeals.length > 0 ? transferredRemainingDeals[transferredRemainingDeals.length - 1] : null,
+                    leadDueDates: t.leadDueDates,
+                    dealDueDates: t.dealDueDates,
+                    status: "Pending",
+                    history: [{
+                      event: "Created",
+                      detail: `Created from split task cascading from Target reassignment by Admin ${adminName}.`,
+                      by: req.user._id,
+                      at: new Date()
+                    }]
+                  });
+                  await newTask.save();
+                }
               } else {
-                t.leadRefs = remainingLeadsForTask;
-                t.dealRefs = remainingDealsForTask;
+                t.leadRefs = transferredRemainingLeads;
+                t.dealRefs = transferredRemainingDeals;
                 t.assignedTo = reassignToUserId;
                 t.markModified("assignedTo");
                 t.reminderSentAt = null;
                 t.dueTodaySentAt = null;
-                if (extendEndDate) t.dueDate = new Date(extendEndDate);
+                if (extendEndDate) {
+                  t.dueDate = new Date(extendEndDate);
+                }
                 t.history.push({
                   event: "Reassigned",
-                  detail: `Cascaded reassignment from Target by Admin ${adminName}.`,
+                  detail: `Reassigned from ${target.salesPerson.firstName} ${target.salesPerson.lastName} to ${newUser.firstName} ${newUser.lastName} by Admin ${adminName}${extendEndDate ? ` — due date extended` : ""}${adminNote ? ` — Note: ${adminNote}` : ""}`,
                   by: req.user._id,
                   at: new Date(),
                 });
-                if (remainingLeadsForTask.length > 0) await Lead.updateMany({ _id: { $in: remainingLeadsForTask } }, { assignTo: reassignToUserId });
-                if (remainingDealsForTask.length > 0) await Deal.updateMany({ _id: { $in: remainingDealsForTask } }, { assignedTo: reassignToUserId });
                 await t.save();
               }
             }
@@ -1951,6 +1965,53 @@ export default {
     } catch (err) {
       console.error("Error reassigning item:", err);
       res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  replyReasonNote: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied" });
+      const { Target, Notification, User, Role } = getModels(req);
+      const { noteIdx } = req.params;
+      const { reply } = req.body;
+
+      if (!reply || !reply.trim()) {
+        return res.status(400).json({ message: "Reply cannot be empty" });
+      }
+
+      const target = await Target.findById(req.params.id).populate("salesPerson", "firstName lastName _id");
+      if (!target) return res.status(404).json({ message: "Target not found" });
+
+      const nIdx = parseInt(noteIdx, 10);
+      if (isNaN(nIdx) || nIdx < 0 || nIdx >= target.reasonNotes.length) {
+        return res.status(400).json({ message: "Invalid note index" });
+      }
+
+      const rn = target.reasonNotes[nIdx];
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+
+      rn.status = "resolved";
+      rn.adminReply = reply.trim();
+      rn.resolvedAt = new Date();
+
+      await target.save();
+
+      if (target.salesPerson) {
+        const itemText = rn.itemName ? `${rn.itemType === "deal" ? "Deal" : "Lead"} "${rn.itemName}"` : "your reported issue";
+        await createNotification(Notification, {
+          userId: target.salesPerson._id,
+          title: "Admin Replied to Your Reported Issue",
+          message: `Admin ${adminName} replied: "${reply.trim()}" on ${itemText}.`,
+          type: "reason_note_reply",
+          meta: { targetId: String(target._id), reasonNoteReplied: true },
+        });
+        notifyTargetUser(String(target.salesPerson._id), "targets_refresh", {});
+      }
+
+      res.status(200).json({ message: "Replied successfully" });
+    } catch (error) {
+      console.error("[replyReasonNote] error:", error);
+      res.status(500).json({ message: "Server Error", error: error.message });
     }
   },
 
