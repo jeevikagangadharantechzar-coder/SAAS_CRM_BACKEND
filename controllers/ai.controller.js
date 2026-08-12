@@ -16,7 +16,7 @@ async function saveChat(AiChat, userId, message, intent, response, resultCount =
   try {
     await AiChat.create({ userId, message, intent, response, resultCount });
   } catch (err) {
-    console.error("AiChat save failed (non-fatal):", err.message);
+    console.error("Ai Chat save failed (non-fatal):", err.message);
   }
 }
 

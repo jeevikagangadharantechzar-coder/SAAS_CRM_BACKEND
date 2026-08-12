@@ -61,6 +61,12 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpire: Date,
     tokenVersion:        { type: Number, default: 0 },
 
+    // Denormalized fast-path flags for the first-login consent gate — the
+    // UserAgreement collection (models/schemas/userAgreementSchema.js) is the
+    // append-only audit trail; these just avoid an extra query on every login.
+    privacyPolicyAcceptedAt: { type: Date, default: null },
+    termsAcceptedAt:         { type: Date, default: null },
+
     googleAuth: {
       accessToken:  { type: String },
       refreshToken: { type: String },
