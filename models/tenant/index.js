@@ -27,6 +27,7 @@ import taskSchema               from "../schemas/taskSchema.js";
 import targetSchema             from "../schemas/targetSchema.js";
 import indiaMartIntegrationSchema from "../schemas/indiaMartIntegrationSchema.js";
 import auditLogSchema from "../schemas/auditLogSchema.js";
+import userAgreementSchema from "../schemas/userAgreementSchema.js";
 import activityLogSchema from "../schemas/activityLogSchema.js";
 import meetingSchema             from "../schemas/meetingSchema.js";
 import googleIntegrationSchema   from "../schemas/googleIntegrationSchema.js";
@@ -74,6 +75,7 @@ const MODEL_MAP = [
   ["Target",             targetSchema],
   ["IndiaMartIntegration", indiaMartIntegrationSchema],
   ["AuditLog",             auditLogSchema],
+  ["UserAgreement",        userAgreementSchema],
   ["ActivityLog",          activityLogSchema],
   ["Meeting",             meetingSchema],
   ["GoogleIntegration",  googleIntegrationSchema],
@@ -139,6 +141,7 @@ export function getTenantModels(conn) {
     Target:              conn.model("Target"),
     IndiaMartIntegration: conn.model("IndiaMartIntegration"),
     AuditLog:             conn.model("AuditLog"),
+    UserAgreement:        conn.model("UserAgreement"),
     ActivityLog:          conn.model("ActivityLog"),
     Meeting:             conn.model("Meeting"),
     GoogleIntegration:   conn.model("GoogleIntegration"),

@@ -242,6 +242,8 @@ const getMe = async (req, res) => {
         tenantLimit,
         currency:user.currency || null,
         planFeatures,
+        needsPrivacyPolicy: !user.privacyPolicyAcceptedAt,
+        needsTerms: !user.termsAcceptedAt,
       });
     } catch (err) {
       res.status(500).json({ message: err.message });
