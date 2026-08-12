@@ -388,6 +388,15 @@ export default {
         updatePayload.completedAt = new Date();
         // No separate admin-approval step — marking Completed finalizes the task.
         updatePayload.approvedByAdmin = true;
+        updatePayload.holdRequested = false;
+        updatePayload.rejectionRequested = false;
+        updatePayload.holdReason = "";
+        updatePayload.rejectionReason = "";
+      } else if (req.body.status === "In Progress") {
+        updatePayload.holdRequested = false;
+        updatePayload.rejectionRequested = false;
+        updatePayload.holdReason = "";
+        updatePayload.rejectionReason = "";
       }
 
       // Changing the due date should restart the reminder cycle, otherwise the
@@ -959,10 +968,9 @@ export default {
       const { Task, Notification, User, Role } = getModels(req);
       const taskId = req.params.id;
 
-      // Soft-delete: just hides the task from the list — the record (and its
-      // history/reason notes) stays in the database, nothing is erased.
-      const archived = await Task.findByIdAndUpdate(taskId, { archived: true });
-      if (!archived) return res.status(404).json({ message: "Task not found" });
+      // Hard-delete: permanently erase the task from the database.
+      const deleted = await Task.findByIdAndDelete(taskId);
+      if (!deleted) return res.status(404).json({ message: "Task not found" });
 
       // Find all notifications linked to this task
       // Query with both ObjectId and string since meta is a Mixed field —
@@ -990,7 +998,7 @@ export default {
         });
       }
 
-      await broadcastTasksRefresh(User, Role, [archived.assignedTo]);
+      await broadcastTasksRefresh(User, Role, [deleted.assignedTo]);
 
       res.status(200).json({ message: "Task removed" });
     } catch (err) {
@@ -1005,7 +1013,7 @@ export default {
   addReasonNote: async (req, res) => {
     try {
       const { Task, Notification, User, Role } = getModels(req);
-      const { note } = req.body;
+      const { note, itemType, itemId, itemName } = req.body;
       if (!note?.trim()) return res.status(400).json({ message: "Note is required" });
 
       const task = await Task.findById(req.params.id).populate("assignedTo", "firstName lastName");
@@ -1021,6 +1029,9 @@ export default {
       if (!task.history) task.history = [];
 
       task.reasonNotes.push({
+        itemType: itemType || "task",
+        itemId: itemId || null,
+        itemName: itemName || "",
         note: note.trim(),
         addedBy: req.user._id,
         addedAt: new Date(),
@@ -1063,8 +1074,8 @@ export default {
         .populate("reasonNotes.reassignedTo", "firstName lastName")
         .populate("leadRef", "leadName companyName phoneNumber email")
         .populate("dealRef", "dealName dealTitle companyName phoneNumber email")
-        .populate("leadRefs", "status")
-        .populate("dealRefs", "stage")
+        .populate("leadRefs", "status leadName companyName")
+        .populate("dealRefs", "stage dealName dealTitle companyName")
         .lean();
 
       const allAssigneeIds = [...new Set(tasks.map(t => String(t.assignedTo?._id)).filter(Boolean))];
@@ -1320,29 +1331,37 @@ export default {
                 else remainingDealsForTarget.push(d._id);
               }
 
+              const transferredRemainingLeads = remainingLeadsForTarget.filter(id => transferredLeadIdsStr.has(String(id)));
+              const retainedRemainingLeads = remainingLeadsForTarget.filter(id => !transferredLeadIdsStr.has(String(id)));
+
+              const transferredRemainingDeals = remainingDealsForTarget.filter(id => transferredDealIdsStr.has(String(id)));
+              const retainedRemainingDeals = remainingDealsForTarget.filter(id => !transferredDealIdsStr.has(String(id)));
+
               const totalActuals = actuals.leadsConverted + actuals.dealsWon + actuals.calls + actuals.meetings;
               let skipNewTargetCreation = false;
               let _splitRemainder = null;
 
-              if (totalActuals > 0 || completedLeadsForTarget.length > 0 || completedDealsForTarget.length > 0) {
+              if (totalActuals > 0 || completedLeadsForTarget.length > 0 || completedDealsForTarget.length > 0 || retainedRemainingLeads.length > 0 || retainedRemainingDeals.length > 0) {
                 _splitRemainder = {
-                  targetLeads: Math.max(0, tgt.targetLeads - actuals.leadsConverted),
-                  targetDeals: Math.max(0, tgt.targetDeals - actuals.dealsWon),
-                  targetCalls: Math.max(0, tgt.targetCalls - actuals.calls),
-                  targetMeetings: Math.max(0, tgt.targetMeetings - actuals.meetings),
-                  linkedLeads: remainingLeadsForTarget,
-                  linkedDeals: remainingDealsForTarget
+                  targetLeads: transferredRemainingLeads.length,
+                  targetDeals: transferredRemainingDeals.length,
+                  targetCalls: 0,
+                  targetMeetings: 0,
+                  linkedLeads: transferredRemainingLeads,
+                  linkedDeals: transferredRemainingDeals
                 };
                 
-                tgt.targetLeads = actuals.leadsConverted;
-                tgt.targetDeals = actuals.dealsWon;
-                tgt.targetCalls = actuals.calls;
-                tgt.targetMeetings = actuals.meetings;
-                tgt.linkedLeads = completedLeadsForTarget;
-                tgt.linkedDeals = completedDealsForTarget;
-                tgt.status = "Completed";
+                tgt.targetLeads = Math.max(0, tgt.targetLeads - transferredRemainingLeads.length);
+                tgt.targetDeals = Math.max(0, tgt.targetDeals - transferredRemainingDeals.length);
+                tgt.linkedLeads = [...completedLeadsForTarget, ...retainedRemainingLeads];
+                tgt.linkedDeals = [...completedDealsForTarget, ...retainedRemainingDeals];
+                
+                if (retainedRemainingLeads.length === 0 && retainedRemainingDeals.length === 0 && tgt.targetCalls <= actuals.calls && tgt.targetMeetings <= actuals.meetings) {
+                  tgt.status = "Completed";
+                }
+                
                 await tgt.save();
-                skipNewTargetCreation = false;
+                skipNewTargetCreation = (transferredRemainingLeads.length === 0 && transferredRemainingDeals.length === 0);
               } else {
                 tgt.salesPerson = reassignToUserId;
                 skipNewTargetCreation = true;
@@ -1430,6 +1449,58 @@ export default {
       });
     } catch (err) {
       console.error("Error marking task reason note as read:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  replyReasonNote: async (req, res) => {
+    try {
+      if (req.user.role?.name !== "Admin") return res.status(403).json({ message: "Access denied" });
+      const { Task, Notification, User, Role } = getModels(req);
+      const { noteIdx } = req.params;
+      const { reply } = req.body;
+
+      if (!reply || !reply.trim()) {
+        return res.status(400).json({ message: "Reply cannot be empty" });
+      }
+
+      const task = await Task.findById(req.params.id).populate("assignedTo", "firstName lastName");
+      if (!task) return res.status(404).json({ message: "Task not found" });
+
+      const nIdx = parseInt(noteIdx, 10);
+      if (isNaN(nIdx) || nIdx < 0 || nIdx >= task.reasonNotes.length) {
+        return res.status(400).json({ message: "Invalid note index" });
+      }
+
+      const adminName = `${req.user.firstName} ${req.user.lastName}`;
+
+      task.reasonNotes[nIdx].status = "resolved";
+      task.reasonNotes[nIdx].adminReply = reply.trim();
+      task.reasonNotes[nIdx].resolvedAt = new Date();
+
+      task.history.push({
+        event: "IssueReplied",
+        detail: `Admin ${adminName} replied to the reported issue: ${reply.trim()}`,
+        by: req.user._id,
+        at: new Date(),
+      });
+
+      await task.save();
+
+      await createNotification(Notification, {
+        userId: task.assignedTo._id,
+        title: "Admin Replied to Your Reported Issue",
+        message: `Admin ${adminName} replied: "${reply.trim()}" on task "${task.title}".`,
+        type: "task",
+        meta: { taskId: String(task._id), reasonNoteReplied: true },
+      });
+
+      await broadcastTasksRefresh(User, Role, [task.assignedTo._id]);
+      res.status(200).json({
+        message: "Replied successfully",
+      });
+    } catch (err) {
+      console.error("Error replying to task reason note:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   },

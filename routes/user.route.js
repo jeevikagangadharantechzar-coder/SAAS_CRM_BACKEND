@@ -5,6 +5,7 @@ import {
   adminOrSales,
   adminOrAssigned,
   adminCreateOnly,
+  adminOrSelf,
 } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
 import { getTenantModels } from "../models/tenant/index.js";
@@ -64,7 +65,7 @@ router.post(
 router.put(
   "/update-user/:id",
   protect,
-  adminCreateOnly,
+  adminOrSelf,
   checkPlanFeature("users_roles"),
   upload.single("profileImage"),
   indexControllers.usersController.updateUser,

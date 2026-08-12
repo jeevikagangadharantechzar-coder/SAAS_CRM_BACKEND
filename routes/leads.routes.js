@@ -48,6 +48,9 @@ router.patch("/:id/followup", protect, indexControllers.leadsController.updateFo
 router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);
 router.patch("/:id/followup-notes/:noteId", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.editFollowUpNote);
 router.delete("/:id/followup-notes/:noteId", adminOrAssigned, indexControllers.leadsController.deleteFollowUpNote);
+router.post("/:id/notes", adminOrAssigned, indexControllers.leadsController.addNote);
+router.patch("/:id/notes/:noteId", adminOrAssigned, indexControllers.leadsController.editNote);
+router.delete("/:id/notes/:noteId", adminOrAssigned, indexControllers.leadsController.deleteNote);
 router.get("/:id/activity", adminOrAssigned, indexControllers.leadsController.getLeadActivityLog);
 router.get("/:id/meetings", adminOrAssigned, indexControllers.leadsController.getLeadMeetings);
 router.get("/:id/emails", adminOrAssigned, indexControllers.leadsController.getLeadEmails);

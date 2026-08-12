@@ -55,6 +55,7 @@ const targetSchema = new mongoose.Schema(
         reassignedTo:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         reassignNote:  { type: String },
         rejectReason:  { type: String },
+        adminReply:    { type: String },
         // Snapshot details at time of report
         companyName:   { type: String },
         phoneNumber:   { type: String },

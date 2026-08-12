@@ -117,9 +117,25 @@ export default {
     try {
       const { Meeting } = getModels(req);
       const isAdmin = req.user.role?.name === "Admin";
+      const { start, end } = req.query;
+      
       const query = isAdmin
         ? {}
         : { $or: [{ attendees: req.user.email }, { createdBy: req.user._id }] };
+        
+      if (start || end) {
+        query.startDateTime = {};
+        if (start) query.startDateTime.$gte = new Date(start);
+        if (end) {
+          // Check if end is a date string without time
+          if (end.length === 10) {
+            query.startDateTime.$lte = new Date(end + "T23:59:59.999Z");
+          } else {
+            query.startDateTime.$lte = new Date(end);
+          }
+        }
+      }
+        
       const meetings = await Meeting.find(query)
         .populate("createdBy", "firstName lastName email")
         .sort({ startDateTime: 1 });

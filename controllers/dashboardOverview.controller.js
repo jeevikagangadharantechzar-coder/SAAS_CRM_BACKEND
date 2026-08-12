@@ -2,6 +2,8 @@ import leadsController from "./leads.controller.js";
 import dealsController from "./deals.controller.js";
 import invoiceController from "./invoice.controller.js";
 import adminDashboardController from "./adminDashboard.controller.js";
+import meetingController from "./meeting.controller.js";
+import streakController from "./streak.controller.js";
 
 // Runs an existing (req, res) controller and resolves with what it would
 // have sent, instead of writing to a real response. Lets this aggregator
@@ -40,14 +42,18 @@ export default {
       const dealsLostReq = { ...req, query: { start, end, dealType: "lost" } };
       const invoicesReq  = { ...req, query: { start, end } };
       const summaryReq   = { ...req, query: { start, end } };
+      const meetingsReq  = { ...req, query: { start, end } };
+      const streakReq    = { ...req, query: { startDate: start, endDate: end } }; // matching streak controller expectations if it uses startDate/endDate
 
-      const [leadsRes, dealsRes, dealsWonRes, dealsLostRes, invoicesRes, summaryRes] = await Promise.all([
+      const [leadsRes, dealsRes, dealsWonRes, dealsLostRes, invoicesRes, summaryRes, meetingsRes, streakRes] = await Promise.all([
         capture(leadsController.getLeads, leadsReq),
         capture(dealsController.getAllDeals, dealsReq),
         capture(dealsController.getAllDeals, dealsWonReq),
         capture(dealsController.getAllDeals, dealsLostReq),
         capture(invoiceController.getAllInvoices, invoicesReq),
         capture(adminDashboardController.getDashboardSummary, summaryReq),
+        capture(meetingController.getMeetings, meetingsReq),
+        capture(streakController.getLeaderboard, streakReq),
       ]);
 
       const failed = [leadsRes, dealsRes, dealsWonRes, dealsLostRes, invoicesRes, summaryRes].find((r) => r.statusCode >= 400);
@@ -60,6 +66,8 @@ export default {
         dealsLost: dealsLostRes.body,
         invoices: invoicesRes.body,
         summary: summaryRes.body,
+        meetings: meetingsRes.body.meetings,
+        leaderboard: streakRes.body.data || streakRes.body || [],
       });
     } catch (error) {
       console.error("Dashboard overview error:", error);
