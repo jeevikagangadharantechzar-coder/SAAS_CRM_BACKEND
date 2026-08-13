@@ -79,15 +79,71 @@ const getUserPages = async (userToken) => {
   return allPages;
 };
 
+// Fields already mapped to standard CRM columns — skip for custom fields
+const STANDARD_AD_FIELDS = new Set([
+  "full_name", "first_name", "last_name", "name",
+  "email",
+  "phone_number", "phone", "mobile_number",
+  "company_name", "company",
+]);
+
+// Fields that map directly to existing lead schema columns
+const AD_TO_LEAD_FIELD = {
+  city:           "city",
+  state:          "state",
+  zip_code:       "pincode",
+  pincode:        "pincode",
+  postal_code:    "pincode",
+  country:        "country",
+  address:        "address",
+  street_address: "address",
+};
+
+/**
+ * Splits parsed Facebook ad field_data into:
+ *   extraLeadFields — maps to existing lead schema columns (city, state, etc.)
+ *   customFields    — everything else becomes a CRM custom field
+ */
+const extractAdFields = (fields) => {
+  const extraLeadFields = {};
+  const customFields = [];
+  for (const [key, value] of Object.entries(fields)) {
+    if (!value || STANDARD_AD_FIELDS.has(key)) continue;
+    if (AD_TO_LEAD_FIELD[key]) {
+      extraLeadFields[AD_TO_LEAD_FIELD[key]] = value;
+    } else {
+      const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      customFields.push({ cardTitle: "Ad Form Fields", name: label, type: "text", value });
+    }
+  }
+  return { extraLeadFields, customFields };
+};
+
 /** Fetch a single lead's field values using the lead's page access token */
 const fetchLeadDetails = async (leadgenId, pageAccessToken) => {
   const { data } = await axios.get(`${GRAPH_API}/${leadgenId}`, {
     params: {
       access_token: pageAccessToken,
-      fields: "field_data,created_time,ad_name,form_id,platform",
+      fields: "field_data,created_time,platform,form_id,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name",
     },
   });
   return data;
+};
+
+/**
+ * Builds custom fields from campaign metadata (ad_name, adset_name, campaign_name).
+ * These are top-level fields on the lead object from Meta — NOT part of field_data.
+ * Also accepts form_name so each lead records which form it came from.
+ */
+const buildCampaignCustomFields = (leadData, formName = "") => {
+  const cf = [];
+  const add = (name, value) => { if (value) cf.push({ cardTitle: "Ad Campaign Info", name, type: "text", value }); };
+  add("Campaign Name", leadData.campaign_name);
+  add("Ad Set Name",   leadData.adset_name);
+  add("Ad Name",       leadData.ad_name);
+  add("Form Name",     formName || leadData.form_name);
+  add("Platform",      leadData.platform);
+  return cf;
 };
 
 // ─── Controllers ─────────────────────────────────────────────────────────────
@@ -326,7 +382,7 @@ export default {
               const leadsRes = await axios.get(`${GRAPH_API}/${form.id}/leads`, {
                 params: {
                   access_token: integration.pageAccessToken,
-                  fields: "id,created_time,field_data,ad_id,form_id,platform",
+                  fields: "id,created_time,field_data,platform,form_id,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name",
                   limit: 100,
                 },
               });
@@ -356,6 +412,8 @@ export default {
                 else if (integration.instagramAccountId) source = "Instagram Ads"; // Fallback if platform is missing
 
                 const assignTo = await pickNextSalesUser(User, Lead);
+                const { extraLeadFields, customFields } = extractAdFields(fields);
+                const campaignCustomFields = buildCampaignCustomFields(leadData, form.name);
                 await Lead.create({
                   leadName: name,
                   email,
@@ -365,6 +423,8 @@ export default {
                   status: "Cold",
                   assignTo,
                   notes: `Synced from Facebook Lead Form: ${form.name}`,
+                  ...extraLeadFields,
+                  customFields: [...customFields, ...campaignCustomFields],
                   meta: {
                     leadgenId: leadData.id,
                     pageId: integration.facebookPageId,
@@ -618,6 +678,8 @@ const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
 
       // ── Create lead with round-robin assignment ───────────────────────────
       const assignTo = await pickNextSalesUser(User, Lead);
+      const { extraLeadFields, customFields } = extractAdFields(fields);
+      const campaignCustomFields = buildCampaignCustomFields(leadData);
       const lead = await Lead.create({
         leadName: fullName,
         email,
@@ -627,6 +689,8 @@ const processMetaLead = async ({ leadgen_id, page_id, form_id }) => {
         status: "Cold",
         assignTo,
         notes: `Auto-captured from ${source}\nForm ID: ${form_id}\nPage: ${pageName}`,
+        ...extraLeadFields,
+        customFields: [...customFields, ...campaignCustomFields],
         meta: {
           leadgenId: leadgen_id,
           pageId: page_id,
