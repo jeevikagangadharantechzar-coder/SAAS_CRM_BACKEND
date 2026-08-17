@@ -1263,11 +1263,12 @@ const leads = await leadQuery;
       const query = { trash: true };
 
       if (search?.trim()) {
+        const searchRegex = escapeRegex(search.trim());
         query.$or = [
-          { leadName:    { $regex: search, $options: "i" } },
-          { email:       { $regex: search, $options: "i" } },
-          { phoneNumber: { $regex: search, $options: "i" } },
-          { companyName: { $regex: search, $options: "i" } },
+          { leadName:    { $regex: searchRegex, $options: "i" } },
+          { email:       { $regex: searchRegex, $options: "i" } },
+          { phoneNumber: { $regex: searchRegex, $options: "i" } },
+          { companyName: { $regex: searchRegex, $options: "i" } },
         ];
       }
 
@@ -1275,7 +1276,7 @@ const leads = await leadQuery;
         if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
           query.assignTo = assignee;
         } else {
-          const nameParts = assignee.split(" ");
+          const nameParts = assignee.split(" ").map(escapeRegex);
           const firstName = nameParts[0];
           const lastName  = nameParts.slice(1).join(" ");
           const userQuery = lastName
