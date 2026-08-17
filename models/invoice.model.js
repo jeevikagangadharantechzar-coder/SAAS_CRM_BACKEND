@@ -71,6 +71,7 @@ const invoiceSchema = new mongoose.Schema({
   },
   preferredCurrency:      { type: String, default: null },
   preferredCurrencyValue: { type: Number, default: null },
+  totalPreferredCurrencyValue: { type: Number, default: null },
 
   billingAddress: { type: String, default: "" },
   clientTaxId:    { type: String, default: "" },

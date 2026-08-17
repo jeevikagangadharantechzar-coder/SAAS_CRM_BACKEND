@@ -57,7 +57,12 @@ const invoiceSchema = new mongoose.Schema(
     inrAmount:             { type: Number, default: null },
     exchangeRate:          { type: Number, default: null },
     preferredCurrency:     { type: String, default: null },
+    // Frozen conversion of amountPaid, refreshed on every payment
     preferredCurrencyValue:{ type: Number, default: null },
+    // Frozen conversion of the invoice total, set once at creation/edit —
+    // lets the UI show a fixed preferred-currency value instead of
+    // re-fetching a live rate (which fluctuates) on every page load
+    totalPreferredCurrencyValue: { type: Number, default: null },
 
     // Client-side fields that vary by country/client — not always applicable
     billingAddress: { type: String, default: "" },
