@@ -57,6 +57,7 @@ import facebookRoutes          from "./facebook.routes.js";
 import publicRoutes from "./public.routes.js";
 import { protect } from "../middlewares/auth.middleware.js";
 import { getTrialStatus } from "../controllers/freeTrial.controller.js";
+import agreementRoutes from "./agreement.routes.js";
 
 const router = express.Router();
 
@@ -75,6 +76,7 @@ router.use("/invoices", invoice);
 router.use("/proposal", proposalRoutes);
 router.use("/dashboard", adminDashboard);
 router.use("/notifications", notificationRoutes);
+router.use("/agreements", agreementRoutes);
 router.use("/gmail", gmailRoutes);
 router.use("/google-auth", googleAuthRoutes);
 router.use("/zoom-auth", zoomAuthRoutes);

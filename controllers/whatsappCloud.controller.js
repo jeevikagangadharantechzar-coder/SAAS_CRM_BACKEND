@@ -972,6 +972,7 @@ export async function receiveWebhook(req, res) {
 
   try {
     const body = req.body;
+    console.log("WhatsApp webhook received:", JSON.stringify(body).slice(0, 300));
     if (body.object !== "whatsapp_business_account") return;
 
     for (const entry of body.entry || []) {
@@ -1009,6 +1010,7 @@ async function processIncomingMessage(metadata, contacts, msg) {
   const phoneNumberId = metadata?.phone_number_id;
   if (!phoneNumberId) return;
 
+  console.log(`WhatsApp: incoming message for phone_number_id=${phoneNumberId} from=${msg.from}`);
   const result = await findTenantByPhoneNumberId(phoneNumberId);
   if (!result) {
     console.warn(`WhatsApp: no tenant found for phone_number_id=${phoneNumberId}`);

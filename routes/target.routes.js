@@ -28,6 +28,7 @@ router.get("/reason-notes/all", protect, targetController.getAllReasonNotes);
 router.post("/reason-notes/bulk-delete", protect, targetController.bulkDeleteReasonNotes);
 router.post("/:id/reason-notes/:noteIdx/read", protect, targetController.markReasonNoteRead);
 router.post("/:id/reason-notes/:noteIdx/reassign", protect, targetController.reassignItem);
+router.post("/:id/reason-notes/:noteIdx/reply", protect, targetController.replyReasonNote);
 router.post("/:id/reason-notes/:noteIdx/reject", protect, targetController.rejectReasonNote);
 router.post("/:id/reassign", protect, targetController.reassignTargetItems);
 router.delete("/:id/reason-notes/:noteIdx", protect, targetController.deleteReasonNote);
