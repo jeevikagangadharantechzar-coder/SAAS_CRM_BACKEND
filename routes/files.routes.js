@@ -70,6 +70,7 @@ router.get("/preview", protect, async (req, res) => {
       '.png': 'image/png',
       '.gif': 'image/gif',
       '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
       '.txt': 'text/plain',
       '.csv': 'text/csv',
       '.json': 'application/json',
