@@ -29,12 +29,16 @@ function calcStreak(loginHistory) {
   return streak;
 }
 
-function formatTime(date) {
+function formatTime(date, timeZone = "Asia/Kolkata") {
   if (!date) return null;
-  return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  try {
+    return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone });
+  } catch (e) {
+    return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  }
 }
 
-function calcWorkHours(loginHistory, rangeStart, rangeEnd) {
+function calcWorkHours(loginHistory, rangeStart, rangeEnd, timeZone = "Asia/Kolkata") {
   let logsToConsider = loginHistory || [];
 
   if (rangeStart && rangeEnd) {
@@ -64,14 +68,14 @@ function calcWorkHours(loginHistory, rangeStart, rangeEnd) {
   }
 
   if (!latestSession.logout && (!latestLogout || new Date(latestSession.login) > new Date(latestLogout.logout))) {
-    return `${formatTime(earliest.login)} - Ongoing`;
+    return `${formatTime(earliest.login, timeZone)} - Ongoing`;
   }
 
   if (!latestLogout) {
-    return `${formatTime(earliest.login)} - Ongoing`;
+    return `${formatTime(earliest.login, timeZone)} - Ongoing`;
   }
 
-  return `${formatTime(earliest.login)} - ${formatTime(latestLogout.logout)}`;
+  return `${formatTime(earliest.login, timeZone)} - ${formatTime(latestLogout.logout, timeZone)}`;
 }
 
 function getStatus(rate) {
@@ -138,6 +142,7 @@ export default {
       if (!currentUser) return res.status(401).json({ success: false, error: "Unauthorized" });
       const { User, Deal, Lead, Role } = getModels(req);
       const currentUserId = currentUser._id.toString();
+      const timeZone = req.headers['x-timezone'] || req.headers['timezone'] || "Asia/Kolkata";
 
       let userRoleName = "";
       if (typeof currentUser.role === "string") userRoleName = currentUser.role;
@@ -243,7 +248,7 @@ export default {
           totalLeads: rangeTotalLeads, rawLeads: lm.range, qualificationDeals: dm.rangeQ, convertedLeads: dm.rangeC,
           conversionRate: Number(rangeConvRate.toFixed(1)), conversionDisplay: `${rangeConvRate.toFixed(1)}%`,
           cumulativeTotalLeads: cumTotalLeads, cumulativeConvertedLeads: dm.cumC, cumulativeConversionRate: Number(cumConvRate.toFixed(1)), cumulativeDisplay: `${cumConvRate.toFixed(1)}%`,
-          streak: calcStreak(loginHistory), productiveDays: rangeLoginDays.size, workHours: calcWorkHours(loginHistory, rangeStart, rangeEnd),
+          streak: calcStreak(loginHistory), productiveDays: rangeLoginDays.size, workHours: calcWorkHours(loginHistory, rangeStart, rangeEnd, timeZone),
           status, statusIcon, statusColor, performanceScore: Math.min(Math.round(rangeConvRate), 100), isCurrentUser: id === currentUserId,
         };
       });
