@@ -4,13 +4,13 @@ import { notifyUser } from "../../realtime/socket.js";
 const leadSchema = new mongoose.Schema(
   {
     leadName:    { type: String, required: true },
-    phoneNumber: { type: String, required: true },
+    phoneNumber: { type: String, default: "" },
     email:       { type: String },
     alternatePhoneNumber: { type: String },
     alternateEmail:       { type: String },
     source:      { type: String },
     sourceId:    { type: String, default: null, index: true },
-    companyName: { type: String, required: true },
+    companyName: { type: String, default: "" },
     clientType: {
       type: String,
       enum: ["B2B", "B2C"],

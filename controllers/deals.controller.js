@@ -28,6 +28,11 @@ const getModels = (req) => {
   return { Deal: DealLegacy, Lead: LeadLegacy, Notification: NotificationLegacy, Task: null, Target: null };
 };
 
+// Standard MDN escape so a raw search value can be dropped into a
+// case-insensitive RegExp without a stray regex special character
+// (e.g. "?", "(") breaking the match or throwing an invalid-regex error.
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const getSettings = (req) =>
   req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
 
@@ -895,11 +900,12 @@ export default {
       const query = { trash: true };
 
       if (search?.trim()) {
+        const searchRegex = escapeRegex(search.trim());
         query.$or = [
-          { dealName:    { $regex: search, $options: "i" } },
-          { email:       { $regex: search, $options: "i" } },
-          { phoneNumber: { $regex: search, $options: "i" } },
-          { companyName: { $regex: search, $options: "i" } },
+          { dealName:    { $regex: searchRegex, $options: "i" } },
+          { email:       { $regex: searchRegex, $options: "i" } },
+          { phoneNumber: { $regex: searchRegex, $options: "i" } },
+          { companyName: { $regex: searchRegex, $options: "i" } },
         ];
       }
 
@@ -907,7 +913,7 @@ export default {
         if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
           query.assignedTo = assignee;
         } else {
-          const nameParts = assignee.split(" ");
+          const nameParts = assignee.split(" ").map(escapeRegex);
           const firstName = nameParts[0];
           const lastName  = nameParts.slice(1).join(" ");
           const userQuery = lastName

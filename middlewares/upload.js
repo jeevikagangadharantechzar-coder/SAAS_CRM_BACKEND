@@ -47,7 +47,7 @@ const AUDIO_EXTENSIONS = [
   ".opus", ".amr", ".mpeg", ".mpga", ".mp4", ".caf", ".3gp",
 ];
 
-const IMAGE_MIMES = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+const IMAGE_MIMES = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp","image/svg+xml","image/svg"];
 const DOCUMENT_MIMES = [
   "application/pdf",
   "application/msword",

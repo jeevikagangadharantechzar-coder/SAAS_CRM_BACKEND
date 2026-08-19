@@ -260,7 +260,9 @@ export default {
 
       const unreviewedCount = formatted.filter(d => !d.hasReview).length;
 
-      if (classification !== "all") formatted = formatted.filter(d => d.classification === classification);
+      if (classification !== "all") {
+        formatted = formatted.filter(d => d.classification === classification && d.hasReview);
+      }
       // The toggle means "show unreviewed only", not "sort unreviewed first" — it must remove
       // reviewed records, otherwise selecting it leaves the displayed set unchanged.
       if (showUnreviewedFirst === "true") formatted = formatted.filter(d => !d.hasReview);
@@ -356,14 +358,14 @@ export default {
 
       const mapClient = (c, fields) => { const r={}; fields.forEach(f=>r[f]=c[f]); return r; };
       const topClients = withDays.filter(c=>c.classification==="Top Value").sort((a,b)=>(b.convertedCLV||0)-(a.convertedCLV||0)).slice(0,50)
-        .map(c=>({companyName:c.companyName,clv:c.convertedCLV,classification:c.classification,valueCategory:c.valueCategory,daysSinceFollowUp:c.daysSinceFollowUp,lastActivity:c.lastFollowUpDate,progress:c.latestReview?.progress,supportPoints:c.supportPoints,supportTickets:c.totalSupportTickets,followUpCount:c.followUpCount,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
+        .map(c=>({companyId:c.companyId, companyName:c.companyName,clv:c.convertedCLV,classification:c.classification,valueCategory:c.valueCategory,daysSinceFollowUp:c.daysSinceFollowUp,lastActivity:c.lastFollowUpDate,progress:c.latestReview?.progress,supportPoints:c.supportPoints,supportTickets:c.totalSupportTickets,followUpCount:c.followUpCount,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
       const riskyClients = withDays.filter(c=>c.classification==="At Risk").sort((a,b)=>(b.daysSinceFollowUp||0)-(a.daysSinceFollowUp||0)).slice(0,50)
-        .map(c=>({companyName:c.companyName,daysSinceFollowUp:c.daysSinceFollowUp,supportTickets:c.totalSupportTickets,progress:c.progress,supportPoints:c.supportPoints,classificationReason:c.classificationReason,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
+        .map(c=>({companyId:c.companyId, companyName:c.companyName,daysSinceFollowUp:c.daysSinceFollowUp,supportTickets:c.totalSupportTickets,progress:c.progress,supportPoints:c.supportPoints,classificationReason:c.classificationReason,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
       const dormantClients = withDays.filter(c=>c.classification==="Dormant").sort((a,b)=>(b.daysSinceFollowUp||0)-(a.daysSinceFollowUp||0)).slice(0,50)
-        .map(c=>({companyName:c.companyName,daysSinceFollowUp:c.daysSinceFollowUp,lastFollowUp:c.lastFollowUpDate,classificationReason:c.classificationReason,supportTickets:c.totalSupportTickets,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
+        .map(c=>({companyId:c.companyId, companyName:c.companyName,daysSinceFollowUp:c.daysSinceFollowUp,lastFollowUp:c.lastFollowUpDate,classificationReason:c.classificationReason,supportTickets:c.totalSupportTickets,delivered:c.delivered,clientHealthScore:c.clientHealthScore}));
       const upsellClients = withDays.filter(c=>c.classification==="Upsell").sort((a,b)=>(b.convertedCLV||0)-(a.convertedCLV||0)).slice(0,50)
-        .map(c=>({companyName:c.companyName,clv:c.convertedCLV,classification:c.classification,progress:c.latestReview?.progress,supportTickets:c.totalSupportTickets,delivered:c.delivered,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
-      const allClientsList = withDays.slice(0,100).map(c=>({companyName:c.companyName,dealValue:c.convertedCLV,progress:c.progress,supportPoints:c.supportPoints,followUpCount:c.followUpCount,classification:c.classification,classificationReason:c.classificationReason,delivered:c.delivered,supportTickets:c.totalSupportTickets,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
+        .map(c=>({companyId:c.companyId, companyName:c.companyName,clv:c.convertedCLV,classification:c.classification,progress:c.latestReview?.progress,supportTickets:c.totalSupportTickets,delivered:c.delivered,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
+      const allClientsList = withDays.slice(0,100).map(c=>({companyId:c.companyId, companyName:c.companyName,dealValue:c.convertedCLV,progress:c.progress,supportPoints:c.supportPoints,followUpCount:c.followUpCount,classification:c.classification,classificationReason:c.classificationReason,delivered:c.delivered,supportTickets:c.totalSupportTickets,clientHealthScore:c.clientHealthScore,daysSinceFollowUp:c.daysSinceFollowUp}));
       const recentReviews = await ClientReview.find().sort({ reviewedAt: -1 }).limit(5).populate("reviewedBy","firstName lastName").lean();
 
       const sixMonthsAgo = new Date(); sixMonthsAgo.setMonth(sixMonthsAgo.getMonth()-6);

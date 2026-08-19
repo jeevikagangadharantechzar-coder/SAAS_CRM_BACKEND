@@ -327,10 +327,7 @@ export async function syncComments(req, res) {
         const { data: commentData } = await axios.get(`${GRAPH}/${post.id}/comments`, {
           params: {
             access_token: integration.pageAccessToken,
-            // TODO (Future): Once Meta approves 'pages_read_user_content' in App Review, 
-            // change the fields below to include 'from' so you get the commenter's name:
-            // fields: "id,message,created_time,from,replies{id,message,created_time,from}",
-            fields: "id,message,created_time,replies{id,message,created_time}",
+            fields: "id,message,created_time,from,replies{id,message,created_time,from}",
             summary: true,
             limit: 100,
           },
