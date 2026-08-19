@@ -7,6 +7,7 @@ import {
   toggleTenant,
   deleteTenant,
   getDashboardStats,
+  getSuperAdminDashboardData,
   impersonateTenant,
   createUpgradeRequest,
   getUpgradeRequests,
@@ -51,6 +52,7 @@ router.put("/api/tenants/:id",             superAdminAuth, updateTenant);
 router.patch("/api/tenants/:id/toggle",   superAdminAuth, toggleTenant);
 router.delete("/api/tenants/:id",         superAdminAuth, deleteTenant);
 router.get("/api/dashboard/stats",        superAdminAuth, getDashboardStats);
+router.get("/api/dashboard/all-stats",    superAdminAuth, getSuperAdminDashboardData);
 router.post("/api/tenants/:id/impersonate", superAdminAuth, impersonateTenant);
 
 // Super Admin Platform Settings

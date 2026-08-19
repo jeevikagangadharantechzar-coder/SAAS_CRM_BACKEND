@@ -443,6 +443,67 @@ export const getDashboardStats = async (req, res) => {
   }
 };
 
+export const getSuperAdminDashboardData = async (req, res) => {
+  try {
+    const [totalTenants, activeTenantsCount, tenants, requests] = await Promise.all([
+      Tenant.countDocuments(),
+      Tenant.countDocuments({ isActive: true }),
+      Tenant.find().populate("plan_id").sort({ createdAt: -1 }),
+      UpgradeRequest.find({ status: "pending" })
+        .populate("tenant_id")
+        .populate("plan_id")
+        .sort({ createdAt: -1 })
+    ]);
+
+    let totalUsers = 0;
+    let totalRevenue = 0;
+
+    for (const tenant of tenants) {
+      if (tenant.isActive) {
+        try {
+          const tenantDB = await getTenantDB(tenant.dbName);
+          const { User } = getTenantModels(tenantDB);
+          const userCount = await User.countDocuments();
+          totalUsers += userCount;
+        } catch (dbErr) {}
+      }
+
+      if (tenant.plan_id && tenant.plan_status === "active") {
+        if (tenant.plan_id.billing_cycle === "yearly") {
+          totalRevenue += tenant.plan_id.price_yearly || 0;
+        } else {
+          totalRevenue += tenant.plan_id.price_monthly || 0;
+        }
+      }
+    }
+
+    try {
+      const approvedUpgrades = await UpgradeRequest.find({ status: "approved" });
+      const upgradeRevenue = approvedUpgrades.reduce((sum, req) => sum + (req.final_price || 0), 0);
+      totalRevenue += upgradeRevenue;
+    } catch (upgradeErr) {}
+
+    const recentTenants = tenants.slice(0, 5);
+
+    res.json({
+      success: true,
+      stats: {
+        totalTenants,
+        activeTenants: activeTenantsCount,
+        inactiveTenants: totalTenants - activeTenantsCount,
+        totalUsers,
+        totalRevenue,
+      },
+      recentTenants,
+      tenants,
+      upgradeRequests: requests,
+    });
+  } catch (err) {
+    console.error("Super Admin Dashboard unified data error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
 export const impersonateTenant = async (req, res) => {
   try {
     const tenant = await Tenant.findById(req.params.id);
