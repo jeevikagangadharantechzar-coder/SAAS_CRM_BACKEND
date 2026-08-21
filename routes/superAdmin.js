@@ -26,7 +26,7 @@ import {
   uploadSuperAdminFavicon,
 } from "../controllers/superAdminSettings.controller.js";
 import uploadPlatformLogoMiddleware from "../middlewares/uploadPlatformLogo.js";
-import { listFreeTrialSignups, deleteFreeTrialSignup } from "../controllers/freeTrial.controller.js";
+import { listFreeTrialSignups, deleteFreeTrialSignup, getFreeTrialAnalysis } from "../controllers/freeTrial.controller.js";
 import { runFreeTrialCron } from "../cron/freeTrialCron.js";
 import { getTenantActivityLogs } from "../controllers/tenantActivityLog.controller.js";
 
@@ -63,6 +63,7 @@ router.post("/api/settings/logo",    superAdminAuth, uploadPlatformLogoMiddlewar
 router.post("/api/settings/favicon", superAdminAuth, uploadPlatformLogoMiddleware.single("favicon"), uploadSuperAdminFavicon);
 
 // Free trial signup log
+router.get("/api/free-trials/analysis",    superAdminAuth, getFreeTrialAnalysis);
 router.get("/api/free-trials",             superAdminAuth, listFreeTrialSignups);
 router.delete("/api/free-trials/:id",      superAdminAuth, deleteFreeTrialSignup);
 
