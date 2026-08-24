@@ -218,3 +218,20 @@ export const adminOrSelf = (req, res, next) => {
   if (roleName === "admin" || req.user._id.toString() === req.params.id) return next();
   return res.status(403).json({ message: "Access denied" });
 };
+
+// Enforces one of the toggles in the Edit Role "Permissions Configuration"
+// modal (roleSchema.js's permissionsSchema) — Admin always passes, everyone
+// else needs at least one of the given keys set true on their role. Must run
+// after protect, which already populates req.user.role.
+//
+// The frontend hides the corresponding sidebar link/tab when a permission is
+// off, but that's UI only — without this middleware on the matching route,
+// anyone with a valid login token could call the API directly regardless of
+// what their role's permissions say.
+export const requirePermission = (...keys) => (req, res, next) => {
+  const roleName = req.user.role?.name?.toLowerCase();
+  if (roleName === "admin") return next();
+  const permissions = req.user.role?.permissions || {};
+  if (keys.some((key) => permissions[key])) return next();
+  return res.status(403).json({ message: "Access denied: your role does not have permission for this feature" });
+};

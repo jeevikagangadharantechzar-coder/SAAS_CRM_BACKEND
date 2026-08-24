@@ -1,6 +1,6 @@
 import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
-import { protect } from "../middlewares/auth.middleware.js";
+import { protect, requirePermission } from "../middlewares/auth.middleware.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
@@ -10,6 +10,7 @@ router.use(protect);
 // this was previously missing entirely, meaning a plan disabling the
 // Calendar feature had no effect on the actual API.
 router.use(checkPlanFeature("schedule_view"));
+router.use(requirePermission("schedule_view"));
 
 // GET /calendar?start=&end= — merged, role-scoped feed across tasks,
 // targets, deal follow-ups, invoices, proposals, meetings, and scheduled

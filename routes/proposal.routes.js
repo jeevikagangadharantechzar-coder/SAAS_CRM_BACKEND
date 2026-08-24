@@ -1,38 +1,38 @@
 import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
 import upload, { normalizePaths } from "../middlewares/upload.js";
-import { protect } from "../middlewares/auth.middleware.js";
+import { protect, requirePermission } from "../middlewares/auth.middleware.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
 
 router.use(checkPlanFeature("proposal"));
+router.use(protect, requirePermission("proposal"));
 
 
 // POST send proposal email
 router.post(
   "/mailsend",
-  protect, 
   upload.array("attachments", 10),
   normalizePaths,
   indexControllers.proposalController.sendProposal
 );
 // GET all proposals
-router.get("/getall", protect, indexControllers.proposalController.getAllProposals);
+router.get("/getall", indexControllers.proposalController.getAllProposals);
 // GET draft proposals
-router.get("/drafts", protect, indexControllers.proposalController.getDraftProposals);
+router.get("/drafts", indexControllers.proposalController.getDraftProposals);
 // PUT update proposal status
-router.put("/updatestatus/:id", protect, indexControllers.proposalController.updateStatus);
+router.put("/updatestatus/:id", indexControllers.proposalController.updateStatus);
 // Put update proposal
-router.put("/update/:id", protect, indexControllers.proposalController.updateProposal); 
+router.put("/update/:id", indexControllers.proposalController.updateProposal);
 // Delete propslal
-router.delete("/delete/:id", protect, indexControllers.proposalController.deleteProposal); 
+router.delete("/delete/:id", indexControllers.proposalController.deleteProposal);
 //delete multiple proposal
-router.delete("/bulk-delete", protect, indexControllers.proposalController.bulkDeleteProposals); 
+router.delete("/bulk-delete", indexControllers.proposalController.bulkDeleteProposals);
 //create follow up for proposal
-router.put("/followup/:id", protect, indexControllers.proposalController.updateFollowUp); 
+router.put("/followup/:id", indexControllers.proposalController.updateFollowUp);
 
 
-router.get("/:id", protect, indexControllers.proposalController.getProposal); 
+router.get("/:id", indexControllers.proposalController.getProposal);
 
 export default router;

@@ -1,6 +1,6 @@
 import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
-import { protect, adminOrAssigned, adminOnly, adminOrSales } from "../middlewares/auth.middleware.js";
+import { protect, adminOrAssigned, adminOnly, adminOrSales, requirePermission } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
@@ -52,8 +52,8 @@ router.post("/:id/notes", adminOrAssigned, indexControllers.leadsController.addN
 router.patch("/:id/notes/:noteId", adminOrAssigned, indexControllers.leadsController.editNote);
 router.delete("/:id/notes/:noteId", adminOrAssigned, indexControllers.leadsController.deleteNote);
 router.get("/:id/activity", adminOrAssigned, indexControllers.leadsController.getLeadActivityLog);
-router.get("/:id/meetings", adminOrAssigned, indexControllers.leadsController.getLeadMeetings);
-router.get("/:id/emails", adminOrAssigned, indexControllers.leadsController.getLeadEmails);
+router.get("/:id/meetings", adminOrAssigned, requirePermission("meetings"), indexControllers.leadsController.getLeadMeetings);
+router.get("/:id/emails", adminOrAssigned, requirePermission("email_campaigns"), indexControllers.leadsController.getLeadEmails);
 
 //  GENERIC ROUTE WITH :id LAST (catch-all for /:id)
 router.get("/getLead/:id", adminOrAssigned, indexControllers.leadsController.getLeadById);

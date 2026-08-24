@@ -1,48 +1,48 @@
 import express from "express";
 import indexController from "../controllers/index.controllers.js";
-import { adminOnly, adminOrSales } from "../middlewares/auth.middleware.js";
-import { protect } from "../middlewares/auth.middleware.js";
+import { adminOnly, adminOrSales, protect, requirePermission } from "../middlewares/auth.middleware.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
 
 router.use(checkPlanFeature("invoices"));
+// Several routes below (delete/download/sendEmail/recent/pending/exchange-rate)
+// previously had no protect at all — callable without even being logged in,
+// not just without the "invoices" role permission. Router-level protect +
+// requirePermission closes both gaps for every route in this file at once.
+router.use(protect, requirePermission("invoices"));
+
 //save the invoice
 router.post(
   "/createinvoice",
-  protect, //  this must come first to set req.user
-  adminOrSales, //  now req.user is available here
+  adminOrSales,
   indexController.invoiceController.createInvoice
 );
 
-//  Add protect here so req.user is available
 //get the invoice
 router.get(
   "/getInvoice",
-  protect,
   indexController.invoiceController.getAllInvoices
 );
 //get the single invoice by id
 router.get(
   "/getSingle/:id",
-  protect,
   indexController.invoiceController.getInvoiceById
 );
 //update the invoice
 router.put(
   "/updateInvoice/:id",
-  protect,
   indexController.invoiceController.updateInvoice
 );
 //delete the invoice by id
 router.delete(
-  "/delete/:id", 
+  "/delete/:id",
   indexController.invoiceController.deleteInvoice
 );
-//delete multiple invoice 
+//delete multiple invoice
 router.delete(
   "/bulk-delete",
-  protect, indexController.invoiceController.bulkDeleteInvoices
+  indexController.invoiceController.bulkDeleteInvoices
 );
 //download the invoice
 router.get(

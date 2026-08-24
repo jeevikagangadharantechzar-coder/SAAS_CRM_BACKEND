@@ -1,6 +1,6 @@
 import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
-import { protect, adminOnly ,adminCreateOnly} from "../middlewares/auth.middleware.js";
+import { protect, adminOnly ,adminCreateOnly, requirePermission} from "../middlewares/auth.middleware.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
@@ -15,7 +15,7 @@ router.post(
   indexControllers.roleController.createRole
 );
 //get all roles
-router.get("/", protect, indexControllers.roleController.getRoles);
+router.get("/", protect, requirePermission("users_roles"), indexControllers.roleController.getRoles);
 // update role by ID
 router.put("/update-role/:id", protect, adminCreateOnly, indexControllers.roleController.updateRole);
 //delete role by ID

@@ -31,6 +31,13 @@ router.patch("/device-requests/:id/reject", protect, adminCreateOnly, checkPlanF
 
 router.get("/me", protect, indexControllers.usersController.getMe);
 
+// Full user list — used by the Users & Roles management page, but also by
+// many unrelated features (Assign To dropdowns, Trash/Tasks/Targets/Proposal
+// filters, Reports, Schedule's "view as user" filter, etc.) that have no
+// connection to user management at all. Same entanglement as the bare
+// /sales endpoint below — no clean way to gate this by "users_roles" without
+// breaking those other features, so it's intentionally left ungated by role
+// permission (still requires being logged in as Admin or Sales).
 router.get("/", protect, adminOrSales, indexControllers.usersController.getUsers);
 
 router.get(

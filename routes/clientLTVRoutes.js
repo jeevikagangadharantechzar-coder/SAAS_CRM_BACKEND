@@ -1,9 +1,9 @@
 import express from "express";
-import { protect } from "../middlewares/auth.middleware.js";
+import { protect, requirePermission } from "../middlewares/auth.middleware.js";
 import clientLTVController from "../controllers/clientLTVController.js";
 
 const router = express.Router();
-router.use(protect);
+router.use(protect, requirePermission("won_analysis"));
 
 // Dashboard
 router.get("/dashboard", clientLTVController.getCLVDashboard);

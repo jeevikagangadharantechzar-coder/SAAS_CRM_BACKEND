@@ -5,6 +5,7 @@ import {
   adminOnly,
   adminOrSales,
   adminOrAssignedToDeal,
+  requirePermission,
 } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
@@ -127,10 +128,10 @@ router.get("/:id/activity",   adminOrAssignedToDeal, indexControllers.dealDetail
 router.get("/:id/notes",      adminOrAssignedToDeal, indexControllers.dealDetailController.getNotes);
 router.post("/:id/notes",     adminOrAssignedToDeal, indexControllers.dealDetailController.addNote);
 router.get("/:id/highlights", adminOrAssignedToDeal, indexControllers.dealDetailController.getHighlights);
-router.get("/:id/proposals",  adminOrAssignedToDeal, indexControllers.dealDetailController.getDealProposals);
-router.get("/:id/invoices",   adminOrAssignedToDeal, indexControllers.dealDetailController.getDealInvoices);
-router.get("/:id/meetings",   adminOrAssignedToDeal, indexControllers.dealDetailController.getDealMeetings);
-router.get("/:id/emails",     adminOrAssignedToDeal, indexControllers.dealDetailController.getDealEmails);
+router.get("/:id/proposals",  adminOrAssignedToDeal, requirePermission("proposal"), indexControllers.dealDetailController.getDealProposals);
+router.get("/:id/invoices",   adminOrAssignedToDeal, requirePermission("invoices"), indexControllers.dealDetailController.getDealInvoices);
+router.get("/:id/meetings",   adminOrAssignedToDeal, requirePermission("meetings"), indexControllers.dealDetailController.getDealMeetings);
+router.get("/:id/emails",     adminOrAssignedToDeal, requirePermission("email_campaigns"), indexControllers.dealDetailController.getDealEmails);
 router.get("/:id/score",      adminOrAssignedToDeal, indexControllers.dealDetailController.getDealScore);
 
 export default router;

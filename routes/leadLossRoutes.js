@@ -1,9 +1,9 @@
 import express from "express";
 import leadLossController from "../controllers/leadLossAnalytics.controller.js";
-import { protect } from "../middlewares/auth.middleware.js";
+import { protect, requirePermission } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
-router.get("/analytics", protect, leadLossController.getLeadLossAnalytics);
+router.get("/analytics", protect, requirePermission("loss_analysis"), leadLossController.getLeadLossAnalytics);
 
 export default router;
