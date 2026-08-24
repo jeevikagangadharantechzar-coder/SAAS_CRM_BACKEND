@@ -198,6 +198,80 @@ export const listFreeTrialSignups = async (req, res) => {
   }
 };
 
+export const getFreeTrialAnalysis = async (req, res) => {
+  try {
+    const tenants = await Tenant.find().select(
+      "isActive plan_status plan_end_date slug name adminEmail adminName createdAt"
+    );
+
+    const signups = await FreeTrialSignup.find().select("tenant industry country subscriptionPackage");
+    const signupMap = {};
+    signups.forEach(s => {
+      if (s.tenant) signupMap[s.tenant.toString()] = s;
+    });
+
+    let total = tenants.length;
+    let converted = [];
+    let rejected = [];
+    let pending = [];
+
+    const now = new Date();
+
+    tenants.forEach((tenant) => {
+      const signupData = signupMap[tenant._id.toString()] || {};
+      
+      const mappedRecord = {
+        _id: tenant._id,
+        name: tenant.adminName,
+        email: tenant.adminEmail,
+        businessName: tenant.name,
+        createdAt: tenant.createdAt,
+        industry: signupData.industry || "",
+        country: signupData.country || "",
+        subscriptionPackage: signupData.subscriptionPackage || "",
+        tenant: tenant,
+      };
+
+      if (
+        tenant.plan_status === "active" ||
+        tenant.plan_status === "grace" ||
+        tenant.plan_status === "cancelled"
+      ) {
+        converted.push(mappedRecord);
+      } else if (tenant.plan_status === "expired") {
+        rejected.push(mappedRecord);
+      } else if (tenant.plan_status === "trial") {
+        // Fallback for if cron hasn't run but the trial is actually expired
+        if (tenant.plan_end_date && now > new Date(tenant.plan_end_date)) {
+          rejected.push(mappedRecord);
+        } else {
+          pending.push(mappedRecord);
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          total,
+          converted: converted.length,
+          rejected: rejected.length,
+          pending: pending.length,
+        },
+        details: {
+          converted,
+          rejected,
+          pending,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Free trial analysis error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
 export const deleteFreeTrialSignup = async (req, res) => {
   try {
     const signup = await FreeTrialSignup.findByIdAndDelete(req.params.id);
