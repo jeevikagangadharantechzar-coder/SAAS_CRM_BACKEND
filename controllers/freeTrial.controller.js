@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import Tenant from "../models/master/Tenant.js";
 import SubscriptionPlan from "../models/master/SubscriptionPlan.model.js";
 import FreeTrialSignup from "../models/master/FreeTrialSignup.js";
-import { getTenantDB } from "../config/tenantDB.js";
+import { getTenantDB, dropTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
@@ -274,11 +274,23 @@ export const getFreeTrialAnalysis = async (req, res) => {
 
 export const deleteFreeTrialSignup = async (req, res) => {
   try {
-    const signup = await FreeTrialSignup.findByIdAndDelete(req.params.id);
+    const signup = await FreeTrialSignup.findById(req.params.id).populate("tenant");
     if (!signup) {
       return res.status(404).json({ success: false, error: "Signup record not found" });
     }
-    res.json({ success: true, message: "Free trial signup record deleted" });
+
+    // If there is an associated tenant, drop its DB and delete the tenant record
+    if (signup.tenant) {
+      if (signup.tenant.dbName) {
+        await dropTenantDB(signup.tenant.dbName);
+      }
+      await Tenant.findByIdAndDelete(signup.tenant._id);
+    }
+
+    // Delete the signup record itself
+    await FreeTrialSignup.findByIdAndDelete(req.params.id);
+
+    res.json({ success: true, message: "Free trial signup and associated database deleted successfully" });
   } catch (err) {
     console.error("Delete free trial signup error:", err);
     res.status(500).json({ success: false, error: "Server error" });
@@ -307,9 +319,9 @@ export const validateFreeTrialSignup = (req, res, next) => {
   next();
 };
 
-export const signupFreeTrial = async (req, res) => {
-  try {
-    const { name, email, password, businessName, industry = "", country = "", subscriptionPackage = "" } = req.body;
+  export const signupFreeTrial = async (req, res) => {
+    try {
+      const { name, email, password, businessName, phonenumber = "", industry = "", country = "", interestedPackage = "" } = req.body;
 
     const adminEmail = email.toLowerCase().trim();
     const slug = slugify(businessName);
@@ -342,9 +354,9 @@ export const signupFreeTrial = async (req, res) => {
 
     // Best-effort match of the selected package to a real subscription plan (non-blocking)
     let matchedPlan = null;
-    if (subscriptionPackage) {
+    if (interestedPackage) {
       matchedPlan = await SubscriptionPlan.findOne({
-        plan_name: new RegExp(`^${subscriptionPackage}$`, "i"),
+        plan_name: new RegExp(`^${interestedPackage}$`, "i"),
       });
     }
 
@@ -354,6 +366,7 @@ export const signupFreeTrial = async (req, res) => {
       dbName,
       adminEmail,
       adminName: name,
+      phonenumber,
       plan_id: matchedPlan ? matchedPlan._id : null,
       plan_status: "trial",
       plan_start_date: now,
@@ -418,6 +431,7 @@ export const signupFreeTrial = async (req, res) => {
         lastName:    name.split(" ").slice(1).join(" ") || name.split(" ")[0],
         email:       adminEmail,
         password:    hashedPassword,
+        mobileNumber: phonenumber,
         role:        adminRole._id,
         dateOfBirth: new Date("1990-01-01"),
         status:      "Active",
@@ -434,9 +448,10 @@ export const signupFreeTrial = async (req, res) => {
       name,
       email: adminEmail,
       businessName,
+      phonenumber,
       industry,
       country,
-      subscriptionPackage,
+      interestedPackage,
       tenant: tenant._id,
       slug,
     });
@@ -484,5 +499,39 @@ export const signupFreeTrial = async (req, res) => {
       return res.status(409).json({ success: false, error: "This business name or email is already registered." });
     }
     res.status(500).json({ success: false, error: err.message || "Server error" });
+  }
+};
+
+
+ export const getFreeTrialSignupDetails = async (req, res) => {
+  try {
+    const signup = await FreeTrialSignup.findById(req.params.id)
+      .populate(
+        "tenant",
+        "isActive plan_status plan_end_date slug dbName adminEmail phonenumber"
+      );
+
+    if (!signup) {
+      return res.status(404).json({
+        success: false,
+        error: "Signup record not found"
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: signup
+    });
+
+  } catch (err) {
+    console.error(
+      "Error Fetching free trial Signup details:",
+      err
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: "Internal Server Error"
+    });
   }
 };

@@ -26,7 +26,12 @@ import {
   uploadSuperAdminFavicon,
 } from "../controllers/superAdminSettings.controller.js";
 import uploadPlatformLogoMiddleware from "../middlewares/uploadPlatformLogo.js";
-import { listFreeTrialSignups, deleteFreeTrialSignup, getFreeTrialAnalysis } from "../controllers/freeTrial.controller.js";
+import {
+  listFreeTrialSignups,
+  deleteFreeTrialSignup,
+  getFreeTrialSignupDetails,
+  getFreeTrialAnalysis
+} from "../controllers/freeTrial.controller.js";
 import { runFreeTrialCron } from "../cron/freeTrialCron.js";
 import { getTenantActivityLogs } from "../controllers/tenantActivityLog.controller.js";
 
@@ -45,27 +50,28 @@ router.get("/api/tenants/upgrade-history", superAdminAuth, getUpgradeHistory);
 router.post("/api/tenants/upgrade-approve/:id", superAdminAuth, approveUpgradeRequest);
 router.post("/api/tenants/upgrade-reject/:id", superAdminAuth, rejectUpgradeRequest);
 
-router.post("/api/tenants/create",        superAdminAuth, createTenant);
-router.get("/api/tenants",                superAdminAuth, listTenants);
-router.get("/api/tenants/:id",            superAdminAuth, getTenantDetails);
-router.put("/api/tenants/:id",             superAdminAuth, updateTenant);
-router.patch("/api/tenants/:id/toggle",   superAdminAuth, toggleTenant);
-router.delete("/api/tenants/:id",         superAdminAuth, deleteTenant);
-router.get("/api/dashboard/stats",        superAdminAuth, getDashboardStats);
-router.get("/api/dashboard/all-stats",    superAdminAuth, getSuperAdminDashboardData);
+router.post("/api/tenants/create", superAdminAuth, createTenant);
+router.get("/api/tenants", superAdminAuth, listTenants);
+router.get("/api/tenants/:id", superAdminAuth, getTenantDetails);
+router.put("/api/tenants/:id", superAdminAuth, updateTenant);
+router.patch("/api/tenants/:id/toggle", superAdminAuth, toggleTenant);
+router.delete("/api/tenants/:id", superAdminAuth, deleteTenant);
+router.get("/api/dashboard/stats", superAdminAuth, getDashboardStats);
+router.get("/api/dashboard/all-stats", superAdminAuth, getSuperAdminDashboardData);
 router.post("/api/tenants/:id/impersonate", superAdminAuth, impersonateTenant);
 
 // Super Admin Platform Settings
 router.get("/api/public/branding", getPublicBranding);
-router.get("/api/settings",  superAdminAuth, getSuperAdminSettings);
-router.put("/api/settings",  superAdminAuth, updateSuperAdminSettings);
-router.post("/api/settings/logo",    superAdminAuth, uploadPlatformLogoMiddleware.single("logo"),    uploadPlatformLogo);
+router.get("/api/settings", superAdminAuth, getSuperAdminSettings);
+router.put("/api/settings", superAdminAuth, updateSuperAdminSettings);
+router.post("/api/settings/logo", superAdminAuth, uploadPlatformLogoMiddleware.single("logo"), uploadPlatformLogo);
 router.post("/api/settings/favicon", superAdminAuth, uploadPlatformLogoMiddleware.single("favicon"), uploadSuperAdminFavicon);
 
 // Free trial signup log
-router.get("/api/free-trials/analysis",    superAdminAuth, getFreeTrialAnalysis);
-router.get("/api/free-trials",             superAdminAuth, listFreeTrialSignups);
-router.delete("/api/free-trials/:id",      superAdminAuth, deleteFreeTrialSignup);
+router.get("/api/free-trials/analysis", superAdminAuth, getFreeTrialAnalysis);
+router.get("/api/free-trials", superAdminAuth, listFreeTrialSignups);
+router.get("/api/free-trials/:id", superAdminAuth, getFreeTrialSignupDetails);
+router.delete("/api/free-trials/:id", superAdminAuth, deleteFreeTrialSignup);
 
 // Tenant Activity Logs — stored in the tenant's own database, viewed per-tenant
 router.get("/api/tenants/:id/activity-logs", superAdminAuth, getTenantActivityLogs);

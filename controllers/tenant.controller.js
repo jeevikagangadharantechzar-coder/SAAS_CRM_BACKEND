@@ -121,7 +121,7 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD" } = req.body;
+    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD",phonenumber,address } = req.body;
     const actualPlanId = plan_id || planId || plan || null;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
@@ -176,6 +176,8 @@ export const createTenant = async (req, res) => {
       adminEmail: adminEmail.toLowerCase(),
       adminName,
       currency,
+      phonenumber,
+      address,
       createdBy: req.superAdmin.id,
       plan_id: actualPlanId,
       plan_status: actualPlanId ? "active" : (plan_status || "trial"),
@@ -329,7 +331,7 @@ export const createTenant = async (req, res) => {
 
 export const listTenants = async (req, res) => {
   try {
-    const tenants = await Tenant.find().populate("plan_id").sort({ createdAt: -1 });
+    const tenants = await Tenant.find({ plan_status: { $ne: "trial" } }).populate("plan_id").sort({ createdAt: -1 });
     res.json({ tenants });
   } catch (err) {
     console.error("List tenants error:", err);
@@ -932,6 +934,8 @@ export const getTenantDetails = async (req, res) => {
         dbName: tenant.dbName,
         adminEmail: tenant.adminEmail,
         adminName: tenant.adminName,
+        phonenumber: tenant.phonenumber,
+        address: tenant.address,
         isActive: tenant.isActive,
         plan_id: tenant.plan_id,
         plan_status: tenant.plan_status,
