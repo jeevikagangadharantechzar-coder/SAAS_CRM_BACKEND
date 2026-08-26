@@ -219,7 +219,7 @@ export const getFreeTrialAnalysis = async (req, res) => {
 
     tenants.forEach((tenant) => {
       const signupData = signupMap[tenant._id.toString()] || {};
-      
+
       const mappedRecord = {
         _id: tenant._id,
         name: tenant.adminName,
@@ -319,10 +319,11 @@ export const validateFreeTrialSignup = (req, res, next) => {
   next();
 };
 
-  export const signupFreeTrial = async (req, res) => {
-    try {
-      const { name, email, password, businessName, phonenumber = "", industry = "", country = "", interestedPackage = "" } = req.body;
+export const signupFreeTrial = async (req, res) => {
+  try {
+    const { name, email, password, businessName, industry = "", country = "", subscriptionPackage = "", interestedPackage = "" } = req.body;
 
+    const actualPackage = interestedPackage || subscriptionPackage;
     const adminEmail = email.toLowerCase().trim();
     const slug = slugify(businessName);
 
@@ -366,8 +367,7 @@ export const validateFreeTrialSignup = (req, res, next) => {
       dbName,
       adminEmail,
       adminName: name,
-      phonenumber,
-      plan_id: matchedPlan ? matchedPlan._id : null,
+      plan_id: null,
       plan_status: "trial",
       plan_start_date: now,
       plan_end_date: planEndDate,
@@ -381,23 +381,23 @@ export const validateFreeTrialSignup = (req, res, next) => {
         name: "Admin",
         description: "Full access",
         permissions: {
-          dashboard:           true,
-          leads:               true,
-          create_lead:         true,
-          deals_all:           true,
-          create_deal:         true,
-          deals_pipeline:      true,
-          proposal:            true,
-          invoices:            true,
+          dashboard: true,
+          leads: true,
+          create_lead: true,
+          deals_all: true,
+          create_deal: true,
+          deals_pipeline: true,
+          proposal: true,
+          invoices: true,
           activities_calendar: true,
-          activities_list:     true,
-          users_roles:         true,
-          email_chat:          true,
-          email_campaigns:     true,
-          reports:             true,
-          settings:            true,
-          whatsapp_chat:       true,
-          streak_leaderboard:  true,
+          activities_list: true,
+          users_roles: true,
+          email_chat: true,
+          email_campaigns: true,
+          reports: true,
+          settings: true,
+          whatsapp_chat: true,
+          streak_leaderboard: true,
         },
       });
 
@@ -405,23 +405,23 @@ export const validateFreeTrialSignup = (req, res, next) => {
         name: "Sales",
         description: "Limited access",
         permissions: {
-          dashboard:           true,
-          leads:               true,
-          create_lead:         true,
-          deals_all:           true,
-          create_deal:         true,
-          deals_pipeline:      true,
-          proposal:            true,
-          invoices:            true,
+          dashboard: true,
+          leads: true,
+          create_lead: true,
+          deals_all: true,
+          create_deal: true,
+          deals_pipeline: true,
+          proposal: true,
+          invoices: true,
           activities_calendar: true,
-          activities_list:     true,
-          users_roles:         false,
-          email_chat:          true,
-          email_campaigns:     false,
-          reports:             false,
-          settings:            false,
-          whatsapp_chat:       true,
-          streak_leaderboard:  true,
+          activities_list: true,
+          users_roles: false,
+          email_chat: true,
+          email_campaigns: false,
+          reports: false,
+          settings: false,
+          whatsapp_chat: true,
+          streak_leaderboard: true,
         },
       });
 
@@ -434,7 +434,7 @@ export const validateFreeTrialSignup = (req, res, next) => {
         mobileNumber: phonenumber,
         role:        adminRole._id,
         dateOfBirth: new Date("1990-01-01"),
-        status:      "Active",
+        status: "Active",
       });
 
       await EmailTemplate.insertMany(defaultEmailTemplates);
@@ -451,7 +451,7 @@ export const validateFreeTrialSignup = (req, res, next) => {
       phonenumber,
       industry,
       country,
-      interestedPackage,
+      subscriptionPackage: actualPackage,
       tenant: tenant._id,
       slug,
     });

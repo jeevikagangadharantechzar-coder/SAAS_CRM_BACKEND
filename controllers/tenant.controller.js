@@ -161,7 +161,8 @@ export const createTenant = async (req, res) => {
         if (resolvedPlanDoc) {
           // Use the billing cycle the super admin selected; fall back to plan default
           const cycle = billing_cycle || resolvedPlanDoc.billing_cycle || "monthly";
-          const months = cycle === "yearly" ? 12 : cycle === "half_yearly" ? 6 : 1;
+          const targetTier = resolvedPlanDoc.tiers?.find((t) => t.billing_cycle === cycle);
+          const months = cycle === "yearly" ? 12 : cycle === "half_yearly" ? 6 : (targetTier?.duration_months || 1);
           const end = new Date(resolvedStartDate);
           end.setMonth(end.getMonth() + months);
           resolvedEndDate = end;
@@ -653,7 +654,7 @@ export const createUpgradeRequest = async (req, res) => {
       const currentCycle = tenant.plan_billing_cycle || "monthly";
       const currentTier  = tenant.plan_id.tiers?.find((t) => t.billing_cycle === currentCycle);
       const currentPrice = currentTier?.price ?? tenant.plan_id.price_monthly ?? 0;
-      const totalDays    = currentCycle === "yearly" ? 365 : currentCycle === "half_yearly" ? 180 : 30;
+      const totalDays    = currentCycle === "yearly" ? 365 : currentCycle === "half_yearly" ? 180 : (currentTier?.duration_months || 1) * 30;
       const remainingMs  = new Date(tenant.plan_end_date) - new Date();
       const remainingDays = Math.max(0, Math.ceil(remainingMs / 86_400_000));
       proratedDiscount = Number(((currentPrice / totalDays) * remainingDays).toFixed(2));
@@ -665,7 +666,6 @@ export const createUpgradeRequest = async (req, res) => {
       tenant_id: tenant._id,
       plan_id: planId,
       wanted_users: Number(wantedUsers),
-      login_days: Number(loginDays),
       billing_cycle: billing_cycle || "",
       description: description || "",
       type,
