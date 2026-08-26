@@ -666,6 +666,7 @@ export const createUpgradeRequest = async (req, res) => {
       tenant_id: tenant._id,
       plan_id: planId,
       wanted_users: Number(wantedUsers),
+      login_days: Number(loginDays),
       billing_cycle: billing_cycle || "",
       description: description || "",
       type,
@@ -985,6 +986,39 @@ export const getUpgradeHistory = async (req, res) => {
     res.json({ success: true, history });
   } catch (err) {
     console.error("Get upgrade history error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
+// Scoped to status !== "pending", same as getUpgradeHistory above — a
+// pending request should only ever be resolved via approve/reject, never
+// deleted outright from this history-specific endpoint.
+export const deleteUpgradeHistoryItem = async (req, res) => {
+  try {
+    const deleted = await UpgradeRequest.findOneAndDelete({
+      _id: req.params.id,
+      status: { $ne: "pending" },
+    });
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: "Upgrade history record not found" });
+    }
+    res.json({ success: true, message: "Upgrade history record deleted" });
+  } catch (err) {
+    console.error("Delete upgrade history error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
+export const bulkDeleteUpgradeHistory = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) {
+      return res.status(400).json({ success: false, error: "ids array is required" });
+    }
+    const result = await UpgradeRequest.deleteMany({ _id: { $in: ids }, status: { $ne: "pending" } });
+    res.json({ success: true, message: "Upgrade history records deleted", deletedCount: result.deletedCount });
+  } catch (err) {
+    console.error("Bulk delete upgrade history error:", err);
     res.status(500).json({ success: false, error: "Server error" });
   }
 };

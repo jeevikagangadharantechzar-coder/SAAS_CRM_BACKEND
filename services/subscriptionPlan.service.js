@@ -94,7 +94,7 @@ export const deletePlan = async (id) => {
   const activeTenants = await Tenant.countDocuments({ plan_id: id, plan_status: "active" });
   if (activeTenants > 0) {
     throw appError(
-      `Cannot delete plan. ${activeTenants} tenants are actively using it.`,
+      `Cannot delete plan. ${activeTenants} tenant${activeTenants === 1 ? " is" : "s are"} actively using it.`,
       400
     );
   }

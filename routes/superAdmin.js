@@ -16,6 +16,8 @@ import {
   getTenantDetails,
   getTenantBySlugPublic,
   getUpgradeHistory,
+  deleteUpgradeHistoryItem,
+  bulkDeleteUpgradeHistory,
   updateTenant,
 } from "../controllers/tenant.controller.js";
 import {
@@ -47,6 +49,8 @@ router.get("/api/tenants/public/by-slug/:slug", getTenantBySlugPublic);
 // Upgrade request management for Superadmin
 router.get("/api/tenants/upgrade-requests", superAdminAuth, getUpgradeRequests);
 router.get("/api/tenants/upgrade-history", superAdminAuth, getUpgradeHistory);
+router.post("/api/tenants/upgrade-history/bulk-delete", superAdminAuth, bulkDeleteUpgradeHistory);
+router.delete("/api/tenants/upgrade-history/:id", superAdminAuth, deleteUpgradeHistoryItem);
 router.post("/api/tenants/upgrade-approve/:id", superAdminAuth, approveUpgradeRequest);
 router.post("/api/tenants/upgrade-reject/:id", superAdminAuth, rejectUpgradeRequest);
 
