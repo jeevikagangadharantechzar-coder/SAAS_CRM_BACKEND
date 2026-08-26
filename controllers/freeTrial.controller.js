@@ -204,7 +204,7 @@ export const getFreeTrialAnalysis = async (req, res) => {
       "isActive plan_status plan_end_date slug name adminEmail adminName createdAt"
     );
 
-    const signups = await FreeTrialSignup.find().select("tenant industry country subscriptionPackage");
+    const signups = await FreeTrialSignup.find().select("tenant industry country interestedPackage");
     const signupMap = {};
     signups.forEach(s => {
       if (s.tenant) signupMap[s.tenant.toString()] = s;
@@ -228,7 +228,7 @@ export const getFreeTrialAnalysis = async (req, res) => {
         createdAt: tenant.createdAt,
         industry: signupData.industry || "",
         country: signupData.country || "",
-        subscriptionPackage: signupData.subscriptionPackage || "",
+        interestedPackage: signupData.interestedPackage || "",
         tenant: tenant,
       };
 
@@ -452,7 +452,7 @@ export const signupFreeTrial = async (req, res) => {
       phonenumber,
       industry,
       country,
-      subscriptionPackage: actualPackage,
+      interestedPackage: actualPackage,
       tenant: tenant._id,
       slug,
     });
