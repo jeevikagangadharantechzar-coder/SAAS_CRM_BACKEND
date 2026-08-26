@@ -24,6 +24,7 @@ import instagramWebhookRoutes       from "./routes/instagramWebhook.routes.js";
 import superAdminRoutes from "./routes/superAdmin.js";
 import subscriptionPlanRoutes from "./routes/superadmin/subscriptionPlan.routes.js";
 import supportTicketRoutes from "./routes/superadmin/supportTicket.routes.js";
+import softwareEnquiryRoutes from "./routes/superadmin/softwareEnquiry.routes.js";
 import freeTrialRoutes from "./routes/freeTrial.routes.js";
 import tenantApiRouter from "./routes/tenantRouter.js";
 import { resolveTenant } from "./middlewares/resolveTenant.js";
@@ -93,7 +94,9 @@ const allowedOrigins = [
   "https://sales.stagingzar.com",
   "https://crm.techzarinfo.cloud",
   "https://tzicrm.com",
-  "https://www.tzicrm.com"
+  "https://www.tzicrm.com",
+  "https://techzarinfo.com",
+  "https://www.techzarinfo.com"
 ];
 
 if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
@@ -190,6 +193,7 @@ app.use("/webhooks/instagram",  instagramWebhookRoutes);
 app.use("/superadmin", superAdminRoutes);
 app.use("/api/superadmin/subscription-plans", subscriptionPlanRoutes);
 app.use("/api/superadmin/support-tickets", supportTicketRoutes);
+app.use("/api/superadmin/software-enquiries", softwareEnquiryRoutes);
 app.use("/api/free-trial", freeTrialRoutes);
 app.use("/:tenantSlug/api", resolveTenant, checkTrialExpiry, activityLogger(), tenantApiRouter);
 
