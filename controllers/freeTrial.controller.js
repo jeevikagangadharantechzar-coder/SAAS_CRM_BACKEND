@@ -321,7 +321,7 @@ export const validateFreeTrialSignup = (req, res, next) => {
 
 export const signupFreeTrial = async (req, res) => {
   try {
-    const { name, email, password, businessName, industry = "", country = "", subscriptionPackage = "", interestedPackage = "" } = req.body;
+    const { name, email, password, businessName, phonenumber = "", industry = "", country = "", subscriptionPackage = "", interestedPackage = "" } = req.body;
 
     const actualPackage = interestedPackage || subscriptionPackage;
     const adminEmail = email.toLowerCase().trim();
@@ -367,6 +367,7 @@ export const signupFreeTrial = async (req, res) => {
       dbName,
       adminEmail,
       adminName: name,
+      phonenumber,
       plan_id: null,
       plan_status: "trial",
       plan_start_date: now,
