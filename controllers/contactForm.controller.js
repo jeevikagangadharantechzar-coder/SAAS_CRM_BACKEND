@@ -2,6 +2,36 @@ import axios from "axios";
 import { getTenantModels } from "../models/tenant/index.js";
 import ContactFormLegacy from "../models/ContactForm.js";
 import { sendContactFormNotification } from "../services/contactNotification.service.js";
+import { pickNextSalesUser } from "../services/leadAssignment.js";
+import { notifyUser } from "../realtime/socket.js";
+
+// Fields mapped to real columns on the ContactForm schema (+ request-only
+// fields that never get stored as-is). Anything else a tenant's own form
+// sends — every tenant's website has a different field set — is captured
+// into customFields instead of being silently dropped.
+const KNOWN_CONTACT_FORM_FIELDS = new Set([
+  "captchaToken",
+  "createAsLead",
+  "name",
+  "email",
+  "phone",
+  "companyName",
+  "industry",
+  "address",
+  "country",
+  "source",
+  "requirement",
+  "notes",
+  "clientType",
+]);
+
+const extractCustomFields = (body) =>
+  Object.entries(body || {})
+    .filter(([key, value]) => !KNOWN_CONTACT_FORM_FIELDS.has(key) && value !== undefined && value !== null && value !== "")
+    .map(([name, value]) => ({
+      name,
+      value: typeof value === "string" ? value : JSON.stringify(value),
+    }));
 
 // Handle contact form submission with captcha verification, 
 // file uploads, 
@@ -80,6 +110,60 @@ const submitContactForm = async (req, res) => {
       });
     }
 
+    const customFields = extractCustomFields(req.body);
+    // Also inferred from source (not just the explicit flag) so a stale/cached
+    // frontend bundle that hasn't picked up the createAsLead field yet still
+    // gets routed straight to the Lead table instead of silently falling back
+    // to the ContactForm review queue.
+    const createAsLead =
+      req.body.createAsLead === true ||
+      req.body.createAsLead === "true" ||
+      source === "Software Enquiry";
+
+    // Some callers (e.g. the software-enquiry marketing form) want the
+    // submission to land straight in the tenant's Lead table — visible in
+    // the regular CRM Leads list immediately — instead of the ContactForm
+    // holding area that waits for an admin to review and manually convert it.
+    // Mirrors how meta.controller.js creates Facebook/Instagram leads directly.
+    if (createAsLead && req.tenantDB) {
+      const { Lead, User, Role } = getTenantModels(req.tenantDB);
+      const assignTo = await pickNextSalesUser(User, Lead);
+
+      const lead = await Lead.create({
+        leadName: name,
+        email,
+        phoneNumber: phone,
+        companyName,
+        industry,
+        address,
+        country,
+        source: source || "Website",
+        requirement,
+        notes,
+        clientType,
+        attachments,
+        customFields,
+        assignTo,
+      });
+
+      try {
+        const adminRole = await Role.findOne({ name: { $regex: /^admin$/i } });
+        if (adminRole) {
+          const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id").lean();
+          const payload = { leadId: String(lead._id), leadName: lead.leadName, source: lead.source };
+          admins.forEach((a) => notifyUser(String(a._id), "lead_created", payload));
+        }
+      } catch (notifyErr) {
+        console.error("Lead-created socket notification error:", notifyErr.message);
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: "Thanks — we'll get back to you within one business day.",
+        data: { id: lead._id },
+      });
+    }
+
     // Save to DB
     const ContactForm = req.tenantDB ? getTenantModels(req.tenantDB).ContactForm : ContactFormLegacy;
     const contact = await ContactForm.create({
@@ -95,6 +179,7 @@ const submitContactForm = async (req, res) => {
       notes,
       clientType,
       attachments,
+      customFields,
     });
 
     //  Send CRM notification
@@ -117,10 +202,11 @@ const submitContactForm = async (req, res) => {
         notes: contact.notes,
         clientType: contact.clientType,
         attachments: contact.attachments,
+        customFields: contact.customFields,
       },
     });
     console.log(" NOTIFICATION: Sent successfully");
-    
+
     return res.status(201).json({
       success: true,
       message: "Contact form submitted successfully",

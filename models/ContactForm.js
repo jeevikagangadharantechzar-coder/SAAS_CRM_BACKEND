@@ -73,6 +73,16 @@ const contactFormSchema = new mongoose.Schema(
       },
     ],
 
+    // Fields a tenant's own contact form sends that don't match any of the
+    // known columns above (each tenant's website form has its own field
+    // set). Captured as-is so nothing submitted is silently dropped.
+    customFields: [
+      {
+        name:  { type: String, required: true },
+        value: { type: String, default: "" },
+      },
+    ],
+
   },
   { timestamps: true }
 );
