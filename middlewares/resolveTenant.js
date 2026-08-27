@@ -21,7 +21,7 @@ export async function resolveTenant(req, res, next) {
   // time for this request. Retrying once after a short pause covers that
   // transient window instead of failing every tenant-scoped route until the
   // process is restarted.
-  const attempt = () => Tenant.findOne({ slug, isActive: true });
+  const attempt = () => Tenant.findOne({ slug });
 
   let tenant;
   try {
@@ -45,7 +45,11 @@ export async function resolveTenant(req, res, next) {
 
   try {
     if (!tenant) {
-      return res.status(404).json({ error: "Tenant not found" });
+      return res.status(404).json({ error: "Workspace not found" });
+    }
+
+    if (!tenant.isActive) {
+      return res.status(403).json({ success: false, message: "Your account has been suspended contact administrator", error: "Your account has been suspended contact administrator" });
     }
 
     req.tenant    = tenant;

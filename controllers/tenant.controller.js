@@ -121,7 +121,7 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD",phonenumber,address } = req.body;
+    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD", phonenumber, address } = req.body;
     const actualPlanId = plan_id || planId || plan || null;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
@@ -167,7 +167,7 @@ export const createTenant = async (req, res) => {
           end.setMonth(end.getMonth() + months);
           resolvedEndDate = end;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     const tenant = await Tenant.create({
@@ -468,7 +468,7 @@ export const getSuperAdminDashboardData = async (req, res) => {
           const { User } = getTenantModels(tenantDB);
           const userCount = await User.countDocuments();
           totalUsers += userCount;
-        } catch (dbErr) {}
+        } catch (dbErr) { }
       }
 
       if (tenant.plan_id && tenant.plan_status === "active") {
@@ -484,7 +484,7 @@ export const getSuperAdminDashboardData = async (req, res) => {
       const approvedUpgrades = await UpgradeRequest.find({ status: "approved" });
       const upgradeRevenue = approvedUpgrades.reduce((sum, req) => sum + (req.final_price || 0), 0);
       totalRevenue += upgradeRevenue;
-    } catch (upgradeErr) {}
+    } catch (upgradeErr) { }
 
     const recentTenants = tenants.slice(0, 5);
 
@@ -652,10 +652,10 @@ export const createUpgradeRequest = async (req, res) => {
     let proratedDiscount = 0;
     if (type === "mid_cycle" && tenant.plan_end_date && tenant.plan_id) {
       const currentCycle = tenant.plan_billing_cycle || "monthly";
-      const currentTier  = tenant.plan_id.tiers?.find((t) => t.billing_cycle === currentCycle);
+      const currentTier = tenant.plan_id.tiers?.find((t) => t.billing_cycle === currentCycle);
       const currentPrice = currentTier?.price ?? tenant.plan_id.price_monthly ?? 0;
-      const totalDays    = currentCycle === "yearly" ? 365 : currentCycle === "half_yearly" ? 180 : (currentTier?.duration_months || 1) * 30;
-      const remainingMs  = new Date(tenant.plan_end_date) - new Date();
+      const totalDays = currentCycle === "yearly" ? 365 : currentCycle === "half_yearly" ? 180 : (currentTier?.duration_months || 1) * 30;
+      const remainingMs = new Date(tenant.plan_end_date) - new Date();
       const remainingDays = Math.max(0, Math.ceil(remainingMs / 86_400_000));
       proratedDiscount = Number(((currentPrice / totalDays) * remainingDays).toFixed(2));
     }
@@ -804,7 +804,7 @@ export const approveUpgradeRequest = async (req, res) => {
     // Send plan summary email with start/end dates
     const fmt = (d) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
     const approvedCycle = request.billing_cycle || plan.billing_cycle || "monthly";
-    const approvedTier  = plan.tiers?.find((t) => t.billing_cycle === approvedCycle);
+    const approvedTier = plan.tiers?.find((t) => t.billing_cycle === approvedCycle);
     const approvedPrice = approvedTier?.price ?? (approvedCycle === "yearly" ? plan.price_yearly : approvedCycle === "half_yearly" ? 0 : plan.price_monthly) ?? 0;
     sendPlanEmail({
       to: tenant.adminEmail,
@@ -956,7 +956,11 @@ export const getTenantDetails = async (req, res) => {
 export const getTenantBySlugPublic = async (req, res) => {
   try {
     const tenant = await Tenant.findOne({ slug: req.params.slug.toLowerCase() }).populate("plan_id");
-    if (!tenant) return res.status(404).json({ success: false, error: "Tenant not found" });
+    if (!tenant) return res.status(404).json({ success: false, error: "Workspace not found" });
+
+    if (!tenant.isActive) {
+      return res.status(403).json({ success: false, message: "Your account has been suspended contact administrator" });
+    }
 
     res.json({
       success: true,
