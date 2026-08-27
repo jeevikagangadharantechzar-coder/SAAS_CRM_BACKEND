@@ -121,7 +121,7 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD", phonenumber, address } = req.body;
+    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD", phonenumber, address, source } = req.body;
     const actualPlanId = plan_id || planId || plan || null;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
@@ -179,6 +179,7 @@ export const createTenant = async (req, res) => {
       currency,
       phonenumber,
       address,
+      source: source || "",
       createdBy: req.superAdmin.id,
       plan_id: actualPlanId,
       plan_status: actualPlanId ? "active" : (plan_status || "trial"),
@@ -937,6 +938,7 @@ export const getTenantDetails = async (req, res) => {
         adminName: tenant.adminName,
         phonenumber: tenant.phonenumber,
         address: tenant.address,
+        source: tenant.source,
         isActive: tenant.isActive,
         plan_id: tenant.plan_id,
         plan_status: tenant.plan_status,

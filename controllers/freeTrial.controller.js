@@ -368,6 +368,7 @@ export const signupFreeTrial = async (req, res) => {
       adminEmail,
       adminName: name,
       phonenumber,
+      source: "Free Sign Up",
       plan_id: null,
       plan_status: "trial",
       plan_start_date: now,

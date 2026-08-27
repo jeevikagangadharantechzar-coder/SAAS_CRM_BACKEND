@@ -10,6 +10,7 @@ const tenantSchema = new mongoose.Schema(
     adminName:  { type: String, required: true, trim: true },
     phonenumber:{ type:String, trim:true },
     address:    { type:String, trim:true},
+    source:     { type:String, trim:true, default: "" },
     currency:        { type: String, default: "USD", trim: true },
     isActive:        { type: Boolean, default: true },
     createdBy:       { type: mongoose.Schema.Types.ObjectId, default: null },
