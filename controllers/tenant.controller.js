@@ -943,6 +943,7 @@ export const getTenantDetails = async (req, res) => {
         plan_start_date: tenant.plan_start_date,
         plan_end_date: tenant.plan_end_date,
         activeUsersCount,
+        createdAt: tenant.createdAt,
       },
       history: history || [],
     });
