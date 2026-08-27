@@ -55,10 +55,18 @@ export const updatePlan = async (id, data) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw appError("Invalid plan ID", 400);
   }
-
+  //check if status is changing to inactive then check if any tenant is using this plan then show error
   const existing = await SubscriptionPlan.findOne({ _id: id, is_deleted: false });
   if (!existing) throw appError("Subscription plan not found", 404);
-
+    if (data.status === "inactive" && existing.status !== "inactive") {
+    const activeTenants = await Tenant.countDocuments({ plan_id: id, plan_status: "active" });
+    if (activeTenants > 0) {
+      throw appError(
+        `${activeTenants} user(s) are currently using this plan, you cannot mark it as inactive.`,
+        400
+      );
+    }
+  }
   if (data.plan_code && data.plan_code.toLowerCase().trim() !== existing.plan_code) {
     const tenantCount = await Tenant.countDocuments({ plan_id: id, plan_status: "active" });
     if (tenantCount > 0) {
