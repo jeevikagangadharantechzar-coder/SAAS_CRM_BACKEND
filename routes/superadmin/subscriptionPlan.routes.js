@@ -1,5 +1,5 @@
 import express from "express";
-import { superAdminAuth } from "../../middlewares/superAdminAuth.js";
+import { superAdminAuth, requireSuperAdminPermission } from "../../middlewares/superAdminAuth.js";
 import {
   getAllPlans,
   getPlanById,
@@ -23,12 +23,14 @@ router.get("/public", getPublicPlans);
 router.get("/public/landing", getLandingPagePlans);
 
 // Superadmin-protected routes
-router.get("/",                     superAdminAuth, getAllPlans);
-router.get("/tenant-subscriptions", superAdminAuth, getTenantSubscriptions);
-router.get("/:id",                  superAdminAuth, getPlanById);
-router.post("/",                    superAdminAuth, validateCreatePlan, createPlan);
-router.put("/:id",                  superAdminAuth, validateUpdatePlan, updatePlan);
-router.delete("/:id",               superAdminAuth, deletePlan);
-router.post("/assign-to-tenant",    superAdminAuth, assignPlanToTenant);
+router.use(superAdminAuth, requireSuperAdminPermission("subscription_plans"));
+
+router.get("/",                     getAllPlans);
+router.get("/tenant-subscriptions", getTenantSubscriptions);
+router.get("/:id",                  getPlanById);
+router.post("/",                    validateCreatePlan, createPlan);
+router.put("/:id",                  validateUpdatePlan, updatePlan);
+router.delete("/:id",               deletePlan);
+router.post("/assign-to-tenant",    assignPlanToTenant);
 
 export default router;

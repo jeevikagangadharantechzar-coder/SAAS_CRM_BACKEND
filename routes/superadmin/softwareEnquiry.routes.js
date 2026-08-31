@@ -1,5 +1,5 @@
 import express from "express";
-import { superAdminAuth } from "../../middlewares/superAdminAuth.js";
+import { superAdminAuth, requireSuperAdminPermission } from "../../middlewares/superAdminAuth.js";
 import {
   submitSoftwareEnquiry,
   validateSoftwareEnquiry,
@@ -15,9 +15,9 @@ const router = express.Router();
 router.post("/submit", validateSoftwareEnquiry, submitSoftwareEnquiry);
 
 // SuperAdmin-protected routes
-router.get("/",             superAdminAuth, listSoftwareEnquiries);
-router.get("/:id",          superAdminAuth, getSoftwareEnquiryDetails);
-router.patch("/:id/status", superAdminAuth, updateSoftwareEnquiryStatus);
-router.delete("/:id",       superAdminAuth, deleteSoftwareEnquiry);
+router.get("/",             superAdminAuth, requireSuperAdminPermission("software_enquiries"), listSoftwareEnquiries);
+router.get("/:id",          superAdminAuth, requireSuperAdminPermission("software_enquiries"), getSoftwareEnquiryDetails);
+router.patch("/:id/status", superAdminAuth, requireSuperAdminPermission("software_enquiries"), updateSoftwareEnquiryStatus);
+router.delete("/:id",       superAdminAuth, requireSuperAdminPermission("software_enquiries"), deleteSoftwareEnquiry);
 
 export default router;
