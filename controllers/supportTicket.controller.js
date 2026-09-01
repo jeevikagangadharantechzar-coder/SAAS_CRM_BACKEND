@@ -92,11 +92,12 @@ export const addTenantMessage = async (req, res) => {
 
 export const listTickets = async (req, res) => {
   try {
-    const { search, status, priority, dateFrom, dateTo, page = 1, limit = 10 } = req.query;
+    const { search, status, priority, urgency, dateFrom, dateTo, page = 1, limit = 10 } = req.query;
     const { tickets, total } = await supportTicketService.listTickets({
       search,
       status,
       priority,
+      urgency,
       dateFrom,
       dateTo,
       page: parseInt(page),
@@ -156,6 +157,19 @@ export const updatePriority = async (req, res) => {
   } catch (err) {
     console.error("updatePriority error:", err);
     return sendError(res, err);
+  }
+};
+
+export const updateResolutionDate = async (req, res, next) => {
+  try {
+    const actor = { sender: "platform", senderName: req.superAdmin?.name || "Platform Admin" };
+    const ticket = await supportTicketService.updateResolutionDate(req.params.id, req.body.expectedResolutionDate, actor);
+    
+    notifyTenantAdmin(ticket);
+    
+    res.status(200).json({ success: true, data: ticket });
+  } catch (err) {
+    next(err);
   }
 };
 
