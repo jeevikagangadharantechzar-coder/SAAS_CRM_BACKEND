@@ -55,8 +55,6 @@ export const login = async (req, res) => {
   }
 };
 
-import { verifyMfaToken } from "../utils/mfa.js";
-
 export const verifyMfaLogin = async (req, res) => {
   try {
     const { tempToken, mfaCode } = req.body;
