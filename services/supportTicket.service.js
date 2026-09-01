@@ -44,11 +44,32 @@ export const getTicketsForTenant = async (tenantId) => {
   return SupportTicket.find({ tenant_id: tenantId }).sort({ createdAt: -1 });
 };
 
-export const listTickets = async ({ search, status, priority, dateFrom, dateTo, page = 1, limit = 10 }) => {
+export const listTickets = async ({ search, status, priority, urgency, dateFrom, dateTo, page = 1, limit = 10 }) => {
   const filter = {};
 
   if (status && status !== "All") filter.status = status;
   if (priority && priority !== "All") filter.priority = priority;
+
+  if (urgency && urgency !== "All") {
+    // Both Due Today and Overdue only apply if the ticket is NOT closed
+    filter.status = { $ne: "Closed" };
+    
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+    if (urgency === "Due Today") {
+      filter.expectedResolutionDate = { 
+        $gte: startOfToday, 
+        $lt: startOfTomorrow 
+      };
+    } else if (urgency === "Overdue") {
+      filter.expectedResolutionDate = { 
+        $lt: startOfToday 
+      };
+    }
+  }
 
   if (search) {
     const regex = new RegExp(search.trim(), "i");
@@ -110,6 +131,27 @@ export const updatePriority = async (id, priority) => {
   if (!ticket) throw appError("Ticket not found", 404);
 
   ticket.priority = priority;
+  await ticket.save();
+  return ticket;
+};
+
+export const updateResolutionDate = async (id, date, actor) => {
+  const ticket = await SupportTicket.findById(id);
+  if (!ticket) throw appError("Ticket not found", 404);
+
+  ticket.expectedResolutionDate = date ? new Date(date) : null;
+  
+  const formattedDate = ticket.expectedResolutionDate 
+    ? ticket.expectedResolutionDate.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
+    : "Cleared";
+
+  ticket.timeline.push({ 
+    type: "message", 
+    sender: actor.sender, 
+    senderName: actor.senderName, 
+    text: `System: Expected resolution date updated to ${formattedDate}.` 
+  });
+  
   await ticket.save();
   return ticket;
 };

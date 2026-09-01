@@ -33,6 +33,7 @@ const supportTicketSchema = new mongoose.Schema(
     attachmentName: { type: String, default: "" },
 
     status: { type: String, enum: ["Pending", "In Progress", "Closed"], default: "Pending" },
+    expectedResolutionDate: { type: Date },
     timeline: { type: [timelineEntrySchema], default: [] },
   },
   { timestamps: true }
