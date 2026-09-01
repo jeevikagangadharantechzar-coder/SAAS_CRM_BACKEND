@@ -25,6 +25,8 @@ import superAdminRoutes from "./routes/superAdmin.js";
 import subscriptionPlanRoutes from "./routes/superadmin/subscriptionPlan.routes.js";
 import supportTicketRoutes from "./routes/superadmin/supportTicket.routes.js";
 import softwareEnquiryRoutes from "./routes/superadmin/softwareEnquiry.routes.js";
+import superAdminUserRoutes from "./routes/superadmin/superAdminUser.routes.js";
+import superAdminRoleRoutes from "./routes/superadmin/superAdminRole.routes.js";
 import freeTrialRoutes from "./routes/freeTrial.routes.js";
 import tenantApiRouter from "./routes/tenantRouter.js";
 import { resolveTenant } from "./middlewares/resolveTenant.js";
@@ -194,6 +196,8 @@ app.use("/superadmin", superAdminRoutes);
 app.use("/api/superadmin/subscription-plans", subscriptionPlanRoutes);
 app.use("/api/superadmin/support-tickets", supportTicketRoutes);
 app.use("/api/superadmin/software-enquiries", softwareEnquiryRoutes);
+app.use("/superadmin/api/admin-users", superAdminUserRoutes);
+app.use("/superadmin/api/admin-roles", superAdminRoleRoutes);
 app.use("/api/free-trial", freeTrialRoutes);
 app.use("/:tenantSlug/api", resolveTenant, checkTrialExpiry, activityLogger(), tenantApiRouter);
 

@@ -121,7 +121,7 @@ function welcomeEmailHtml({ adminName, adminEmail, password, loginUrl, tenantNam
 
 export const createTenant = async (req, res) => {
   try {
-    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD", phonenumber, address } = req.body;
+    const { name, slug, adminName, adminEmail, plan_id, planId, plan, plan_status, plan_start_date, plan_end_date, billing_cycle, currency = "USD", phonenumber, address, source } = req.body;
     const actualPlanId = plan_id || planId || plan || null;
     const plainPassword = generatePassword();
     console.log(`[TENANT CREATION] Generated password for tenant "${slug}": ${plainPassword}`);
@@ -152,20 +152,28 @@ export const createTenant = async (req, res) => {
     let resolvedStartDate = plan_start_date || null;
     let resolvedEndDate = plan_end_date || null;
     let resolvedPlanDoc = null;
+    let initialPrice = 0;
     if (actualPlanId && !resolvedStartDate) {
       resolvedStartDate = new Date();
     }
-    if (actualPlanId && !resolvedEndDate) {
+    if (actualPlanId) {
       try {
         resolvedPlanDoc = await SubscriptionPlan.findById(actualPlanId);
         if (resolvedPlanDoc) {
           // Use the billing cycle the super admin selected; fall back to plan default
           const cycle = billing_cycle || resolvedPlanDoc.billing_cycle || "monthly";
           const targetTier = resolvedPlanDoc.tiers?.find((t) => t.billing_cycle === cycle);
-          const months = cycle === "yearly" ? 12 : cycle === "half_yearly" ? 6 : (targetTier?.duration_months || 1);
-          const end = new Date(resolvedStartDate);
-          end.setMonth(end.getMonth() + months);
-          resolvedEndDate = end;
+
+          if (!resolvedEndDate) {
+            const months = cycle === "yearly" ? 12 : cycle === "half_yearly" ? 6 : (targetTier?.duration_months || 1);
+            const end = new Date(resolvedStartDate);
+            end.setMonth(end.getMonth() + months);
+            resolvedEndDate = end;
+          }
+
+          initialPrice = targetTier?.price
+            ?? (cycle === "yearly" ? resolvedPlanDoc.price_yearly : cycle === "half_yearly" ? 0 : resolvedPlanDoc.price_monthly)
+            ?? 0;
         }
       } catch (_) { }
     }
@@ -179,12 +187,18 @@ export const createTenant = async (req, res) => {
       currency,
       phonenumber,
       address,
+      source: source || "",
       createdBy: req.superAdmin.id,
       plan_id: actualPlanId,
       plan_status: actualPlanId ? "active" : (plan_status || "trial"),
       plan_billing_cycle: actualPlanId ? (billing_cycle || resolvedPlanDoc?.billing_cycle || "") : "",
       plan_start_date: resolvedStartDate,
       plan_end_date: resolvedEndDate,
+      initial_plan_id: actualPlanId || null,
+      initial_plan_name: actualPlanId ? (resolvedPlanDoc?.plan_name || "") : "",
+      initial_billing_cycle: actualPlanId ? (billing_cycle || resolvedPlanDoc?.billing_cycle || "") : "",
+      initial_price: actualPlanId ? initialPrice : 0,
+      initial_max_users: actualPlanId ? (resolvedPlanDoc?.max_users_per_tenant || 0) : 0,
     });
 
     try {
@@ -933,15 +947,21 @@ export const getTenantDetails = async (req, res) => {
         name: tenant.name,
         slug: tenant.slug,
         dbName: tenant.dbName,
+        currency: tenant.currency,
         adminEmail: tenant.adminEmail,
         adminName: tenant.adminName,
         phonenumber: tenant.phonenumber,
         address: tenant.address,
+        source: tenant.source,
         isActive: tenant.isActive,
         plan_id: tenant.plan_id,
         plan_status: tenant.plan_status,
         plan_start_date: tenant.plan_start_date,
         plan_end_date: tenant.plan_end_date,
+        initial_plan_name: tenant.initial_plan_name,
+        initial_billing_cycle: tenant.initial_billing_cycle,
+        initial_price: tenant.initial_price,
+        initial_max_users: tenant.initial_max_users,
         activeUsersCount,
         createdAt: tenant.createdAt,
       },

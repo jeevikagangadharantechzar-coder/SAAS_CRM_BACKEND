@@ -10,6 +10,7 @@ const superAdminSchema = new mongoose.Schema(
     // MFA Fields
     mfaSecret: { type: String },
     isMfaEnabled: { type: Boolean, default: false },
+    role:     { type: mongoose.Schema.Types.ObjectId, ref: "SuperAdminRole", default: null },
   },
   { timestamps: true }
 );

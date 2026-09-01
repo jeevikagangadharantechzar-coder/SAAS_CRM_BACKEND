@@ -1,5 +1,5 @@
 import express from "express";
-import { superAdminAuth } from "../../middlewares/superAdminAuth.js";
+import { superAdminAuth, requireSuperAdminPermission } from "../../middlewares/superAdminAuth.js";
 import {
   listTickets,
   getTicket,
@@ -10,7 +10,7 @@ import {
 
 const router = express.Router();
 
-router.use(superAdminAuth);
+router.use(superAdminAuth, requireSuperAdminPermission("support_tickets"));
 
 router.get("/", listTickets);
 router.get("/:id", getTicket);

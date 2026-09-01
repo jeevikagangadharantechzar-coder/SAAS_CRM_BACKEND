@@ -10,6 +10,7 @@ const tenantSchema = new mongoose.Schema(
     adminName:  { type: String, required: true, trim: true },
     phonenumber:{ type:String, trim:true },
     address:    { type:String, trim:true},
+    source:     { type:String, trim:true, default: "" },
     currency:        { type: String, default: "USD", trim: true },
     isActive:        { type: Boolean, default: true },
     createdBy:       { type: mongoose.Schema.Types.ObjectId, default: null },
@@ -20,6 +21,16 @@ const tenantSchema = new mongoose.Schema(
     plan_start_date:    { type: Date, default: null },
     plan_end_date:      { type: Date, default: null },
     isDbRefreshed:   { type: Boolean, default: false },
+
+    // Permanent snapshot of the plan the tenant actually started on, set once
+    // at tenant creation and never touched again — plan_id/plan_billing_cycle
+    // above get overwritten on every upgrade approval, so without this the
+    // tenant's true starting point is lost after the first upgrade.
+    initial_plan_id:       { type: mongoose.Schema.Types.ObjectId, ref: "SubscriptionPlan", default: null },
+    initial_plan_name:     { type: String, default: "" },
+    initial_billing_cycle: { type: String, default: "" },
+    initial_price:         { type: Number, default: 0 },
+    initial_max_users:     { type: Number, default: 0 },
 
     // Tracks which free-trial expiry reminders have already been sent so the
     // cron (cron/freeTrialCron.js) never notifies the same milestone twice.
