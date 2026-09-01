@@ -1,6 +1,11 @@
 import express from "express";
 import { superAdminAuth } from "../middlewares/superAdminAuth.js";
-import { login } from "../controllers/superAdmin.controller.js";
+import { login, verifyMfaLogin, getMe } from "../controllers/superAdmin.controller.js";
+import {
+  generateSuperAdminMfa,
+  verifyAndEnableSuperAdminMfa,
+  disableSuperAdminMfa
+} from "../controllers/mfa.controller.js";
 import {
   createTenant,
   listTenants,
@@ -41,6 +46,14 @@ const router = express.Router();
 
 // Auth
 router.post("/api/auth/login", login);
+router.post("/api/auth/login/verify-mfa", verifyMfaLogin);
+router.get("/api/auth/me", superAdminAuth, getMe);
+
+// MFA
+
+router.post("/api/mfa/setup", superAdminAuth, generateSuperAdminMfa);
+router.post("/api/mfa/enable", superAdminAuth, verifyAndEnableSuperAdminMfa);
+router.post("/api/mfa/disable", superAdminAuth, disableSuperAdminMfa);
 
 // Tenant management — all protected except submit upgrade-request which can be called by tenant portal
 router.post("/api/tenants/upgrade-request", createUpgradeRequest);

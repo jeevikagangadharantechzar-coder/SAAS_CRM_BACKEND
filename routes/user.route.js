@@ -12,10 +12,22 @@ import { getTenantModels } from "../models/tenant/index.js";
 import UserLegacy from "../models/user.model.js";
 import checkPlanLimit from "../middlewares/checkPlanLimit.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
+import {
+  generateUserMfa,
+  verifyAndEnableUserMfa,
+  disableUserMfa
+} from "../controllers/mfa.controller.js";
 
 const router = express.Router();
 
 router.post("/login", indexControllers.usersController.loginUser);
+router.post("/login/verify-mfa", indexControllers.usersController.verifyMfaLogin);
+
+// MFA Routes
+router.post("/mfa/setup", protect, generateUserMfa);
+router.post("/mfa/enable", protect, verifyAndEnableUserMfa);
+router.post("/mfa/disable", protect, disableUserMfa);
+
 router.post("/forgot-password", indexControllers.usersController.forgotPassword);
 router.post("/reset-password/:token", indexControllers.usersController.resetPassword);
 

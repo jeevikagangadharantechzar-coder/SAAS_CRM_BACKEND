@@ -75,6 +75,9 @@ const userSchema = new mongoose.Schema(
       connected:    { type: Boolean, default: false },
       connectedAt:  { type: Date },
     },
+
+    mfaSecret: { type: String },
+    isMfaEnabled: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

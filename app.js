@@ -114,7 +114,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "x-tenant-slug"],
   optionsSuccessStatus: 200,
 };
 
@@ -324,6 +324,7 @@ const startServer = async () => {
       console.log(` Server running on port ${PORT}`);
       console.log(` WhatsApp webhook: http://localhost:${PORT}/webhooks/whatsapp`);
       console.log(` Allowed origins: ${allowedOrigins.join(", ")}`);
+      console.log(` MFA Routes initialized`);
     });
   } catch (error) {
     console.error(" MongoDB connection failed:", error.message);

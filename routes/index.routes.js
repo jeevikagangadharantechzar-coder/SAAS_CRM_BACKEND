@@ -29,6 +29,7 @@ import justdialRoutes from "./justdial.routes.js";
 import ninetyNineAcresRoutes from "./99acres.routes.js";
 import sulekhaRoutes from "./sulekha.routes.js";
 import meetingRoutes from "./meeting.routes.js";
+import mfaRoutes from "./mfa.routes.js";
 
 const router = express.Router();
 
@@ -66,5 +67,6 @@ router.use("/justdial", justdialRoutes);
 router.use("/99acres", ninetyNineAcresRoutes);
 router.use("/sulekha", sulekhaRoutes);
 router.use("/meetings", meetingRoutes);
+router.use("/mfa", mfaRoutes);
 
 export default router;

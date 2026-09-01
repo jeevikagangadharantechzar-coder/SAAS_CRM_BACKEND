@@ -58,6 +58,7 @@ import publicRoutes from "./public.routes.js";
 import { protect } from "../middlewares/auth.middleware.js";
 import { getTrialStatus } from "../controllers/freeTrial.controller.js";
 import agreementRoutes from "./agreement.routes.js";
+import mfaRoutes from "./mfa.routes.js";
 
 const router = express.Router();
 
@@ -93,7 +94,7 @@ router.use("/deals", lostDealRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/email", emailRoutes);
 router.use("/lead-loss", leadLossRoutes);
-
+router.use("/mfa", mfaRoutes);
 router.use("/files",           fileRoutes);
 router.use("/meta",            metaRoutes);
 router.use("/linkedin",        linkedinRoutes);
