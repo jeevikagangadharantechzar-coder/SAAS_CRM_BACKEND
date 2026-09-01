@@ -947,6 +947,7 @@ export const getTenantDetails = async (req, res) => {
         name: tenant.name,
         slug: tenant.slug,
         dbName: tenant.dbName,
+        currency: tenant.currency,
         adminEmail: tenant.adminEmail,
         adminName: tenant.adminName,
         phonenumber: tenant.phonenumber,
