@@ -8,7 +8,7 @@ import SubscriptionPlan from "../models/master/SubscriptionPlan.model.js";
 import { getTenantDB, dropTenantDB } from "../config/tenantDB.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import sendEmail from "../utils/sendEmail.js";
-import { sendWelcomeEmail, sendUpgradeAlertEmail, sendPlanEmail } from "../utils/dynamicEmail.js";
+import { sendWelcomeEmail, sendUpgradeAlertEmail, sendPlanEmail, sendUpgradeApprovalEmail, sendUpgradeRejectedEmail } from "../utils/dynamicEmail.js";
 import { emitToSuperAdmin } from "../realtime/superAdminSocket.js";
 import defaultEmailTemplates from "../seeder/data/defaultEmailTemplates.js";
 import userService from "../services/user.service.js";
@@ -725,40 +725,6 @@ export const getUpgradeRequests = async (req, res) => {
   }
 };
 
-function upgradeEmailHtml({ adminName, planName, wantedUsers, loginDays, password, loginUrl }) {
-  return `
-<!DOCTYPE html>
-<html>
-<body style="font-family: Arial, sans-serif; background-color: #f4f6fb; padding: 20px;">
-  <div style="background-color: #ffffff; padding: 30px; border-radius: 12px; max-width: 550px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-    <h2 style="color: #008ecc; text-align: center;">Workspace Upgrade Activated</h2>
-    <p>Dear <strong>${adminName}</strong>,</p>
-    <p>Your tenant workspace has been successfully upgraded to the <strong>${planName}</strong> plan.</p>
-    <h4 style="border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333;">New Plan Specifications:</h4>
-    <ul>
-      <li><strong>User Seats:</strong> ${wantedUsers} Max Active Users</li>
-      <li><strong>Validity Days:</strong> ${loginDays} Days</li>
-    </ul>
-    <div style="background-color: #f0f7ff; border: 1px solid #d0e5ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
-      <h5 style="margin: 0 0 10px 0; color: #008ecc;">Plan Upgraded Successfully</h5>
-      <p style="margin: 0; font-size: 13px; color: #555;">
-        Your plan has been upgraded. All your existing data has been preserved. Here are your new administrator credentials:
-      </p>
-      <p style="margin: 10px 0 0 0; font-family: monospace; font-size: 15px;">
-        <strong>Password:</strong> <span style="background: #fff; padding: 2px 8px; border: 1px dashed #008ecc; font-weight: bold; color: #008ecc;">${password}</span>
-      </p>
-    </div>
-    <div style="text-align: center; margin-top: 25px;">
-      <a href="${loginUrl}" target="_blank" style="background-color: #008ecc; color: #ffffff; text-decoration: none; padding: 12px 30px; border-radius: 6px; font-weight: bold; display: inline-block;">Login to CRM Workspace</a>
-    </div>
-    <p style="font-size: 11px; color: #888; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; text-align: center;">
-      © ${new Date().getFullYear()} TZI Support. All rights reserved.
-    </p>
-  </div>
-</body>
-</html>`;
-}
-
 export const approveUpgradeRequest = async (req, res) => {
   try {
     const request = await UpgradeRequest.findById(req.params.id)
@@ -802,17 +768,16 @@ export const approveUpgradeRequest = async (req, res) => {
 
     // 5. Send Upgrade activation email with generated credentials + plan summary
     const loginUrl = `${process.env.FRONTEND_URL}/${tenant.slug}/login`;
-    sendEmail({
+    sendUpgradeApprovalEmail({
       to: tenant.adminEmail,
-      subject: `Your CRM Workspace Plan Has Been Upgraded — New Credentials`,
-      html: upgradeEmailHtml({
+      vars: {
         adminName: tenant.adminName,
         planName: plan.plan_name,
         wantedUsers: request.wanted_users,
         loginDays: request.login_days,
         password: plainPassword,
         loginUrl,
-      }),
+      },
     }).catch((emailErr) => console.error("Upgrade activation email failed:", emailErr.message));
 
     // Send plan summary email with start/end dates
@@ -846,38 +811,7 @@ export const approveUpgradeRequest = async (req, res) => {
   }
 };
 
-function rejectEmailHtml({ adminName, planName, wantedUsers, loginDays, reason }) {
-  return `
-<!DOCTYPE html>
-<html>
-<body style="font-family: Arial, sans-serif; background-color: #f4f6fb; padding: 20px;">
-  <div style="background-color: #ffffff; padding: 30px; border-radius: 12px; max-width: 550px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-    <h2 style="color: #d93025; text-align: center;">Upgrade Request Declined</h2>
-    <p>Dear <strong>${adminName}</strong>,</p>
-    <p>Your request to upgrade your workspace to the <strong>${planName}</strong> plan has been declined.</p>
-    
-    <div style="background-color: #fce8e6; border: 1px solid #fad2cf; padding: 15px; border-radius: 8px; margin: 20px 0;">
-      <h5 style="margin: 0 0 10px 0; color: #c5221f;">Reason for Rejection:</h5>
-      <p style="margin: 0; font-size: 14px; color: #202124; line-height: 1.5; white-space: pre-wrap;">${reason || "No reason specified."}</p>
-    </div>
-
-    <h4 style="border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333;">Requested Specifications:</h4>
-    <ul>
-      <li><strong>User Seats:</strong> ${wantedUsers} Max Active Users</li>
-      <li><strong>Validity Days:</strong> ${loginDays} Days</li>
-    </ul>
-
-    <p style="font-size: 13px; color: #555; line-height: 1.5;">
-      If you have any questions or would like to submit another request with adjusted parameters, please log in to your portal or contact support.
-    </p>
-    
-    <p style="font-size: 11px; color: #888; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; text-align: center;">
-      © ${new Date().getFullYear()} TZI Support. All rights reserved.
-    </p>
-  </div>
-</body>
-</html>`;
-}
+// Removed local rejectEmailHtml in favor of sendUpgradeRejectedEmail from dynamicEmail.js
 
 export const rejectUpgradeRequest = async (req, res) => {
   try {
@@ -900,16 +834,15 @@ export const rejectUpgradeRequest = async (req, res) => {
     await request.save();
 
     // Send Rejection email
-    sendEmail({
+    sendUpgradeRejectedEmail({
       to: tenant.adminEmail,
-      subject: `CRM Workspace Upgrade Request Declined`,
-      html: rejectEmailHtml({
+      vars: {
         adminName: tenant.adminName,
         planName: plan.plan_name,
         wantedUsers: request.wanted_users,
         loginDays: request.login_days,
         reason: reason,
-      }),
+      },
     }).catch((emailErr) => console.error("Upgrade rejection email failed:", emailErr.message));
 
     emitToSuperAdmin("upgrade_request_resolved", { id: req.params.id });

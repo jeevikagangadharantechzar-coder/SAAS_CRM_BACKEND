@@ -459,7 +459,101 @@ export async function sendPlanEmail({ to, vars }) {
   await transporter.sendMail({ from, to, subject, html });
 }
 
-export { BEAUTIFUL_WELCOME_BODY, BEAUTIFUL_PLAN_BODY };
+const UPGRADE_APPROVAL_BODY = `<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; background-color: #f4f6fb; padding: 20px;">
+  <div style="background-color: #ffffff; padding: 30px; border-radius: 12px; max-width: 550px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+    <h2 style="color: #008ecc; text-align: center;">Workspace Upgrade Activated</h2>
+    <p>Dear <strong>{{adminName}}</strong>,</p>
+    <p>Your tenant workspace has been successfully upgraded to the <strong>{{planName}}</strong> plan.</p>
+    <h4 style="border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333;">New Plan Specifications:</h4>
+    <ul>
+      <li><strong>User Seats:</strong> {{wantedUsers}} Max Active Users</li>
+      <li><strong>Validity Days:</strong> {{loginDays}} Days</li>
+    </ul>
+    <div style="background-color: #f0f7ff; border: 1px solid #d0e5ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <h5 style="margin: 0 0 10px 0; color: #008ecc;">Plan Upgraded Successfully</h5>
+      <p style="margin: 0; font-size: 13px; color: #555;">
+        Your plan has been upgraded. All your existing data has been preserved. Here are your new administrator credentials:
+      </p>
+      <p style="margin: 10px 0 0 0; font-family: monospace; font-size: 15px;">
+        <strong>Password:</strong> <span style="background: #fff; padding: 2px 8px; border: 1px dashed #008ecc; font-weight: bold; color: #008ecc;">{{password}}</span>
+      </p>
+    </div>
+    <div style="text-align: center; margin-top: 25px;">
+      <a href="{{loginUrl}}" style="background-color: #008ecc; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Login to Workspace</a>
+    </div>
+    <p style="font-size: 11px; color: #888; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; text-align: center;">
+      © {{year}} {{platformName}}. All rights reserved.
+    </p>
+  </div>
+</body>
+</html>`;
+
+const UPGRADE_REJECTED_BODY = `<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; background-color: #f4f6fb; padding: 20px;">
+  <div style="background-color: #ffffff; padding: 30px; border-radius: 12px; max-width: 550px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+    <h2 style="color: #d93025; text-align: center;">Upgrade Request Declined</h2>
+    <p>Dear <strong>{{adminName}}</strong>,</p>
+    <p>Your request to upgrade your workspace to the <strong>{{planName}}</strong> plan has been declined.</p>
+    
+    <div style="background-color: #fce8e6; border: 1px solid #fad2cf; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <h5 style="margin: 0 0 10px 0; color: #c5221f;">Reason for Rejection:</h5>
+      <p style="margin: 0; font-size: 14px; color: #202124; line-height: 1.5; white-space: pre-wrap;">{{reason}}</p>
+    </div>
+
+    <h4 style="border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333;">Requested Specifications:</h4>
+    <ul>
+      <li><strong>User Seats:</strong> {{wantedUsers}} Max Active Users</li>
+      <li><strong>Validity Days:</strong> {{loginDays}} Days</li>
+    </ul>
+
+    <p style="font-size: 13px; color: #555; line-height: 1.5;">
+      If you have any questions or would like to submit another request with adjusted parameters, please log in to your portal or contact support.
+    </p>
+    
+    <p style="font-size: 11px; color: #888; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; text-align: center;">
+      © {{year}} {{platformName}}. All rights reserved.
+    </p>
+  </div>
+</body>
+</html>`;
+
+export async function sendUpgradeApprovalEmail({ to, vars }) {
+  let settings = null;
+  try {
+    settings = await SuperAdminSettings.findOne();
+  } catch (_) {}
+  const platformName = settings?.platformName || "TZI CRM ";
+  const allVars = { ...vars, platformName, year: new Date().getFullYear() };
+  const subjectTemplate = settings?.upgradeApprovalSubject || "Your CRM Workspace Plan Has Been Upgraded — New Credentials";
+  const subject = interpolate(subjectTemplate, allVars);
+  const bodyTemplate = settings?.upgradeApprovalBody || UPGRADE_APPROVAL_BODY;
+  const html = interpolate(bodyTemplate, allVars);
+
+  const transporter = await getTransporter();
+  const from = await getFromAddress(settings);
+  await transporter.sendMail({ from, to, subject, html });
+}
+
+export async function sendUpgradeRejectedEmail({ to, vars }) {
+  let settings = null;
+  try {
+    settings = await SuperAdminSettings.findOne();
+  } catch (_) {}
+  const platformName = settings?.platformName || "TZI CRM ";
+  const reasonText = vars.reason || "No reason specified.";
+  const allVars = { ...vars, reason: reasonText, platformName, year: new Date().getFullYear() };
+  const subjectTemplate = settings?.upgradeRejectedSubject || "CRM Workspace Upgrade Request Declined";
+  const subject = interpolate(subjectTemplate, allVars);
+  const bodyTemplate = settings?.upgradeRejectedBody || UPGRADE_REJECTED_BODY;
+  const html = interpolate(bodyTemplate, allVars);
+
+  const transporter = await getTransporter();
+  const from = await getFromAddress(settings);
+  await transporter.sendMail({ from, to, subject, html });
+}
 
 // ─── Plan Expiry Reminder ──────────────────────────────────────────────────
 
@@ -524,6 +618,8 @@ const EXPIRY_REMINDER_BODY = `<!DOCTYPE html>
 </body>
 </html>`;
 
+export { BEAUTIFUL_WELCOME_BODY, BEAUTIFUL_PLAN_BODY, UPGRADE_APPROVAL_BODY, UPGRADE_REJECTED_BODY, EXPIRY_REMINDER_BODY };
+
 /**
  * Send plan expiry reminder email to a tenant admin.
  * vars: { adminName, planName, endDate, daysRemaining, loginUrl, isUrgent }
@@ -539,14 +635,17 @@ export async function sendPlanExpiryReminderEmail({ to, vars }) {
   const platformName = settings?.platformName || "TZI CRM ";
   const isUrgent = !!vars.isUrgent;
 
-  const subject = isUrgent
-    ? `🚨 Your ${vars.planName} plan expires TOMORROW — Renew now`
-    : `⚠️ Your ${vars.planName} plan expires in ${vars.daysRemaining} days — Renew now`;
+  const defaultUrgencySubject = isUrgent
+    ? `🚨 Your {{planName}} plan expires TOMORROW — Renew now`
+    : `⚠️ Your {{planName}} plan expires in {{daysRemaining}} days — Renew now`;
 
+  const urgencySubject = settings?.expiryReminderSubject || defaultUrgencySubject;
+  
   const allVars = {
     ...vars,
     platformName,
     year: new Date().getFullYear(),
+    urgencySubject: defaultUrgencySubject, // For interpolation if they kept the default {{urgencySubject}}
     urgencyLabel:   isUrgent ? "Plan Expires Tomorrow!" : "Plan Expiring Soon",
     bodyMessage:    isUrgent
       ? `Your <strong>${vars.planName}</strong> plan expires <strong>tomorrow (${vars.endDate})</strong>. Renew immediately to avoid service interruption.`
@@ -560,7 +659,10 @@ export async function sendPlanExpiryReminderEmail({ to, vars }) {
     badgeColor:     isUrgent ? "#991b1b" : "#92400e",
   };
 
-  const html = interpolate(EXPIRY_REMINDER_BODY, allVars);
+  const subject = interpolate(urgencySubject, allVars);
+  const bodyTemplate = settings?.expiryReminderBody || EXPIRY_REMINDER_BODY;
+  const html = interpolate(bodyTemplate, allVars);
+  
   const transporter = await getTransporter();
   const from = await getFromAddress(settings);
   await transporter.sendMail({ from, to, subject, html });

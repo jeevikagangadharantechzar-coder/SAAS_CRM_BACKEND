@@ -80,6 +80,12 @@ export const updateSettings = async (req, res) => {
       "welcomeBody",
       "planSubject",
       "planBody",
+      "upgradeApprovalSubject",
+      "upgradeApprovalBody",
+      "upgradeRejectedSubject",
+      "upgradeRejectedBody",
+      "expiryReminderSubject",
+      "expiryReminderBody",
       "upgradeAlertEnabled",
       "upgradeAlertEmail",
     ];

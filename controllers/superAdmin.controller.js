@@ -102,7 +102,7 @@ export const verifyMfaLogin = async (req, res) => {
 
 export const getMe = async (req, res) => {
   try {
-    const admin = await SuperAdmin.findById(req.user.id);
+    const admin = req.superAdmin;
     if (!admin) return res.status(404).json({ error: "Admin not found" });
 
     res.json({

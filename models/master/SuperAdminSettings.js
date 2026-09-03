@@ -28,6 +28,18 @@ const superAdminSettingsSchema = new mongoose.Schema(
     planSubject: { type: String, default: "Your {{planName}} Plan on {{platformName}}" },
     planBody: { type: String, default: "" },
 
+    // Upgrade Approval (Credentials) email template
+    upgradeApprovalSubject: { type: String, default: "Your CRM Workspace Plan Has Been Upgraded — New Credentials" },
+    upgradeApprovalBody: { type: String, default: "" },
+
+    // Upgrade Rejected email template
+    upgradeRejectedSubject: { type: String, default: "CRM Workspace Upgrade Request Declined" },
+    upgradeRejectedBody: { type: String, default: "" },
+
+    // Expiry Reminder email template
+    expiryReminderSubject: { type: String, default: "{{urgencySubject}}" },
+    expiryReminderBody: { type: String, default: "" },
+
     // Upgrade alert
     upgradeAlertEnabled:  { type: Boolean, default: true },
     upgradeAlertEmail:    { type: String, default: "" },
