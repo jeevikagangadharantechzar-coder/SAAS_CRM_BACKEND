@@ -462,9 +462,9 @@ export const getDashboardStats = async (req, res) => {
 
 export const getSuperAdminDashboardData = async (req, res) => {
   try {
-    const [totalTenants, activeTenantsCount, tenants, requests] = await Promise.all([
-      Tenant.countDocuments(),
-      Tenant.countDocuments({ isActive: true }),
+    const [paidTenantsCount, trialTenantsCount, tenants, requests] = await Promise.all([
+      Tenant.countDocuments({ plan_status: { $ne: "trial" } }),
+      Tenant.countDocuments({ plan_status: "trial" }),
       Tenant.find().populate("plan_id").sort({ createdAt: -1 }),
       UpgradeRequest.find({ status: "pending" })
         .populate("tenant_id")
@@ -505,9 +505,9 @@ export const getSuperAdminDashboardData = async (req, res) => {
     res.json({
       success: true,
       stats: {
-        totalTenants,
-        activeTenants: activeTenantsCount,
-        inactiveTenants: totalTenants - activeTenantsCount,
+        totalTenants: paidTenantsCount + trialTenantsCount,
+        paidTenants: paidTenantsCount,
+        trialTenants: trialTenantsCount,
         totalUsers,
         totalRevenue,
       },
