@@ -145,6 +145,82 @@ export default {
     }
   },
 
+  sendDraft: async (req, res) => {
+    try {
+      const { Proposal } = getModels(req);
+      const proposal = await Proposal.findById(req.params.id);
+      if (!proposal) return res.status(404).json({ error: "Proposal not found" });
+      if (proposal.status !== "draft") return res.status(400).json({ error: "Only drafts can be sent via this endpoint." });
+
+      const recipients = proposal.email ? proposal.email.split(",").map(e => e.trim()).filter(Boolean) : [];
+      if (recipients.length === 0) return res.status(400).json({ error: "This draft has no recipient email address. Please edit it to add an email." });
+
+      const Settings = getSettings(req);
+      const settings = await Settings.findOne();
+      const companyName = settings?.companyName || req.tenant?.name || "CRM Software";
+
+      let logoBlock = "";
+      const emailAttachments = (proposal.attachments || []).map(file => ({ filename: file.name, path: file.path }));
+      const logoRelPath = settings?.invoiceLogo || settings?.logo;
+      if (logoRelPath) {
+        const logoPath = path.join(process.cwd(), logoRelPath);
+        if (fs.existsSync(logoPath)) {
+          const logoExt = path.extname(logoPath) || ".png";
+          emailAttachments.push({ filename: `logo${logoExt}`, path: logoPath, cid: "proposal-logo", contentDisposition: "inline" });
+          logoBlock = `<div style="text-align:center; margin-bottom:25px;"><img src="cid:proposal-logo" alt="${companyName}" style="max-height:80px; width:auto;" /></div>`;
+        }
+      }
+
+      const buildEmailHTML = (withLogo) => `
+        <div style="background-color:#f4f6f8; padding:40px 0;">
+          <div style="max-width:600px; margin:auto; background:white; padding:30px; border-radius:8px;">
+            ${withLogo ? logoBlock : ""}
+            <div style="font-size:14px; line-height:1.6; color:#333;">
+              ${proposal.content || ""}
+            </div>
+            <hr style="margin:30px 0; border:none; border-top:1px solid #eee;" />
+            <div style="text-align:center; font-size:12px; color:#888;">
+              © ${new Date().getFullYear()} ${companyName}. All rights reserved.
+            </div>
+          </div>
+        </div>
+      `;
+
+      const subject = `Proposal: ${proposal.title}`;
+
+      if (settings?.invoiceSenderEmail) {
+        const ccEmails = proposal.cc ? proposal.cc.split(",").map(e => e.trim()).filter(Boolean).join(",") : "";
+        const gmailAttachments = (proposal.attachments || []).map(file => ({
+          filename: file.name,
+          content: fs.existsSync(file.path) ? fs.readFileSync(file.path).toString("base64") : "",
+          mimetype: file.type,
+          size: file.size,
+        })).filter(a => a.content);
+        await sendEmailWithAttachments(recipients.join(","), subject, buildEmailHTML(false).replace(/\n\s*/g, ""), ccEmails, "", gmailAttachments, [], settings.invoiceSenderEmail);
+      } else {
+        const transporter = nodemailer.createTransport({ service: "gmail", host: "smtp.gmail.com", port: 587, secure: false, auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
+        await transporter.sendMail({ from: `"${companyName}" <${process.env.EMAIL_USER}>`, to: recipients.join(","), cc: proposal.cc || undefined, subject, html: buildEmailHTML(true), attachments: emailAttachments });
+      }
+
+      if (process.env.OWNER_EMAIL) {
+        const ownerTransporter = nodemailer.createTransport({ service: "gmail", host: "smtp.gmail.com", port: 587, secure: false, auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
+        await ownerTransporter.sendMail({ from: `"CRM Notification" <${process.env.EMAIL_USER}>`, to: process.env.OWNER_EMAIL, subject: `Proposal Sent: ${proposal.title}`, text: `A new proposal has been sent to ${recipients.join(",")}.` });
+      }
+
+      const statusHistoryEntry = { status: "sent", changedAt: new Date(), changedBy: req.user._id };
+      const updated = await Proposal.findByIdAndUpdate(
+        proposal._id,
+        { status: "sent", followUpDate: new Date(), lastUpdatedBy: req.user._id, $push: { statusHistory: statusHistoryEntry } },
+        { new: true }
+      );
+
+      res.json({ message: "Proposal sent successfully!", proposal: updated });
+    } catch (error) {
+      console.error("Send Draft Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
   updateFollowUp: async (req, res) => {
     const { id } = req.params;
     const { followUpDate, followUpComment } = req.body;

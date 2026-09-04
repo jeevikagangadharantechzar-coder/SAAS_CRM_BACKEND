@@ -23,6 +23,8 @@ router.get("/getall", indexControllers.proposalController.getAllProposals);
 router.get("/drafts", indexControllers.proposalController.getDraftProposals);
 // PUT update proposal status
 router.put("/updatestatus/:id", indexControllers.proposalController.updateStatus);
+// POST send an existing draft proposal
+router.post("/send-draft/:id", indexControllers.proposalController.sendDraft);
 // Put update proposal
 router.put("/update/:id", indexControllers.proposalController.updateProposal);
 // Delete propslal
