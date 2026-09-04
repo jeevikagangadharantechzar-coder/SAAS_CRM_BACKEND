@@ -200,7 +200,29 @@ const createUser = async (req, res) => {
     }
   } catch (err) {
     if (req.file) fs.unlinkSync(req.file.path);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+const dismissPlanUpdate = async (req, res) => {
+  try {
+    if (!req.tenant) {
+      return res.status(400).json({ success: false, message: "No active tenant context" });
+    }
+    
+    // Check if the user is an admin of the tenant
+    const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
+    const user = await User.findById(req.user.id).populate("role");
+    
+    if (user.role?.name?.toLowerCase() !== "admin") {
+      return res.status(403).json({ success: false, message: "Only admins can dismiss plan updates" });
+    }
+
+    await Tenant.findByIdAndUpdate(req.tenant._id, { plan_update_message: "" });
+    res.json({ success: true, message: "Plan update dismissed" });
+  } catch (err) {
+    console.error("dismissPlanUpdate error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
@@ -222,15 +244,19 @@ const getMe = async (req, res) => {
 
     let tenantLimit = null;
     let planFeatures = null;
+    let planUpdateMessage = "";
     if (req.tenant) {
       const tenant = await Tenant.findById(req.tenant._id).populate("plan_id");
-      if (tenant && tenant.plan_id) {
-        tenantLimit = {
-          plan_name: tenant.plan_id.plan_name,
-          max_users: tenant.plan_id.max_users_per_tenant,
-          plan_end_date: tenant.plan_end_date,
-        };
-        planFeatures = tenant.plan_id.features;
+      if (tenant) {
+        if (tenant.plan_id) {
+          tenantLimit = {
+            plan_name: tenant.plan_id.plan_name,
+            max_users: tenant.plan_id.max_users_per_tenant,
+            plan_end_date: tenant.plan_end_date,
+          };
+          planFeatures = tenant.plan_id.features;
+        }
+        planUpdateMessage = tenant.plan_update_message || "";
       }
     }
 
@@ -243,6 +269,7 @@ const getMe = async (req, res) => {
       tenantLimit,
       currency: user.currency || null,
       planFeatures,
+      planUpdateMessage,
       needsPrivacyPolicy: !user.privacyPolicyAcceptedAt,
       needsTerms: !user.termsAcceptedAt,
       isMfaEnabled: user.isMfaEnabled || false,
@@ -774,5 +801,6 @@ export default {
   listDeviceRequests,
   approveDeviceRequest,
   rejectDeviceRequest,
+  dismissPlanUpdate,
   verifyMfaLogin
 };

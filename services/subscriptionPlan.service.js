@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import SubscriptionPlan from "../models/master/SubscriptionPlan.model.js";
 import Tenant from "../models/master/Tenant.js";
+import UpgradeRequest from "../models/master/UpgradeRequest.js";
 
 const appError = (message, statusCode) => {
   const err = new Error(message);
@@ -88,6 +89,32 @@ export const updatePlan = async (id, data) => {
     runValidators: true,
   });
 
+  // Notify all active tenants using this plan about the update
+  let changes = [];
+  if (data.max_users_per_tenant !== undefined && data.max_users_per_tenant > existing.max_users_per_tenant) {
+    changes.push(`User limit increased to ${data.max_users_per_tenant}`);
+  }
+  if (data.features) {
+    const newFeatures = Object.keys(data.features).filter(
+      (k) => data.features[k] === true && existing.features?.[k] !== true
+    );
+    if (newFeatures.length > 0) {
+      changes.push(`New features added: ${newFeatures.map(f => f.replace(/_/g, ' ')).join(', ')}`);
+    }
+  }
+
+  let planUpdateMessage = "";
+  if (changes.length > 0) {
+    planUpdateMessage = `Great news! Your subscription plan (${plan.plan_name}) has been upgraded:\n\n• ${changes.join('\n• ')}`;
+  } else {
+    planUpdateMessage = `Your subscription plan (${plan.plan_name}) has been updated by the Super Admin. Enjoy the new capabilities!`;
+  }
+
+  await Tenant.updateMany(
+    { plan_id: id, plan_status: "active" },
+    { $set: { plan_update_message: planUpdateMessage } }
+  );
+
   return plan;
 };
 
@@ -96,7 +123,7 @@ export const deletePlan = async (id) => {
     throw appError("Invalid plan ID", 400);
   }
 
-  const existing = await SubscriptionPlan.findOne({ _id: id, is_deleted: false });
+  const existing = await SubscriptionPlan.findById(id);
   if (!existing) throw appError("Subscription plan not found", 404);
 
   const activeTenants = await Tenant.countDocuments({ plan_id: id, plan_status: "active" });
@@ -107,10 +134,12 @@ export const deletePlan = async (id) => {
     );
   }
 
-  existing.is_deleted = true;
-  await existing.save();
+  // Delete all pending upgrade requests for this plan
+  await UpgradeRequest.deleteMany({ plan_id: id, status: "pending" });
 
-  return { message: "Plan soft-deleted successfully" };
+  await SubscriptionPlan.findByIdAndDelete(id);
+
+  return { message: "Plan and related pending upgrade requests deleted successfully" };
 };
 
 export const getPublicPlans = async () => {

@@ -393,6 +393,9 @@ export const deleteTenant = async (req, res) => {
     // Delete Master Record
     await Tenant.findByIdAndDelete(req.params.id);
 
+    // Cleanup: Delete pending upgrade requests for this tenant
+    await UpgradeRequest.deleteMany({ tenant_id: req.params.id, status: "pending" });
+
     res.json({ success: true, message: "Tenant and database deleted successfully" });
   } catch (err) {
     console.error("Delete tenant error:", err);
@@ -678,7 +681,10 @@ export const createUpgradeRequest = async (req, res) => {
 
     const request = await UpgradeRequest.create({
       tenant_id: tenant._id,
+      tenant_name: tenant.name,
+      tenant_slug: tenant.slug,
       plan_id: planId,
+      plan_name: newPlan.plan_name,
       wanted_users: Number(wantedUsers),
       login_days: Number(loginDays),
       billing_cycle: billing_cycle || "",
@@ -738,6 +744,20 @@ export const approveUpgradeRequest = async (req, res) => {
 
     const tenant = request.tenant_id;
     const plan = request.plan_id;
+
+    if (!tenant) {
+      request.status = "rejected";
+      request.rejection_reason = "Auto-rejected: Tenant no longer exists";
+      await request.save();
+      return res.status(400).json({ success: false, error: "The tenant associated with this request has been deleted." });
+    }
+
+    if (!plan) {
+      request.status = "rejected";
+      request.rejection_reason = "Auto-rejected: Plan no longer exists";
+      await request.save();
+      return res.status(400).json({ success: false, error: "The plan associated with this request has been deleted." });
+    }
 
     // 1. Generate auto password
     const plainPassword = generatePassword();
@@ -827,6 +847,13 @@ export const rejectUpgradeRequest = async (req, res) => {
 
     const tenant = request.tenant_id;
     const plan = request.plan_id;
+
+    if (!tenant || !plan) {
+      request.status = "rejected";
+      request.rejection_reason = reason || "Auto-rejected: Tenant or Plan no longer exists";
+      await request.save();
+      return res.json({ success: true, message: "Upgrade request rejected (associated records were already deleted)." });
+    }
 
     // Update request status and rejection reason
     request.status = "rejected";

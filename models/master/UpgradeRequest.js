@@ -4,7 +4,10 @@ import { masterConn } from "../../config/masterDB.js";
 const upgradeRequestSchema = new mongoose.Schema(
   {
     tenant_id: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true },
+    tenant_name: { type: String, default: "" },
+    tenant_slug: { type: String, default: "" },
     plan_id: { type: mongoose.Schema.Types.ObjectId, ref: "SubscriptionPlan", required: true },
+    plan_name: { type: String, default: "" },
     wanted_users:  { type: Number, required: true },
     login_days:    { type: Number, required: true },
     billing_cycle: { type: String, default: "" },
