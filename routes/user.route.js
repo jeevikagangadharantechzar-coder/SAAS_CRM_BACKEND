@@ -42,6 +42,7 @@ router.patch("/device-requests/:id/approve", protect, adminCreateOnly, checkPlan
 router.patch("/device-requests/:id/reject", protect, adminCreateOnly, checkPlanFeature("device_login_requests"), indexControllers.usersController.rejectDeviceRequest);
 
 router.get("/me", protect, indexControllers.usersController.getMe);
+router.post("/dismiss-plan-update", protect, indexControllers.usersController.dismissPlanUpdate);
 
 // Full user list — used by the Users & Roles management page, but also by
 // many unrelated features (Assign To dropdowns, Trash/Tasks/Targets/Proposal

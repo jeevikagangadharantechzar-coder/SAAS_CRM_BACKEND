@@ -40,6 +40,9 @@ const tenantSchema = new mongoose.Schema(
       oneDaySent:   { type: Boolean, default: false },
     },
     expiredNotifSent: { type: Boolean, default: false },
+
+    // Plan update announcement
+    plan_update_message: { type: String, default: "" },
   },
   { timestamps: true }
 );
