@@ -49,7 +49,7 @@ export async function resolveTenant(req, res, next) {
     }
 
     if (!tenant.isActive) {
-      return res.status(403).json({ success: false, message: "Your account has been suspended contact administrator", error: "Your account has been suspended contact administrator" });
+      return res.status(403).json({ success: false, message: "Your account has been suspended contact Superadmin", error: "Your account has been suspended contact administrator" });
     }
 
     req.tenant    = tenant;

@@ -939,7 +939,7 @@ export const getTenantBySlugPublic = async (req, res) => {
     if (!tenant) return res.status(404).json({ success: false, error: "Workspace not found" });
 
     if (!tenant.isActive) {
-      return res.status(403).json({ success: false, message: "Your account has been suspended contact administrator" });
+      return res.status(403).json({ success: false, message: "Your account has been suspended contact SuperAdmin" });
     }
 
     res.json({
