@@ -59,7 +59,6 @@ const planTierSchema = new mongoose.Schema(
     billing_cycle:   { type: String, enum: ["monthly", "half_yearly", "yearly"], required: true },
     price:           { type: Number, default: 0, min: 0 },
     duration_months: { type: Number, default: 1, min: 1 },
-    grace_days:      { type: Number, default: 0, min: 0 },
   },
   { _id: false }
 );

@@ -232,13 +232,9 @@ export const getFreeTrialAnalysis = async (req, res) => {
         tenant: tenant,
       };
 
-      if (
-        tenant.plan_status === "active" ||
-        tenant.plan_status === "grace" ||
-        tenant.plan_status === "cancelled"
-      ) {
+      if (tenant.plan_status === "active" || tenant.plan_status === "cancelled") {
         converted.push(mappedRecord);
-      } else if (tenant.plan_status === "expired") {
+      } else if (tenant.plan_status === "expired" || tenant.plan_status === "grace") {
         rejected.push(mappedRecord);
       } else if (tenant.plan_status === "trial") {
         // Fallback for if cron hasn't run but the trial is actually expired

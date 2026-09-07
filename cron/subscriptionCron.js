@@ -67,22 +67,15 @@ cron.schedule("0 * * * *", async () => {
 
     const now = new Date();
 
-    // 1. Active tenants whose plan_end_date has passed → move to grace or expire
+    // 1. Active or Trial tenants whose plan_end_date has passed → move to grace or expire
     const activeExpired = await Tenant.find({
-      plan_status: "active",
+      plan_status: { $in: ["active", "trial"] },
       plan_end_date: { $ne: null, $lt: now },
     }).populate("plan_id");
 
     for (const tenant of activeExpired) {
       try {
-        // Find grace_days for this tenant's billing cycle
-        let graceDays = 0;
-        if (tenant.plan_id?.tiers?.length && tenant.plan_billing_cycle) {
-          const tier = tenant.plan_id.tiers.find(
-            (t) => t.billing_cycle === tenant.plan_billing_cycle
-          );
-          graceDays = tier?.grace_days ?? 0;
-        }
+        let graceDays = tenant.plan_status === "trial" ? 14 : 30;
 
         if (graceDays > 0) {
           tenant.plan_status = "grace";
@@ -95,7 +88,7 @@ cron.schedule("0 * * * *", async () => {
           await tenant.save();
         }
       } catch (err) {
-        console.error(`[Cron] Active→grace/expired failed for ${tenant.slug}:`, err.message);
+        console.error(`[Cron] Active/Trial→grace/expired failed for ${tenant.slug}:`, err.message);
       }
     }
 
@@ -107,13 +100,8 @@ cron.schedule("0 * * * *", async () => {
 
     for (const tenant of graceExpired) {
       try {
-        let graceDays = 0;
-        if (tenant.plan_id?.tiers?.length && tenant.plan_billing_cycle) {
-          const tier = tenant.plan_id.tiers.find(
-            (t) => t.billing_cycle === tenant.plan_billing_cycle
-          );
-          graceDays = tier?.grace_days ?? 0;
-        }
+        // If they don't have a billing cycle, they were a trial tenant (14 days). Otherwise paid (30 days).
+        let graceDays = !tenant.plan_billing_cycle ? 14 : 30;
 
         const graceEnd = new Date(tenant.plan_end_date);
         graceEnd.setDate(graceEnd.getDate() + graceDays);
