@@ -37,8 +37,8 @@ import {
   listFreeTrialSignups,
   deleteFreeTrialSignup,
   getFreeTrialSignupDetails,
-  getFreeTrialAnalysis
 } from "../controllers/freeTrial.controller.js";
+import { getFreeTrialAnalysis } from "../controllers/freeTrialAnalysis.controller.js";
 import { runFreeTrialCron } from "../cron/freeTrialCron.js";
 import { getTenantActivityLogs } from "../controllers/tenantActivityLog.controller.js";
 
