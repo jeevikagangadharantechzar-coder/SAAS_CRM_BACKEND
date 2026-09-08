@@ -257,6 +257,7 @@ export default {
             { phoneNumber: { $regex: search, $options: "i" } },
             { companyName: { $regex: search, $options: "i" } },
             { source:      { $regex: search, $options: "i" } },
+            { country:     { $regex: search, $options: "i" } },
           ],
         });
       }
@@ -437,6 +438,7 @@ const leads = await leadQuery;
           { phoneNumber:     { $regex: search, $options: "i" } },
           { companyName:     { $regex: search, $options: "i" } },
           { rejectionReason: { $regex: search, $options: "i" } },
+          { country:         { $regex: search, $options: "i" } },
         ];
       }
       if (source && source !== "") query.source = source;
