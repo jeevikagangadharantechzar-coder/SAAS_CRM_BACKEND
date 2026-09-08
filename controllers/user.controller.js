@@ -786,6 +786,93 @@ const rejectDeviceRequest = async (req, res) => {
   }
 };
 
+
+export const exportExpiredData = async (req, res) => {
+  try {
+    const { email, password, tenantSlug, dataType } = req.body;
+
+    if (!email || !password || !tenantSlug || !dataType) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    if (!["leads", "deals", "invoices"].includes(dataType)) {
+      return res.status(400).json({ success: false, message: "Invalid data type requested" });
+    }
+
+    // Resolve tenant
+    const tenant = await Tenant.findOne({ slug: tenantSlug.toLowerCase().trim() });
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: "Workspace not found" });
+    }
+
+    const tenantDB = await getTenantDB(tenant.dbName);
+    const { User, Lead, Deal, Invoice } = getTenantModels(tenantDB);
+
+    // Verify User credentials
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).select("+password");
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    const isMatch = await userService.matchPassword(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    // Fetch the data
+    let rawData = [];
+    if (dataType === "leads") {
+      rawData = await Lead.find().populate("assignTo", "firstName lastName email").lean();
+    } else if (dataType === "deals") {
+      rawData = await Deal.find().populate("assignedTo", "firstName lastName email").lean();
+    } else if (dataType === "invoices") {
+      rawData = await Invoice.find().populate("assignTo", "firstName lastName email").populate("items.deal", "dealName").lean();
+    }
+
+    return res.status(200).json({ success: true, data: rawData });
+
+  } catch (error) {
+    console.error("Export expired data error:", error);
+    res.status(500).json({ success: false, message: "Server error during export" });
+  }
+};
+
+export const verifyExportCredentials = async (req, res) => {
+  try {
+    const { email, password, tenantSlug } = req.body;
+
+    if (!email || !password || !tenantSlug) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    // Resolve tenant
+    const tenant = await Tenant.findOne({ slug: tenantSlug.toLowerCase().trim() });
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: "Workspace not found" });
+    }
+
+    const tenantDB = await getTenantDB(tenant.dbName);
+    const { User } = getTenantModels(tenantDB);
+
+    // Verify User credentials
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).select("+password");
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    const isMatch = await userService.matchPassword(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    return res.status(200).json({ success: true, message: "Credentials verified" });
+
+  } catch (error) {
+    console.error("Verify export credentials error:", error);
+    res.status(500).json({ success: false, message: "Server error during verification" });
+  }
+};
+
 export default {
   createUser,
   getUsers,
@@ -802,5 +889,7 @@ export default {
   approveDeviceRequest,
   rejectDeviceRequest,
   dismissPlanUpdate,
-  verifyMfaLogin
+  verifyMfaLogin,
+  exportExpiredData,
+  verifyExportCredentials
 };
