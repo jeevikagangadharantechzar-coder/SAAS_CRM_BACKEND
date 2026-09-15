@@ -809,9 +809,16 @@ export const exportExpiredData = async (req, res) => {
     const { User, Lead, Deal, Invoice } = getTenantModels(tenantDB);
 
     // Verify User credentials
-    const user = await User.findOne({ email: email.toLowerCase().trim() }).select("+password");
+    const user = await User.findOne({ email: email.toLowerCase().trim() })
+      .populate("role")
+      .select("+password");
+      
     if (!user) {
       return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    if (!user.role || user.role.name !== "Admin") {
+      return res.status(403).json({ success: false, message: "Only Admin users can export data" });
     }
 
     const isMatch = await userService.matchPassword(password, user.password);
@@ -855,9 +862,16 @@ export const verifyExportCredentials = async (req, res) => {
     const { User } = getTenantModels(tenantDB);
 
     // Verify User credentials
-    const user = await User.findOne({ email: email.toLowerCase().trim() }).select("+password");
+    const user = await User.findOne({ email: email.toLowerCase().trim() })
+      .populate("role")
+      .select("+password");
+      
     if (!user) {
       return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    if (!user.role || user.role.name !== "Admin") {
+      return res.status(403).json({ success: false, message: "Only Admin users can verify credentials" });
     }
 
     const isMatch = await userService.matchPassword(password, user.password);
