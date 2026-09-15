@@ -23,6 +23,10 @@ const router = express.Router();
 router.post("/login", indexControllers.usersController.loginUser);
 router.post("/login/verify-mfa", indexControllers.usersController.verifyMfaLogin);
 
+// Export data during expiration (Public route, verified by password)
+router.post("/export-expired", indexControllers.usersController.exportExpiredData);
+router.post("/verify-export-credentials", indexControllers.usersController.verifyExportCredentials);
+
 // MFA Routes
 router.post("/mfa/setup", protect, generateUserMfa);
 router.post("/mfa/enable", protect, verifyAndEnableUserMfa);
