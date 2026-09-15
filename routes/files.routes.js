@@ -14,10 +14,18 @@ router.get("/download", protect, async (req, res) => {
       return res.status(400).json({ message: "File path is required" });
     }
 
-    // Security check: Ensure the file path is within your uploads directory
-    const fullPath = path.join(process.cwd(), filePath);
-    const uploadsDir = path.join(process.cwd(), 'uploads');
+    // Extract relative path from "uploads" onwards if an absolute path is provided
+    let relativePath = filePath;
+    const uploadsIndex = filePath.indexOf('uploads');
+    if (uploadsIndex !== -1) {
+      relativePath = filePath.substring(uploadsIndex);
+    }
+
+    // Security check: Ensure the file path is within your uploads directory safely
+    const fullPath = path.resolve(process.cwd(), relativePath);
+    const uploadsDir = path.resolve(process.cwd(), 'uploads');
     
+    // In Windows, paths might use backslashes, so standardizing helps
     if (!fullPath.startsWith(uploadsDir)) {
       return res.status(403).json({ message: "Access denied" });
     }
@@ -47,9 +55,16 @@ router.get("/preview", protect, async (req, res) => {
       return res.status(400).json({ message: "File path is required" });
     }
 
-    // Security check: Ensure the file path is within your uploads directory
-    const fullPath = path.join(process.cwd(), filePath);
-    const uploadsDir = path.join(process.cwd(), 'uploads');
+    // Extract relative path from "uploads" onwards if an absolute path is provided
+    let relativePath = filePath;
+    const uploadsIndex = filePath.indexOf('uploads');
+    if (uploadsIndex !== -1) {
+      relativePath = filePath.substring(uploadsIndex);
+    }
+
+    // Security check: Ensure the file path is within your uploads directory safely
+    const fullPath = path.resolve(process.cwd(), relativePath);
+    const uploadsDir = path.resolve(process.cwd(), 'uploads');
     
     if (!fullPath.startsWith(uploadsDir)) {
       return res.status(403).json({ message: "Access denied" });
