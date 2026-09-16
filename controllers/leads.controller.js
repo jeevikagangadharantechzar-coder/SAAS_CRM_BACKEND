@@ -9,7 +9,7 @@ import {
   sendNotification,
   sendNotificationToAdmins,
 } from "../services/notificationService.js";
-import { notifyLeadOrDealEdited, notifyLeadStatusChangedByAdmin, notifyLeadConvertedByAdmin } from "../services/taskNotificationService.js";
+import { notifyLeadOrDealEdited, notifyLeadStatusChangedByAdmin, notifyLeadConvertedByAdmin, notifyLeadOrDealAssigned } from "../services/taskNotificationService.js";
 import { handleReassignmentOptions } from "../services/taskReassignmentService.js";
 
 // Legacy fallbacks
@@ -698,6 +698,11 @@ const leads = await leadQuery;
         .populate("assignTo", "firstName lastName email profileImage")
         .populate("notesUpdatedBy", "firstName lastName")
         .populate("notesList.createdBy", "firstName lastName");
+
+      if (patch.assignTo && String(patch.assignTo) !== oldAssignedToId) {
+        notifyLeadOrDealAssigned(getModels(req), { itemType: "lead", item: updated, actorId: req.user._id, isReassignment: !!oldAssignedToId })
+          .catch((err) => console.error("notifyLeadOrDealAssigned error:", err));
+      }
 
       if (followUpChanged) {
         await deleteAllNotificationsByEntity("lead", req.params.id, tDB);

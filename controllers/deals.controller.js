@@ -13,6 +13,7 @@ import {
 import {
   notifyLeadConvertedByAdmin,
   notifyLeadOrDealEdited,
+  notifyLeadOrDealAssigned,
   notifyDealClosedWonAndArchiveTask,
   notifyDealStageChangedByAdmin,
 } from "../services/taskNotificationService.js";
@@ -552,6 +553,11 @@ export default {
         .populate("assignedTo", "firstName lastName email")
         .populate("notesUpdatedBy", "firstName lastName")
         .populate("followUpHistory.changedBy", "firstName lastName email");
+
+      if (assignTo && String(assignTo) !== oldAssignedToId) {
+        notifyLeadOrDealAssigned(getModels(req), { itemType: "deal", item: updatedDeal, actorId: req.user._id, isReassignment: !!oldAssignedToId })
+          .catch(err => console.error("notifyLeadOrDealAssigned error:", err));
+      }
 
       if (followUpChanged) {
         await deleteAllNotificationsByEntity("deal", req.params.id, tDB);

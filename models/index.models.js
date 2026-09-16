@@ -24,7 +24,6 @@ import DealFollowup from "./dealFollowup.model.js";
 import EmailTemplate from "./emailTemplate.model.js";
 import LostDeal from "./lostDeal.model.js";
 import Settings from "./settings.model.js";
-import Streak from "./streak.model.js";
 import GmailToken from "./GmailToken.js";
 import WhatsAppMessage from "./WhatsAppMessage.js";
 import Whatsappconversation from "./Whatsappconversation.model.js"

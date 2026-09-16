@@ -389,6 +389,37 @@ export async function notifyLeadOrDealEdited(models, { itemType, item, actorId, 
   });
 }
 
+// Called whenever a lead/deal's assignTo changes to a DIFFERENT person after
+// creation (creation itself already notifies via each controller's own
+// "New Lead/Deal Assigned" block) — covers both an Admin reassigning it and a
+// sales person handing it off to a teammate. Only the new assignee is
+// notified; the person it was taken from isn't (not asked for, and would
+// double up with whatever reassignment-options flow already ran).
+export async function notifyLeadOrDealAssigned(models, { itemType, item, actorId, isReassignment = false }) {
+  const { Notification, User } = models;
+  const assigneeId = item.assignTo || item.assignedTo
+    ? String((item.assignTo || item.assignedTo)._id || item.assignTo || item.assignedTo)
+    : null;
+  if (!Notification || !assigneeId) return;
+  if (String(actorId) === assigneeId) return; // assigned it to themselves — nothing to tell them
+
+  const actor = await User.findById(actorId).select("firstName lastName");
+  const actorName = actor ? `${actor.firstName || ""} ${actor.lastName || ""}`.trim() : "Someone";
+
+  const itemName = itemType === "lead" ? item.leadName : (item.dealName || item.dealTitle);
+  const label = itemType === "lead" ? "Lead" : "Deal";
+
+  await createNotification(Notification, {
+    userId: assigneeId,
+    title: isReassignment ? `${label} Reassigned to You` : `New ${label} Assigned to You`,
+    message: isReassignment
+      ? `${actorName} reassigned the ${label.toLowerCase()} "${itemName}" to you.`
+      : `${actorName} assigned you a new ${label.toLowerCase()}: "${itemName}".`,
+    type: "task",
+    meta: { leadOrDealAssigned: true, itemType, itemId: String(item._id), itemName, actorName, isReassignment },
+  });
+}
+
 // Called when a deal moves to "Closed Won" (from deals.controller's updateStage
 // and updateDeal). The task and its full progress card/journey stay visible
 // on the assignee's own My Tasks list regardless of who closed the deal —
