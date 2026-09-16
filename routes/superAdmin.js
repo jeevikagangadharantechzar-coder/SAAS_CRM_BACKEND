@@ -37,6 +37,7 @@ import {
   listFreeTrialSignups,
   deleteFreeTrialSignup,
   getFreeTrialSignupDetails,
+  getFreeTrialFilterOptions,
 } from "../controllers/freeTrial.controller.js";
 import { getFreeTrialAnalysis } from "../controllers/freeTrialAnalysis.controller.js";
 import { runFreeTrialCron } from "../cron/freeTrialCron.js";
@@ -94,6 +95,7 @@ router.post("/api/settings/favicon", superAdminAuth, requireSuperAdminPermission
 
 // Free trial signup log
 router.get("/api/free-trials/analysis", superAdminAuth, requireSuperAdminPermission("analysis"), getFreeTrialAnalysis);
+router.get("/api/free-trials/filter-options", superAdminAuth, requireSuperAdminPermission("free_trials"), getFreeTrialFilterOptions);
 router.get("/api/free-trials", superAdminAuth, requireSuperAdminPermission("free_trials"), listFreeTrialSignups);
 router.get("/api/free-trials/:id", superAdminAuth, requireSuperAdminPermission("free_trials"), getFreeTrialSignupDetails);
 router.delete("/api/free-trials/:id", superAdminAuth, requireSuperAdminPermission("free_trials"), deleteFreeTrialSignup);
