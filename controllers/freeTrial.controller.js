@@ -149,9 +149,27 @@ function trialWelcomeEmailHtml({ name, email, password, businessName, loginUrl, 
 </html>`;
 }
 
+export const getFreeTrialFilterOptions = async (req, res) => {
+  try {
+    const [industries, packages] = await Promise.all([
+      FreeTrialSignup.distinct("industry", { industry: { $nin: [null, ""] } }),
+      FreeTrialSignup.distinct("interestedPackage", { interestedPackage: { $nin: [null, ""] } }),
+    ]);
+
+    res.json({
+      success: true,
+      industries: industries.sort((a, b) => a.localeCompare(b)),
+      packages: packages.sort((a, b) => a.localeCompare(b)),
+    });
+  } catch (err) {
+    console.error("Get free trial filter options error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+};
+
 export const listFreeTrialSignups = async (req, res) => {
   try {
-    const { search = "", period = "", startDate, endDate, page = 1, limit = 10 } = req.query;
+    const { search = "", period = "", startDate, endDate, industry = "", package: packageName = "", page = 1, limit = 10 } = req.query;
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
 
@@ -161,6 +179,9 @@ export const listFreeTrialSignups = async (req, res) => {
       const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       filter.$or = [{ name: regex }, { email: regex }, { businessName: regex }, { slug: regex }];
     }
+
+    if (industry && industry.trim()) filter.industry = industry.trim();
+    if (packageName && packageName.trim()) filter.interestedPackage = packageName.trim();
 
     const now = new Date();
     if (period === "weekly") {
