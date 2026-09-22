@@ -149,17 +149,29 @@ function trialWelcomeEmailHtml({ name, email, password, businessName, loginUrl, 
 </html>`;
 }
 
+const TRIAL_STATUS_OPTIONS = [
+  { value: "trial", label: "On Trial" },
+  { value: "trial_expired", label: "Trial Expired" },
+  { value: "grace", label: "Grace Period" },
+  { value: "expired", label: "Expired" },
+  { value: "converted", label: "Converted" },
+  { value: "inactive", label: "Inactive" },
+];
+
 export const getFreeTrialFilterOptions = async (req, res) => {
   try {
-    const [industries, packages] = await Promise.all([
+    const [industries, packages, countries] = await Promise.all([
       FreeTrialSignup.distinct("industry", { industry: { $nin: [null, ""] } }),
       FreeTrialSignup.distinct("interestedPackage", { interestedPackage: { $nin: [null, ""] } }),
+      FreeTrialSignup.distinct("country", { country: { $nin: [null, ""] } }),
     ]);
 
     res.json({
       success: true,
       industries: industries.sort((a, b) => a.localeCompare(b)),
       packages: packages.sort((a, b) => a.localeCompare(b)),
+      countries: countries.sort((a, b) => a.localeCompare(b)),
+      trialStatuses: TRIAL_STATUS_OPTIONS,
     });
   } catch (err) {
     console.error("Get free trial filter options error:", err);
@@ -169,39 +181,133 @@ export const getFreeTrialFilterOptions = async (req, res) => {
 
 export const listFreeTrialSignups = async (req, res) => {
   try {
-    const { search = "", period = "", startDate, endDate, industry = "", package: packageName = "", page = 1, limit = 10 } = req.query;
+    const {
+      search = "",
+      period = "",
+      startDate,
+      endDate,
+      industry = "",
+      package: packageName = "",
+      country = "",
+      trialStatus = "",
+      page = 1,
+      limit = 10,
+    } = req.query;
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
 
-    const filter = {};
+    const match = {};
 
     if (search && search.trim()) {
       const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      filter.$or = [{ name: regex }, { email: regex }, { businessName: regex }, { slug: regex }];
+      match.$or = [{ name: regex }, { email: regex }, { businessName: regex }, { slug: regex }];
     }
 
-    if (industry && industry.trim()) filter.industry = industry.trim();
-    if (packageName && packageName.trim()) filter.interestedPackage = packageName.trim();
+    if (industry && industry.trim()) match.industry = industry.trim();
+    if (packageName && packageName.trim()) match.interestedPackage = packageName.trim();
+    if (country && country.trim()) match.country = country.trim();
 
     const now = new Date();
     if (period === "weekly") {
-      filter.createdAt = { $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) };
+      match.createdAt = { $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) };
     } else if (period === "monthly") {
-      filter.createdAt = { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) };
+      match.createdAt = { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) };
     } else if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(`${startDate}T00:00:00.000Z`);
-      if (endDate) filter.createdAt.$lte = new Date(`${endDate}T23:59:59.999Z`);
+      match.createdAt = {};
+      if (startDate) match.createdAt.$gte = new Date(`${startDate}T00:00:00.000Z`);
+      if (endDate) match.createdAt.$lte = new Date(`${endDate}T23:59:59.999Z`);
     }
 
-    const [total, signups] = await Promise.all([
-      FreeTrialSignup.countDocuments(filter),
-      FreeTrialSignup.find(filter)
-        .populate("tenant", "isActive plan_status plan_end_date slug")
-        .sort({ createdAt: -1 })
-        .skip((pageNum - 1) * limitNum)
-        .limit(limitNum),
-    ]);
+    // No trial-status filter: the simple populate + skip/limit query is enough.
+    if (!trialStatus || !trialStatus.trim()) {
+      const [total, signups] = await Promise.all([
+        FreeTrialSignup.countDocuments(match),
+        FreeTrialSignup.find(match)
+          .populate("tenant", "isActive plan_status plan_end_date slug")
+          .sort({ createdAt: -1 })
+          .skip((pageNum - 1) * limitNum)
+          .limit(limitNum),
+      ]);
+
+      return res.json({
+        success: true,
+        data: signups,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          totalPages: Math.max(Math.ceil(total / limitNum), 1),
+        },
+      });
+    }
+
+    // Trial status is derived from the linked tenant's live plan state (see
+    // TrialStatusBadge on the frontend), so filtering by it needs the tenant
+    // joined and the status computed before pagination can happen.
+    const pipeline = [
+      { $match: match },
+      {
+        $lookup: {
+          from: Tenant.collection.name,
+          localField: "tenant",
+          foreignField: "_id",
+          as: "tenantDoc",
+        },
+      },
+      { $unwind: { path: "$tenantDoc", preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          computedTrialStatus: {
+            $switch: {
+              branches: [
+                { case: { $eq: ["$tenantDoc", null] }, then: "unknown" },
+                { case: { $eq: ["$tenantDoc.isActive", false] }, then: "inactive" },
+                { case: { $eq: ["$tenantDoc.plan_status", "expired"] }, then: "expired" },
+                { case: { $eq: ["$tenantDoc.plan_status", "grace"] }, then: "grace" },
+                {
+                  case: {
+                    $and: [
+                      { $eq: ["$tenantDoc.plan_status", "trial"] },
+                      { $ne: ["$tenantDoc.plan_end_date", null] },
+                      { $lt: ["$tenantDoc.plan_end_date", now] },
+                    ],
+                  },
+                  then: "trial_expired",
+                },
+                { case: { $eq: ["$tenantDoc.plan_status", "trial"] }, then: "trial" },
+              ],
+              default: "converted",
+            },
+          },
+        },
+      },
+      { $match: { computedTrialStatus: trialStatus.trim() } },
+      {
+        $facet: {
+          data: [{ $sort: { createdAt: -1 } }, { $skip: (pageNum - 1) * limitNum }, { $limit: limitNum }],
+          totalCount: [{ $count: "count" }],
+        },
+      },
+    ];
+
+    const result = await FreeTrialSignup.aggregate(pipeline);
+    const rawData = result[0]?.data || [];
+    const total = result[0]?.totalCount?.[0]?.count || 0;
+
+    const signups = rawData.map((doc) => ({
+      ...doc,
+      tenant: doc.tenantDoc
+        ? {
+            _id: doc.tenantDoc._id,
+            isActive: doc.tenantDoc.isActive,
+            plan_status: doc.tenantDoc.plan_status,
+            plan_end_date: doc.tenantDoc.plan_end_date,
+            slug: doc.tenantDoc.slug,
+          }
+        : null,
+      tenantDoc: undefined,
+      computedTrialStatus: undefined,
+    }));
 
     res.json({
       success: true,
