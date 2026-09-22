@@ -76,6 +76,15 @@ const invoiceSchema = new mongoose.Schema({
   billingAddress: { type: String, default: "" },
   clientTaxId:    { type: String, default: "" },
   poNumber:       { type: String, default: "" },
+  breakdown: [
+    {
+      label:    { type: String, required: true },
+      amount:   { type: Number, required: true },
+      hsnSac:   { type: String, default: "" },
+      quantity: { type: Number, default: null },
+    },
+  ],
+  quantityLabel: { type: String, enum: ["Hours", "Days", "Qty"], default: "Hours" },
   customFields: [
     {
       label: { type: String, required: true },

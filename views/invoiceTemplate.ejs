@@ -238,20 +238,44 @@
       <% } %>
 
       <!-- Table -->
+      <%
+        const breakdownRows = Array.isArray(invoice.breakdown) ? invoice.breakdown : [];
+        const hasBreakdown = breakdownRows.length > 0;
+        // HSN/SAC and hours/days columns only appear once at least one row uses them
+        const showHsn = breakdownRows.some(r => r.hsnSac && String(r.hsnSac).trim());
+        const showQty = breakdownRows.some(r => r.quantity !== null && r.quantity !== undefined && r.quantity !== "");
+        const qtyHeader = invoice.quantityLabel === "Days" ? "Total Days"
+          : invoice.quantityLabel === "Qty" ? "Qty"
+          : "Total Effort (Hours)";
+      %>
       <table>
         <thead>
           <tr>
-            <th>Description</th>
+            <th>Description<%= hasBreakdown && invoice.items[0]?.deal?.dealName ? " — " + invoice.items[0].deal.dealName : "" %></th>
+            <% if (showHsn) { %><th class="right">HSN/SAC Code</th><% } %>
+            <% if (showQty) { %><th class="right"><%= qtyHeader %></th><% } %>
             <th class="right">Amount (<%= invoice.currency || "USD" %>)</th>
           </tr>
         </thead>
         <tbody>
+          <% if (hasBreakdown) { %>
+          <%# Itemized split of the price — the deal name is shown in the table header above %>
+          <% breakdownRows.forEach(row => { %>
+          <tr>
+            <td><%= row.label %></td>
+            <% if (showHsn) { %><td class="right"><%= row.hsnSac || "" %></td><% } %>
+            <% if (showQty) { %><td class="right"><%= row.quantity !== null && row.quantity !== undefined && row.quantity !== "" ? Number(row.quantity) : "" %></td><% } %>
+            <td class="right"><%= Number(row.amount).toFixed(2) %></td>
+          </tr>
+          <% }) %>
+          <% } else { %>
           <% invoice.items.forEach(item => { %>
           <tr>
             <td><%= item.deal?.dealName || "" %></td>
             <td class="right"><%= Number(item.amount).toFixed(2) %></td>
           </tr>
           <% }) %>
+          <% } %>
         </tbody>
       </table>
 
@@ -295,23 +319,24 @@
             }
           %>
           <% if (invoice.tax > 0 && gstSplitReady) { %>
-            <% if (isIntraState) { %>
-              <% const half = invoice.taxType === "percentage" ? ` (${invoice.tax / 2}%)` : ""; %>
+            <%
+              // All three GST lines are always listed — the ones that don't apply
+              // to this invoice's state combination show "-" instead of an amount.
+              const isPct = invoice.taxType === "percentage";
+              const fullRate = isPct ? invoice.tax : 0;
+              const halfRate = isPct ? invoice.tax / 2 : 0;
+              const gstRows = [
+                { name: "IGST", rate: isIntraState ? 0 : fullRate, amount: isIntraState ? 0 : taxAmount },
+                { name: "CGST", rate: isIntraState ? halfRate : 0, amount: isIntraState ? taxAmount / 2 : 0 },
+                { name: "SGST", rate: isIntraState ? halfRate : 0, amount: isIntraState ? taxAmount / 2 : 0 },
+              ];
+            %>
+            <% gstRows.forEach(g => { %>
               <tr>
-                <td>CGST<%= half %></td>
-                <td><%= invoice.currency %> <%= (taxAmount / 2).toFixed(2) %></td>
+                <td><%= g.name %><%= isPct ? ` (${g.rate}%)` : "" %></td>
+                <td><%= g.amount > 0 ? invoice.currency + " " + g.amount.toFixed(2) : "-" %></td>
               </tr>
-              <tr>
-                <td>SGST<%= half %></td>
-                <td><%= invoice.currency %> <%= (taxAmount / 2).toFixed(2) %></td>
-              </tr>
-            <% } else { %>
-              <% const rate = invoice.taxType === "percentage" ? ` (${invoice.tax}%)` : ""; %>
-              <tr>
-                <td>IGST<%= rate %></td>
-                <td><%= invoice.currency %> <%= taxAmount.toFixed(2) %></td>
-              </tr>
-            <% } %>
+            <% }) %>
           <% } else if (invoice.tax > 0) { %>
           <tr>
             <td>Tax (<%= invoice.taxType === "percentage" ? invoice.tax + "%" : invoice.tax %>)</td>

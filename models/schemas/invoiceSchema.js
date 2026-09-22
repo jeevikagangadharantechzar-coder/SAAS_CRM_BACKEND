@@ -71,6 +71,22 @@ const invoiceSchema = new mongoose.Schema(
     // Client's state, used to decide CGST+SGST (same state as the seller) vs IGST (different state)
     clientState:    { type: String, default: "" },
 
+    // Optional itemized split of the price (e.g. Frontend 5000 / Backend 2000).
+    // Display-only — subtotal, tax and total are still calculated from the
+    // single price, so leaving this empty behaves exactly like before.
+    breakdown: [
+      {
+        label:    { type: String, required: true },
+        amount:   { type: Number, required: true },
+        // GST classification code for this line (HSN for goods, SAC for services)
+        hsnSac:   { type: String, default: "" },
+        // Hours/days/qty for this line — a label only, never multiplied into the amount
+        quantity: { type: Number, default: null },
+      },
+    ],
+    // What the quantity column means on this invoice (shown as its header)
+    quantityLabel: { type: String, enum: ["Hours", "Days", "Qty"], default: "Hours" },
+
     // Admin-defined ad-hoc fields, since invoice requirements vary by country/client
     // and can't all be anticipated up front
     customFields: [

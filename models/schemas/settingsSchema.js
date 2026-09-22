@@ -16,6 +16,8 @@ const settingsSchema = new mongoose.Schema(
     // Seller's own state — compared against an invoice's clientState to decide
     // CGST+SGST (same state) vs IGST (different state) for Indian GST invoices
     state:       { type: String, default: "" },
+    // Default HSN/SAC code prefilled on new invoice item rows (still editable per row)
+    defaultSacCode: { type: String, default: "" },
 
     bankDetails: {
       accountName:   { type: String, default: "" },
