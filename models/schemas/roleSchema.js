@@ -37,6 +37,13 @@ const permissionsSchema = new mongoose.Schema(
     won_analysis:        { type: Boolean, default: true },
     loss_analysis:       { type: Boolean, default: true },
     messages:            { type: Boolean, default: true },
+    assets:              { type: Boolean, default: false },
+    // Separate from `assets` on purpose — categories are shared, tenant-wide
+    // structure (every asset's field layout), not personal data like an
+    // individual asset is. A tenant decides per-role whether someone who can
+    // use assets can also define/rename/delete the categories everyone
+    // shares — not every tenant wants that tied to the literal Admin role.
+    assets_manage_categories: { type: Boolean, default: false },
   },
   { _id: false }
 );

@@ -31,6 +31,7 @@ import lostDealRoutes from "./lostDealRoutes.js";
 import settingsRoutes from "./settingsRoutes.js";
 import emailRoutes from "./email.routes.js";
 import leadLossRoutes from "./leadLossRoutes.js";
+import assetRoutes from "./asset.routes.js";
 
 import fileRoutes          from "./files.routes.js";
 import metaRoutes          from "./meta.routes.js";
@@ -99,6 +100,7 @@ router.use("/files",           fileRoutes);
 router.use("/meta",            metaRoutes);
 router.use("/linkedin",        linkedinRoutes);
 router.use("/tasks",           taskRoutes);
+router.use("/assets",          assetRoutes);
 router.use("/targets",         targetRoutes);
 router.use("/chat",            chatRoutes);
 router.use("/groups",          groupRoutes);

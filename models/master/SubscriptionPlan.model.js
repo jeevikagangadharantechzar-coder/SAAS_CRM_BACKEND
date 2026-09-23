@@ -50,6 +50,7 @@ const planFeaturesSchema = new mongoose.Schema(
     integration_sulekha:   { type: Boolean, default: true },
     live_tracking:          { type: Boolean, default: true },
     device_login_requests:  { type: Boolean, default: true },
+    assets:                 { type: Boolean, default: true },
   },
   { _id: false }
 );

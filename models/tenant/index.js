@@ -43,6 +43,8 @@ import instagramMessageSchema     from "../schemas/instagramMessageSchema.js";
 import instagramCommentSchema     from "../schemas/instagramCommentSchema.js";
 import facebookMessageSchema      from "../schemas/facebookMessageSchema.js";
 import facebookCommentSchema      from "../schemas/facebookCommentSchema.js";
+import assetCategorySchema        from "../schemas/assetCategorySchema.js";
+import assetSchema                from "../schemas/assetSchema.js";
 
 
 const MODEL_MAP = [
@@ -91,6 +93,8 @@ const MODEL_MAP = [
   ["InstagramComment",      instagramCommentSchema],
   ["FacebookMessage",       facebookMessageSchema],
   ["FacebookComment",       facebookCommentSchema],
+  ["AssetCategory",         assetCategorySchema],
+  ["Asset",                 assetSchema],
 ];
 
 /**
@@ -157,5 +161,7 @@ export function getTenantModels(conn) {
     InstagramComment:      conn.model("InstagramComment"),
     FacebookMessage:       conn.model("FacebookMessage"),
     FacebookComment:       conn.model("FacebookComment"),
+    AssetCategory:         conn.model("AssetCategory"),
+    Asset:                 conn.model("Asset"),
   };
 }
