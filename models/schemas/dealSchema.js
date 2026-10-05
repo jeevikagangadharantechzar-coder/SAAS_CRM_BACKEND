@@ -70,6 +70,7 @@ const dealSchema = new mongoose.Schema({
       size:       { type: Number, default: 0 },
       uploadedAt: { type: Date, default: Date.now },
       uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      isDeleted:  { type: Boolean, default: false },
     },
   ],
   images: [
@@ -80,6 +81,7 @@ const dealSchema = new mongoose.Schema({
       size:       { type: Number, default: 0 },
       uploadedAt: { type: Date, default: Date.now },
       uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      isDeleted:  { type: Boolean, default: false },
     },
   ],
   lossReason:    { type: String, default: "" },

@@ -64,6 +64,10 @@ import "./cron/taskCron.js";
 // Trash auto-purge cron (30-day retention for trashed leads/deals)
 import "./cron/trashCron.js";
 
+// Document Hub auto-purge cron (30-day retention for deleted documents)
+import "./cron/documentHubCron.js";
+
+
 // Socket
 import { initSocket } from "./realtime/socket.js";
 import { initSuperAdminSocket } from "./realtime/superAdminSocket.js";
@@ -210,6 +214,9 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/gmail", gmailRoutes);
 app.use("/api/google-auth", googleAuthRoutes);
 app.use("/api/zoom-auth", zoomAuthRoutes);
+
+// Document Hub moved to tenantRouter.js
+
 app.use("/api/deals", lostDealRoutes);
 app.use("/api/cltv", clientLTVRoutes);
 app.use("/api/calllogs", callLogRoutes);

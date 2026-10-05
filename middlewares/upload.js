@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 
 //  Ensure all upload directories exist on startup
-["uploads/deals", "uploads/leads", "uploads/users"].forEach((dir) => {
+["uploads/deals", "uploads/leads", "uploads/users", "uploads/documents"].forEach((dir) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -19,6 +19,8 @@ const storage = multer.diskStorage({
       uploadPath = "uploads/users";
     } else if (url.includes("/leads")) {
       uploadPath = "uploads/leads";
+    } else if (url.includes("/document-hub") || url.includes("/external")) {
+      uploadPath = "uploads/documents";
     }
 
     // Ensure folder exists (safety net)

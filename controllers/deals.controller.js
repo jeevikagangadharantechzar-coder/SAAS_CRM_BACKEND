@@ -76,9 +76,16 @@ const normalizeAttachment = (att) => {
     const cleanPath = att.replace(/^\/+/, "");
     return { name: cleanPath.split("/").pop() || "file", path: cleanPath, type: "application/octet-stream", size: 0, uploadedAt: new Date() };
   }
-  return { _id: att._id, name: att.name || att.path?.split("/").pop() || "file",
+  const norm = { _id: att._id, name: att.name || att.path?.split("/").pop() || "file",
     path: (att.path || "").replace(/^\/+/, ""), type: att.type || "application/octet-stream",
-    size: att.size || 0, uploadedAt: att.uploadedAt || new Date(), uploadedBy: att.uploadedBy || null };
+    size: att.size || 0, uploadedAt: att.uploadedAt || new Date(), uploadedBy: att.uploadedBy || null
+  };
+  
+  if (att.isDeleted) {
+    norm.isDeleted = true;
+  }
+  
+  return norm;
 };
 
 const formatDealValue = (dealValue, currency = "INR") => {
@@ -243,7 +250,17 @@ export default {
       // Trashed deals never show in the main list for anyone.
       query.trash = { $ne: true };
 
-      const { start, end } = req.query;
+      const { start, end, hasAttachments } = req.query;
+      
+      if (hasAttachments === "true") {
+        query.$and = query.$and || [];
+        query.$and.push({
+          $or: [
+            { attachments: { $elemMatch: { isDeleted: { $ne: true } } } },
+            { images: { $elemMatch: { isDeleted: { $ne: true } } } }
+          ]
+        });
+      }
       const dealTypes = (req.query.dealType || "").split(",").map((s) => s.trim()).filter(Boolean);
 
       if (start && end) {
@@ -434,7 +451,7 @@ export default {
 
       const oldFollowUpDate = deal.followUpDate;
       const newFollowUpDateParsed = followUpDate ? new Date(followUpDate) : null;
-      const followUpChanged = oldFollowUpDate?.toDateString() !== newFollowUpDateParsed?.toDateString();
+      const followUpChanged = followUpDate !== undefined && oldFollowUpDate?.toDateString() !== newFollowUpDateParsed?.toDateString();
 
       const updateFields = {
         ...(dealName    && { dealName }),

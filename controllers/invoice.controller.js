@@ -4,7 +4,6 @@ import ejs from "ejs";
 import fs from "fs";
 import puppeteer from "puppeteer";
 import nodemailer from "nodemailer";
-import axios from "axios";
 import { getExchangeRate } from "../services/currencyService.js";
 import { getTenantModels } from "../models/tenant/index.js";
 import { notifyUser } from "../realtime/socket.js";
@@ -12,8 +11,19 @@ import InvoiceLegacy from "../models/invoice.model.js";
 import SettingsLegacy from "../models/Settings.js";
 import { sendEmailWithAttachments } from "../utils/gmailService.js";
 import { sendNotification, sendNotificationToAdmins } from "../services/notificationService.js";
+import DocumentAssignmentLegacy from "../models/schemas/documentAssignmentSchema.js";
 
 const getInvoice = (req) => req.tenantDB ? getTenantModels(req.tenantDB).Invoice : InvoiceLegacy;
+
+// Move a deleted invoice's Document Hub assignments to the Recycle Bin so they don't stay active as orphans
+const softDeleteInvoiceAssignments = async (req, invoiceIds) => {
+  if (!req.tenantDB) return;
+  const { DocumentAssignment } = getTenantModels(req.tenantDB);
+  await DocumentAssignment.updateMany(
+    { sourceType: "Invoice", sourceId: { $in: invoiceIds }, deletedAt: null },
+    { $set: { deletedAt: new Date() } }
+  );
+};
 
 // Statuses where an invoice is considered (at least partly) paid and tracks amountPaid
 const PAID_FAMILY = ["paid", "partially_paid"];
@@ -263,8 +273,10 @@ export default {
   deleteInvoice: async (req, res) => {
     try {
       const Invoice = getInvoice(req);
-      const deleted = await Invoice.findByIdAndDelete(req.params.id);
-      if (!deleted) return res.status(404).json({ message: "Invoice not found" });
+      const invoice = await Invoice.findById(req.params.id);
+      if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+      await softDeleteInvoiceAssignments(req, [invoice._id]);
+      await Invoice.findByIdAndDelete(req.params.id);
       res.status(200).json({ message: "Invoice deleted successfully" });
     } catch (error) { res.status(500).json({ error: error.message }); }
   },
@@ -280,6 +292,7 @@ export default {
       if (roleName !== "admin") query.assignTo = req.user._id;
       const toDelete = await Invoice.find(query);
       if (toDelete.length === 0) return res.status(404).json({ success: false, message: "No invoices found to delete" });
+      await softDeleteInvoiceAssignments(req, toDelete.map((inv) => inv._id));
       const result = await Invoice.deleteMany(query);
       res.status(200).json({ success: true, message: `${result.deletedCount} invoice(s) deleted successfully`, deletedCount: result.deletedCount });
     } catch (error) {
@@ -318,7 +331,7 @@ export default {
       if (!fs.existsSync(templatePath)) return res.status(500).json({ error: "Template file not found" });
 
       const templateData = await ejs.renderFile(templatePath, { invoice, logoDataURI, settings }, { async: true });
-      const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox","--disable-setuid-sandbox","--disable-gpu","--disable-dev-shm-usage"] });
+      const browser = await getBrowser();
       const page = await browser.newPage();
       await page.setContent(templateData, { waitUntil: "networkidle0" });
       // Puppeteer's page.pdf() returns a plain Uint8Array, not a Node Buffer —
@@ -326,7 +339,7 @@ export default {
       // actually base64-encodes the bytes instead of silently ignoring the
       // encoding argument and stringifying as comma-separated decimal values.
       const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true }));
-      await browser.close();
+      await page.close();
 
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename=Invoice_${invoice.invoicenumber || invoice._id}.pdf`);
@@ -347,7 +360,7 @@ export default {
       const invoice = await Invoice.findById(id).populate("items.deal", "dealName email value stage companyName address country phoneNumber");
       if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
-      const clientEmails = invoice.items.map(i => i.deal?.email).filter(Boolean);
+      const clientEmails = (invoice.items || []).map(i => i.deal?.email).filter(Boolean);
       const targetEmails = toEmail ? [toEmail] : clientEmails;
       if (targetEmails.length === 0) return res.status(400).json({ error: "No client emails found in invoice deals" });
 
@@ -380,7 +393,7 @@ export default {
       await page.close();
 
       const subject = `Invoice #${invoice.invoicenumber || invoice._id}`;
-      const message = `Hello,\n\nPlease find attached your invoice #${invoice.invoicenumber || invoice._id}.\n\nIncluded deals:\n${invoice.items.map(i => `- ${i.deal.dealName}`).join("\n")}\n\nThank you!`;
+      const message = `Hello,\n\nPlease find attached your invoice #${invoice.invoicenumber || invoice._id}.\n\nIncluded deals:\n${(invoice.items || []).map(i => `- ${i.deal?.dealName || 'Unknown Deal'}`).join("\n")}\n\nThank you!`;
       const attachmentFilename = `Invoice_${invoice.invoicenumber || invoice._id}.pdf`;
 
       if (settings?.invoiceSenderEmail) {
@@ -418,6 +431,49 @@ export default {
 
       invoice.emailSentAt = new Date();
       await invoice.save();
+
+      // --- NEW LOGIC: Store sent invoice in Document Hub ---
+      const invoicesDir = path.join(process.cwd(), "uploads", "invoices");
+      if (!fs.existsSync(invoicesDir)) fs.mkdirSync(invoicesDir, { recursive: true });
+      const savedPdfPath = path.join(invoicesDir, attachmentFilename);
+      fs.writeFileSync(savedPdfPath, pdfBuffer);
+
+      const DocumentAssignment = req.tenantDB ? getTenantModels(req.tenantDB).DocumentAssignment : DocumentAssignmentLegacy;
+      const docPathRelative = `/uploads/invoices/${attachmentFilename}`;
+
+      // Check if assignment already exists (if they send it multiple times)
+      let assignment = await DocumentAssignment.findOne({ sourceId: invoice._id, sourceType: "Invoice" });
+      if (!assignment) {
+        assignment = new DocumentAssignment({
+          sourceType: "Invoice",
+          sourceId: invoice._id,
+          documentId: invoice._id,
+          sourceName: `Invoice #${invoice.invoicenumber || invoice._id}`,
+          documentName: attachmentFilename,
+          documentPath: docPathRelative,
+          documentType: "application/pdf",
+          documentSize: pdfBuffer.length,
+          assignedBy: req.user?._id || invoice.assignTo, // the person sending it
+          assignedTo: invoice.assignTo || req.user?._id, // Assign to the invoice owner
+          status: "Sent"
+        });
+      } else {
+        assignment.documentId = assignment.documentId || invoice._id;
+        assignment.status = "Sent";
+        assignment.documentSize = pdfBuffer.length;
+        assignment.documentPath = docPathRelative;
+        assignment.assignedTo = invoice.assignTo || req.user?._id;
+        assignment.assignedBy = req.user?._id || invoice.assignTo;
+      }
+      
+      assignment.activity.push({
+        action: "Sent",
+        note: `Invoice sent to client on ${new Date().toLocaleString()}`,
+        performedBy: req.user?._id || invoice.assignTo,
+        role: req.user?.role?.name || "System"
+      });
+      await assignment.save();
+      // -----------------------------------------------------
 
       res.status(200).json({ message: "Invoice email sent successfully!" });
     } catch (error) {

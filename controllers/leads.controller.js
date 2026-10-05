@@ -63,7 +63,8 @@ const normalizeFile = (f) => {
     const cleanPath = f.replace(/^\/+/, "");
     return { name: cleanPath.split("/").pop() || "file", path: cleanPath, type: "application/octet-stream", size: 0, uploadedAt: new Date() };
   }
-  return {
+  const norm = {
+    _id: f._id || undefined,
     name: f.name || f.path?.split("/").pop() || "file",
     path: f.path || "",
     type: f.type || "application/octet-stream",
@@ -71,6 +72,12 @@ const normalizeFile = (f) => {
     uploadedAt: f.uploadedAt || new Date(),
     uploadedBy: f.uploadedBy || null,
   };
+  
+  if (f.isDeleted) {
+    norm.isDeleted = true;
+  }
+  
+  return norm;
 };
 
 // One-time, lazy migration from the old JSON-stringified `notes` field into
@@ -231,7 +238,7 @@ export default {
   getLeads: async (req, res) => {
     try {
       const { Lead, User, Task, Target } = getModels(req);
-      const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus, start, end,overallLead="" } = req.query;
+      const { search = "", status, source, assignee, page = 1, limit = 10, followUpStatus, start, end, overallLead = "", hasAttachments } = req.query;
       const isOverallLead = overallLead === "all";
       const query = {};
       const andConditions = [];
@@ -240,6 +247,15 @@ export default {
 
       // Trashed leads never show in the main list for anyone.
       query.trash = { $ne: true };
+
+      if (hasAttachments === "true") {
+        andConditions.push({ 
+          $or: [
+            { attachments: { $elemMatch: { isDeleted: { $ne: true } } } },
+            { images: { $elemMatch: { isDeleted: { $ne: true } } } }
+          ]
+        });
+      }
 
       // General Start/End Date filter — plain createdAt range. Either side
       // can be omitted independently; omitting both leaves every record visible.
@@ -627,8 +643,10 @@ const leads = await leadQuery;
 
       const oldFollowUpDate = before.followUpDate;
       const newFollowUpDate = patch.followUpDate ? new Date(patch.followUpDate) : null;
-      const followUpChanged = !oldFollowUpDate || !newFollowUpDate ||
-        oldFollowUpDate.toISOString() !== newFollowUpDate.toISOString();
+      // Only a request that actually sends followUpDate can reschedule it (attachment/image/note-only
+      // updates must not fire follow-up notifications or bump the counter)
+      const followUpChanged = patch.followUpDate !== undefined && (!oldFollowUpDate || !newFollowUpDate ||
+        oldFollowUpDate.toISOString() !== newFollowUpDate.toISOString());
 
       if (followUpChanged) {
         patch.followUpUpdateCount = (before.followUpUpdateCount || 0) + 1;

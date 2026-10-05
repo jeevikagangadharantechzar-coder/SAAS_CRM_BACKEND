@@ -57,7 +57,7 @@ const leadSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["New", "Hot", "Warm", "Cold", "Junk", "Converted", "Rejected"],
+      enum: ["New", "Hot", "Warm", "Cold", "Junk", "Converted", "Rejected", "Follow-up"],
       default: "New",
     },
     lossStage: { type: String, enum: ["New", "Hot", "Warm", "Cold", null], default: null },
@@ -170,6 +170,7 @@ const leadSchema = new mongoose.Schema(
         size:       { type: Number },
         uploadedAt: { type: Date, default: Date.now },
         uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        isDeleted:  { type: Boolean, default: false },
       },
     ],
 
@@ -181,6 +182,7 @@ const leadSchema = new mongoose.Schema(
         size:       { type: Number, default: 0 },
         uploadedAt: { type: Date, default: Date.now },
         uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        isDeleted:  { type: Boolean, default: false },
       },
     ],
 

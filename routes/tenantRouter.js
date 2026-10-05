@@ -53,7 +53,7 @@ import supportRoutes            from "./support.routes.js";
 import whatsappCloudRoutes     from "./whatsappCloud.routes.js";
 import instagramRoutes         from "./instagram.routes.js";
 import facebookRoutes          from "./facebook.routes.js";
-
+import documentHubRoutes       from "./documentHub.routes.js";
 
 import publicRoutes from "./public.routes.js";
 import { protect } from "../middlewares/auth.middleware.js";
@@ -117,6 +117,6 @@ router.use("/support",            supportRoutes);
 router.use("/whatsapp",           whatsappCloudRoutes);
 router.use("/instagram",          instagramRoutes);
 router.use("/facebook",           facebookRoutes);
-
+router.use("/document-hub",       documentHubRoutes);
 
 export default router;

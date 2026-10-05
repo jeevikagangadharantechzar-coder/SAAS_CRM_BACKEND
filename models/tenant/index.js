@@ -45,6 +45,8 @@ import facebookMessageSchema      from "../schemas/facebookMessageSchema.js";
 import facebookCommentSchema      from "../schemas/facebookCommentSchema.js";
 import assetCategorySchema        from "../schemas/assetCategorySchema.js";
 import assetSchema                from "../schemas/assetSchema.js";
+import externalDocumentSchema     from "../schemas/externalDocumentSchema.js";
+import documentAssignmentSchema   from "../schemas/documentAssignmentSchema.js";
 
 
 const MODEL_MAP = [
@@ -95,6 +97,8 @@ const MODEL_MAP = [
   ["FacebookComment",       facebookCommentSchema],
   ["AssetCategory",         assetCategorySchema],
   ["Asset",                 assetSchema],
+  ["ExternalDocument",      externalDocumentSchema],
+  ["DocumentAssignment",    documentAssignmentSchema],
 ];
 
 /**
@@ -163,5 +167,7 @@ export function getTenantModels(conn) {
     FacebookComment:       conn.model("FacebookComment"),
     AssetCategory:         conn.model("AssetCategory"),
     Asset:                 conn.model("Asset"),
+    ExternalDocument:      conn.model("ExternalDocument"),
+    DocumentAssignment:    conn.model("DocumentAssignment"),
   };
 }
