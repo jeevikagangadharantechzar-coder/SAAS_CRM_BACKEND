@@ -266,14 +266,17 @@ export default {
 }
 
       if (search?.trim()) {
+        const searchRegex = escapeRegex(search.trim());
         andConditions.push({
           $or: [
-            { leadName:    { $regex: search, $options: "i" } },
-            { email:       { $regex: search, $options: "i" } },
-            { phoneNumber: { $regex: search, $options: "i" } },
-            { companyName: { $regex: search, $options: "i" } },
-            { source:      { $regex: search, $options: "i" } },
-            { country:     { $regex: search, $options: "i" } },
+            { leadName:    { $regex: searchRegex, $options: "i" } },
+            { email:       { $regex: searchRegex, $options: "i" } },
+            { phoneNumber: { $regex: searchRegex, $options: "i" } },
+            { companyName: { $regex: searchRegex, $options: "i" } },
+            { source:      { $regex: searchRegex, $options: "i" } },
+            { country:     { $regex: searchRegex, $options: "i" } },
+            { "attachments.name": { $regex: searchRegex, $options: "i" } },
+            { "images.name": { $regex: searchRegex, $options: "i" } },
           ],
         });
       }

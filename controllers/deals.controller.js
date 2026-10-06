@@ -261,6 +261,8 @@ export default {
             { email:       { $regex: searchRegex, $options: "i" } },
             { phoneNumber: { $regex: searchRegex, $options: "i" } },
             { companyName: { $regex: searchRegex, $options: "i" } },
+            { "attachments.name": { $regex: searchRegex, $options: "i" } },
+            { "images.name": { $regex: searchRegex, $options: "i" } },
           ]
         });
       }

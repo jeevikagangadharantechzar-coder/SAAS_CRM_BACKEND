@@ -2002,7 +2002,7 @@ export default {
           userId: target.salesPerson._id,
           title: "Admin Replied to Your Reported Issue",
           message: `Admin ${adminName} replied: "${reply.trim()}" on ${itemText}.`,
-          type: "reason_note_reply",
+          type: "target",
           meta: { targetId: String(target._id), reasonNoteReplied: true },
         });
         notifyTargetUser(String(target.salesPerson._id), "targets_refresh", {});
