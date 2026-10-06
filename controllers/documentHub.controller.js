@@ -64,7 +64,13 @@ const documentHubController = {
       }
 
       if (search) {
-        query.documentName = { $regex: search, $options: "i" };
+        const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const searchRegex = escapeRegex(search.trim());
+        // Allow searching by either the Document's Name or the Lead/Deal/Invoice's Name
+        query.$or = [
+          { documentName: { $regex: searchRegex, $options: "i" } },
+          { sourceName: { $regex: searchRegex, $options: "i" } }
+        ];
       }
 
       const totalDocs = await DocumentAssignment.countDocuments(query);
@@ -189,8 +195,7 @@ const documentHubController = {
           isRead: false,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
         });
-        let tenantSlug = req.tenant?.slug || req.params.tenantSlug || req.headers["x-tenant-slug"] || "";
-        notifyUser(assignedTo, "new_notification", { notification: notif }, tenantSlug);
+        notifyUser(assignedTo, "new_notification", notif);
       }
 
       res.status(200).json({ success: true, message: "Documents assigned successfully", count: assignments.length });
@@ -281,8 +286,7 @@ const documentHubController = {
           isRead: false,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
         });
-        let tenantSlug = req.tenant?.slug || req.params.tenantSlug || req.headers["x-tenant-slug"] || "";
-        notifyUser(doc.assignedTo, "new_notification", { notification: notif }, tenantSlug);
+        notifyUser(doc.assignedTo, "new_notification", notif);
       }
 
       if (status === "Replied" && !isAdmin && Notification && doc.assignedBy) {
@@ -297,8 +301,7 @@ const documentHubController = {
           isRead: false,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
         });
-        let tenantSlug = req.tenant?.slug || req.params.tenantSlug || req.headers["x-tenant-slug"] || "";
-        notifyUser(doc.assignedBy, "new_notification", { notification: notif }, tenantSlug);
+        notifyUser(doc.assignedBy, "new_notification", notif);
       }
 
       await doc.save();
@@ -376,7 +379,7 @@ const documentHubController = {
         
         // Notify Admin (assignedBy)
         if (Notification && doc.assignedBy) {
-          await Notification.create({
+          const notif = await Notification.create({
             userId: doc.assignedBy,
             createdBy: req.user._id,
             type: "admin",
@@ -386,11 +389,12 @@ const documentHubController = {
             isRead: false,
             expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
           });
+          notifyUser(doc.assignedBy, "new_notification", notif);
         }
       } else {
         // Notify Salesman (assignedTo)
         if (Notification) {
-          await Notification.create({
+          const notif = await Notification.create({
             userId: doc.assignedTo,
             createdBy: req.user._id,
             type: "admin",
@@ -400,6 +404,7 @@ const documentHubController = {
             isRead: false,
             expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
           });
+          notifyUser(doc.assignedTo, "new_notification", notif);
         }
       }
 
@@ -645,7 +650,7 @@ const documentHubController = {
       await newAssignment.save();
       
       if (Notification) {
-        await Notification.create({
+        const notif = await Notification.create({
           userId: assignedTo,
           createdBy: req.user._id,
           type: "admin",
@@ -655,6 +660,7 @@ const documentHubController = {
           isRead: false,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
         });
+        notifyUser(assignedTo, "new_notification", notif);
       }
 
       res.status(201).json({ success: true, message: "External document uploaded and assigned", data: newAssignment });

@@ -250,8 +250,39 @@ export default {
       // Trashed deals never show in the main list for anyone.
       query.trash = { $ne: true };
 
-      const { start, end, hasAttachments } = req.query;
+      const { start, end, hasAttachments, search, assignee } = req.query;
       
+      if (search?.trim()) {
+        const searchRegex = escapeRegex(search.trim());
+        query.$and = query.$and || [];
+        query.$and.push({
+          $or: [
+            { dealName:    { $regex: searchRegex, $options: "i" } },
+            { email:       { $regex: searchRegex, $options: "i" } },
+            { phoneNumber: { $regex: searchRegex, $options: "i" } },
+            { companyName: { $regex: searchRegex, $options: "i" } },
+          ]
+        });
+      }
+
+      if (assignee && assignee !== "") {
+        if (/^[0-9a-fA-F]{24}$/.test(assignee)) {
+          query.assignedTo = assignee;
+        } else {
+          // If searching by name
+          const { User } = getModels(req);
+          const nameParts = assignee.split(" ").map(escapeRegex);
+          const firstName = nameParts[0];
+          const lastName  = nameParts.slice(1).join(" ");
+          const userQuery = lastName
+            ? { firstName: { $regex: firstName, $options: "i" }, lastName: { $regex: lastName, $options: "i" } }
+            : { $or: [{ firstName: { $regex: firstName, $options: "i" } }, { lastName: { $regex: firstName, $options: "i" } }] };
+          const users = await User.find(userQuery).select("_id");
+          const userIds = users.map((u) => u._id);
+          query.assignedTo = { $in: userIds };
+        }
+      }
+
       if (hasAttachments === "true") {
         query.$and = query.$and || [];
         query.$and.push({
