@@ -16,6 +16,26 @@ const dealSchema = new mongoose.Schema({
     trim: true,
   },
   discountGiven: { type: Number, default: 0, min: 0, max: 100 },
+  subtotal: { type: Number, default: 0 },
+  tax: { type: Number, default: 0 },
+  items: [
+    {
+      catalogItem: { type: mongoose.Schema.Types.ObjectId, ref: "CatalogItem" },
+      name:        { type: String, required: true },
+      sku:         { type: String, default: "" },
+      type:        { type: String, enum: ["Product", "Service"], default: "Product" },
+      category:    { type: mongoose.Schema.Types.ObjectId, ref: "CatalogCategory", default: null },
+      categoryName:{ type: String, default: "" },
+      description: { type: String, default: "" },
+      billingUnit: { type: String, default: "unit" },
+      hsnSac:      { type: String, default: "" },
+      unitPrice:   { type: Number, required: true, min: 0 },
+      quantity:    { type: Number, required: true, min: 0.01, default: 1 },
+      taxRate:     { type: Number, default: 0, min: 0 },
+      discount:    { type: Number, default: 0, min: 0 },
+      lineTotal:   { type: Number, required: true, min: 0 },
+    },
+  ],
   stage: {
     type: String,
     enum: [

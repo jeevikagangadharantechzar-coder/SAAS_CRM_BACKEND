@@ -44,6 +44,8 @@ const permissionsSchema = new mongoose.Schema(
     // use assets can also define/rename/delete the categories everyone
     // shares — not every tenant wants that tied to the literal Admin role.
     assets_manage_categories: { type: Boolean, default: false },
+    products_services:        { type: Boolean, default: true },
+    manage_catalog_categories:{ type: Boolean, default: false },
   },
   { _id: false }
 );

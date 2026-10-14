@@ -271,7 +271,13 @@
           <% } else { %>
           <% invoice.items.forEach(item => { %>
           <tr>
-            <td><%= item.deal?.dealName || "" %></td>
+            <td>
+              <strong><%= item.name || item.deal?.dealName || "" %></strong>
+              <% if (item.sku) { %><span style="color:#666; font-size:11px;"> (SKU: <%= item.sku %>)</span><% } %>
+              <% if (item.description) { %><br/><span style="color:#666; font-size:11px;"><%= item.description %></span><% } %>
+            </td>
+            <% if (showHsn) { %><td class="right"><%= item.hsnSac || "" %></td><% } %>
+            <% if (showQty) { %><td class="right"><%= item.quantity || 1 %></td><% } %>
             <td class="right"><%= Number(item.amount).toFixed(2) %></td>
           </tr>
           <% }) %>

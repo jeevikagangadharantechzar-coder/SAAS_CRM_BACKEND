@@ -53,10 +53,28 @@ export default {
       const isDraftMode = isDraft === true || isDraft === "true";
       const status = isDraftMode ? "draft" : "sent";
 
+      // Items snapshot: either explicitly provided in req.body or inherited from the linked deal
+      let proposalItems = [];
+      if (req.body.items) {
+        try {
+          proposalItems = typeof req.body.items === "string" ? JSON.parse(req.body.items) : req.body.items;
+        } catch {
+          proposalItems = [];
+        }
+      } else if (dealInfo?.items && Array.isArray(dealInfo.items)) {
+        proposalItems = dealInfo.items;
+      }
+
       const proposalData = {
         title, deal: selectedDealId || null, dealTitle, email: recipients.join(","), cc: cc || "",
         content: content || "", image: image || "", status, attachments,
-        companyName: dealInfo?.companyName || "", value: dealInfo?.value || 0,
+        companyName: dealInfo?.companyName || "",
+        value: req.body.value || dealInfo?.value || "0",
+        currency: req.body.currency || dealInfo?.currency || "INR",
+        subtotal: req.body.subtotal !== undefined ? Number(req.body.subtotal) : (dealInfo?.subtotal || 0),
+        discount: req.body.discount !== undefined ? Number(req.body.discount) : (dealInfo?.discountGiven || 0),
+        tax: req.body.tax !== undefined ? Number(req.body.tax) : (dealInfo?.tax || 0),
+        items: proposalItems,
         followUpDate: status === "draft" ? null : new Date(), lastReminderAt: null,
         lastUpdatedBy: req.user._id,
       };
@@ -338,7 +356,25 @@ export default {
       const newFollowUpDate = followUpDate ? new Date(followUpDate) : null;
       const followUpChanged = oldFollowUpDate?.toDateString() !== newFollowUpDate?.toDateString();
 
-      const updateData = { title, dealTitle, email, content, image, status, followUpDate: newFollowUpDate, followUpComment, lastReminderAt: null, lastUpdatedBy: req.user._id };
+      const updateData = {
+        title, dealTitle, email, content, image, status,
+        followUpDate: newFollowUpDate, followUpComment, lastReminderAt: null,
+        lastUpdatedBy: req.user._id,
+      };
+
+      if (req.body.items !== undefined) {
+        try {
+          updateData.items = typeof req.body.items === "string" ? JSON.parse(req.body.items) : req.body.items;
+        } catch {
+          updateData.items = original.items || [];
+        }
+      }
+      if (req.body.value !== undefined) updateData.value = req.body.value;
+      if (req.body.currency !== undefined) updateData.currency = req.body.currency;
+      if (req.body.subtotal !== undefined) updateData.subtotal = Number(req.body.subtotal);
+      if (req.body.discount !== undefined) updateData.discount = Number(req.body.discount);
+      if (req.body.tax !== undefined) updateData.tax = Number(req.body.tax);
+
       if (req.files?.length > 0) {
         const newAttachments = req.files.map(f => ({ name: f.originalname, path: f.path, type: f.mimetype, size: f.size, uploadedAt: new Date() }));
         updateData.attachments = [...(original.attachments || []), ...newAttachments];

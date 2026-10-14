@@ -32,9 +32,20 @@ const invoiceSchema = new mongoose.Schema(
 
     items: [
       {
-        deal:   { type: mongoose.Schema.Types.ObjectId, ref: "Deal", required: true },
-        price:  { type: Number, required: true },
-        amount: { type: Number, required: true },
+        deal:         { type: mongoose.Schema.Types.ObjectId, ref: "Deal", required: true },
+        catalogItem:  { type: mongoose.Schema.Types.ObjectId, ref: "CatalogItem", default: null },
+        name:         { type: String, default: "" },
+        sku:          { type: String, default: "" },
+        type:         { type: String, enum: ["Product", "Service"], default: "Product" },
+        categoryName: { type: String, default: "" },
+        description:  { type: String, default: "" },
+        billingUnit:  { type: String, default: "unit" },
+        hsnSac:       { type: String, default: "" },
+        price:        { type: Number, required: true },
+        quantity:     { type: Number, default: 1 },
+        taxRate:      { type: Number, default: 0 },
+        discount:     { type: Number, default: 0 },
+        amount:       { type: Number, required: true },
       },
     ],
 

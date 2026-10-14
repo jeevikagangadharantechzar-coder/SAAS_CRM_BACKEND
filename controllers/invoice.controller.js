@@ -31,10 +31,39 @@ const PAID_FAMILY = ["paid", "partially_paid"];
 let browserInstance = null;
 const getBrowser = async () => {
   if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await puppeteer.launch({
+    const launchOptions = {
       headless: true,
-      args: ["--no-sandbox","--disable-setuid-sandbox","--disable-gpu","--disable-dev-shm-usage"],
-    });
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+    };
+
+    // Auto-detect system Chrome, Edge, or Brave on Windows/Linux/Mac
+    const candidatePaths = [
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : null,
+      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+      process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Microsoft\\Edge\\Application\\msedge.exe` : null,
+      "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "/usr/bin/google-chrome",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/microsoft-edge",
+    ].filter(Boolean);
+
+    for (const exePath of candidatePaths) {
+      if (fs.existsSync(exePath)) {
+        launchOptions.executablePath = exePath;
+        break;
+      }
+    }
+
+    // If no direct path was found, tell Puppeteer to use the installed Chrome channel
+    if (!launchOptions.executablePath) {
+      launchOptions.channel = "chrome";
+    }
+
+    browserInstance = await puppeteer.launch(launchOptions);
   }
   return browserInstance;
 };
@@ -54,16 +83,37 @@ export default {
       if (!items || items.length === 0) return res.status(400).json({ error: "Invoice must contain at least one item" });
 
       tax = Number(tax) || 0; discountValue = Number(discountValue) || 0;
-      const subtotal = items.reduce((acc, item) => acc + (Number(item.price)||0) * (Number(item.quantity)||1), 0);
+      const formattedItems = items.map(item => {
+        const qty = Number(item.quantity) || 1;
+        const prc = Number(item.price) || 0;
+        const amt = Number(item.amount) || (prc * qty);
+        return {
+          deal: item.deal,
+          catalogItem: item.catalogItem || null,
+          name: item.name || "",
+          sku: item.sku || "",
+          type: item.type || "Product",
+          categoryName: item.categoryName || "",
+          description: item.description || "",
+          billingUnit: item.billingUnit || "unit",
+          hsnSac: item.hsnSac || "",
+          price: prc,
+          quantity: qty,
+          taxRate: Number(item.taxRate) || 0,
+          discount: Number(item.discount) || 0,
+          amount: Number(amt.toFixed(2)),
+        };
+      });
+      const subtotal = formattedItems.reduce((acc, item) => acc + (Number(item.price) || 0) * (Number(item.quantity) || 1), 0);
       // Discount is applied first (on the raw subtotal), then tax is computed on what's left —
       // matches the frontend invoice form and updateInvoice below.
-      const discount  = discountType === "percentage" ? (subtotal * discountValue) / 100 : discountValue;
+      const discount = discountType === "percentage" ? (subtotal * discountValue) / 100 : discountValue;
       const discountedSubtotal = subtotal - discount;
       const taxAmount = taxType === "percentage" ? (discountedSubtotal * tax) / 100 : tax;
       let total = discountedSubtotal + taxAmount;
       if (total < 0) total = 0;
 
-      const invoiceFields = { items, subtotal, tax, taxType, taxAmount, discountValue, discountType, discount, total, currency, assignTo, dueDate, status, createdBy: req.user._id, ...rest };
+      const invoiceFields = { items: formattedItems, subtotal, tax, taxType, taxAmount, discountValue, discountType, discount, total, currency, assignTo, dueDate, status, createdBy: req.user._id, ...rest };
 
       if (PAID_FAMILY.includes(status)) {
         const payment = Math.min(Math.max(Number(paymentReceivedNow) || 0, 0), total);
@@ -73,9 +123,9 @@ export default {
 
         if (status === "paid") {
           const exchangeRate = await getExchangeRate(currency);
-          invoiceFields.paidAt       = new Date();
+          invoiceFields.paidAt = new Date();
           invoiceFields.exchangeRate = exchangeRate;
-          invoiceFields.inrAmount    = invoiceFields.amountPaid * exchangeRate;
+          invoiceFields.inrAmount = invoiceFields.amountPaid * exchangeRate;
         }
       }
 
@@ -153,7 +203,28 @@ export default {
       let subtotal = 0, finalDiscount = 0, taxAmount = 0, finalTotal = 0;
 
       if (items && items.length > 0) {
-        items = items.map(item => { const a = (Number(item.price)||0) * (Number(item.quantity)||1); return { ...item, amount: a.toFixed(2) }; });
+        items = items.map(item => {
+          const qty = Number(item.quantity) || 1;
+          const prc = Number(item.price) || 0;
+          const amt = Number(item.amount) || (prc * qty);
+          return {
+            ...item,
+            deal: item.deal || rest.deal || invoice.items?.[0]?.deal,
+            catalogItem: item.catalogItem || null,
+            name: item.name || "",
+            sku: item.sku || "",
+            type: item.type || "Product",
+            categoryName: item.categoryName || "",
+            description: item.description || "",
+            billingUnit: item.billingUnit || "unit",
+            hsnSac: item.hsnSac || "",
+            price: prc,
+            quantity: qty,
+            taxRate: Number(item.taxRate) || 0,
+            discount: Number(item.discount) || 0,
+            amount: Number(amt.toFixed(2)),
+          };
+        });
         subtotal = items.reduce((s, i) => s + Number(i.amount), 0);
       } else if (price) {
         subtotal = Number(price) || 0;
@@ -196,7 +267,7 @@ export default {
         }
 
         const newAmountPaid = Number((previousAmountPaid + payment).toFixed(2));
-        updateData.status     = newStatus;
+        updateData.status = newStatus;
         updateData.amountPaid = newAmountPaid;
 
         // Frontend sends preferredCurrency/preferredCurrencyValue computed for the cumulative amount paid
@@ -206,20 +277,20 @@ export default {
 
         if (newStatus === "paid" && currentStatus !== "paid") {
           const exchangeRate = await getExchangeRate(invoice.currency);
-          updateData.paidAt       = new Date();
-          updateData.inrAmount    = newAmountPaid * exchangeRate;
+          updateData.paidAt = new Date();
+          updateData.inrAmount = newAmountPaid * exchangeRate;
           updateData.exchangeRate = exchangeRate;
         }
       } else {
         updateData.status = newStatus;
         // Reset payment tracking + frozen currency when moving away from paid/partially_paid
         if (PAID_FAMILY.includes(currentStatus)) {
-          updateData.amountPaid             = 0;
-          updateData.preferredCurrency      = null;
+          updateData.amountPaid = 0;
+          updateData.preferredCurrency = null;
           updateData.preferredCurrencyValue = null;
-          updateData.paidAt                 = null;
-          updateData.inrAmount              = null;
-          updateData.exchangeRate           = null;
+          updateData.paidAt = null;
+          updateData.inrAmount = null;
+          updateData.exchangeRate = null;
         }
       }
 
@@ -313,7 +384,7 @@ export default {
 
       const Settings = req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
       const settings = await Settings.findOne();
-      
+
       let logoDataURI = "";
       if (settings) {
         const logoRelativePath = settings.invoiceLogo || settings.logo;
@@ -338,7 +409,7 @@ export default {
       // Buffer.from(...) is required here so downstream .toString("base64")
       // actually base64-encodes the bytes instead of silently ignoring the
       // encoding argument and stringifying as comma-separated decimal values.
-      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true }));
+      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top: "20mm", right: "10mm", bottom: "20mm", left: "10mm" }, printBackground: true }));
       await page.close();
 
       res.setHeader("Content-Type", "application/pdf");
@@ -389,7 +460,7 @@ export default {
       // See note in generateInvoicePDF above — Buffer.from(...) is required because
       // page.pdf() returns a Uint8Array, and Uint8Array#toString ignores the
       // "base64" argument entirely.
-      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top:"20mm", right:"10mm", bottom:"20mm", left:"10mm" }, printBackground: true }));
+      const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top: "20mm", right: "10mm", bottom: "20mm", left: "10mm" }, printBackground: true }));
       await page.close();
 
       const subject = `Invoice #${invoice.invoicenumber || invoice._id}`;
@@ -465,7 +536,7 @@ export default {
         assignment.assignedTo = invoice.assignTo || req.user?._id;
         assignment.assignedBy = req.user?._id || invoice.assignTo;
       }
-      
+
       assignment.activity.push({
         action: "Sent",
         note: `Invoice sent to client on ${new Date().toLocaleString()}`,

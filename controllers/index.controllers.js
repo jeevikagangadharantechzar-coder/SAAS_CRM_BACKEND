@@ -24,6 +24,10 @@ import lostDealController from "./lostDealController.js";
 import settingsController from "./settingsController.js";
 import streakController from "./streak.controller.js";
 import massEmailController from "./massEmail.controller.js";
+import * as catalogItemController from "./catalogItem.controller.js";
+import * as productController from "./product.controller.js";
+import * as serviceController from "./service.controller.js";
+const catalogCategoryController = productController;
 
 
 export default {
@@ -53,5 +57,7 @@ export default {
   lostDealController,
   settingsController,
   streakController,
-  massEmailController
+  massEmailController,
+  catalogItemController,
+  catalogCategoryController,
 };

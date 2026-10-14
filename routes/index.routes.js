@@ -30,6 +30,9 @@ import ninetyNineAcresRoutes from "./99acres.routes.js";
 import sulekhaRoutes from "./sulekha.routes.js";
 import meetingRoutes from "./meeting.routes.js";
 import mfaRoutes from "./mfa.routes.js";
+import catalogRoutes from "./catalog.routes.js";
+import productRoutes from "./product.routes.js";
+import serviceRoutes from "./service.routes.js";
 
 const router = express.Router();
 
@@ -68,5 +71,8 @@ router.use("/99acres", ninetyNineAcresRoutes);
 router.use("/sulekha", sulekhaRoutes);
 router.use("/meetings", meetingRoutes);
 router.use("/mfa", mfaRoutes);
+router.use("/catalog", catalogRoutes);
+router.use("/products", productRoutes);
+router.use("/services", serviceRoutes);
 
 export default router;

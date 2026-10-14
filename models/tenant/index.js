@@ -47,6 +47,8 @@ import assetCategorySchema        from "../schemas/assetCategorySchema.js";
 import assetSchema                from "../schemas/assetSchema.js";
 import externalDocumentSchema     from "../schemas/externalDocumentSchema.js";
 import documentAssignmentSchema   from "../schemas/documentAssignmentSchema.js";
+import catalogCategorySchema      from "../schemas/catalogCategorySchema.js";
+import catalogItemSchema          from "../schemas/catalogItemSchema.js";
 
 
 const MODEL_MAP = [
@@ -99,10 +101,12 @@ const MODEL_MAP = [
   ["Asset",                 assetSchema],
   ["ExternalDocument",      externalDocumentSchema],
   ["DocumentAssignment",    documentAssignmentSchema],
+  ["CatalogCategory",       catalogCategorySchema],
+  ["CatalogItem",           catalogItemSchema],
 ];
 
 /**
- * Register all 17 tenant models on the given Mongoose connection.
+ * Register all tenant models on the given Mongoose connection.
  * Safe to call multiple times — skips already-registered models.
  */
 export function registerTenantModels(conn) {
@@ -115,7 +119,7 @@ export function registerTenantModels(conn) {
 }
 
 /**
- * Return a map of all 17 tenant models from the given connection.
+ * Return a map of all tenant models from the given connection.
  * Call registerTenantModels(conn) before this if the connection is new.
  */
 export function getTenantModels(conn) {
@@ -169,5 +173,7 @@ export function getTenantModels(conn) {
     Asset:                 conn.model("Asset"),
     ExternalDocument:      conn.model("ExternalDocument"),
     DocumentAssignment:    conn.model("DocumentAssignment"),
+    CatalogCategory:       conn.model("CatalogCategory"),
+    CatalogItem:           conn.model("CatalogItem"),
   };
 }

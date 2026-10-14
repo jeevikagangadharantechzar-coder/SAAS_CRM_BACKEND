@@ -94,6 +94,106 @@ const formatDealValue = (dealValue, currency = "INR") => {
   return `${new Intl.NumberFormat("en-IN").format(numeric)} ${currency}`;
 };
 
+/**
+ * Validates selected catalog items against current tenant CatalogItem collection,
+ * enforces active status for new items, creates snapshots, and calculates financials.
+ */
+const validateAndCalculateDealItems = async (req, rawItems, allowPriceOverride = false) => {
+  if (!rawItems) return { items: undefined, subtotal: undefined, tax: undefined, total: undefined };
+  
+  let parsed = rawItems;
+  if (typeof rawItems === "string") {
+    try {
+      parsed = JSON.parse(rawItems);
+    } catch {
+      parsed = [];
+    }
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return { items: [], subtotal: 0, tax: 0, total: 0 };
+  }
+
+  const { CatalogItem } = getModels(req);
+  const validatedItems = [];
+  let subtotal = 0;
+  let totalTax = 0;
+
+  for (const item of parsed) {
+    const catalogItemId = item.catalogItem || item._id;
+    if (!catalogItemId) {
+      throw new Error("Each selected item must have a valid catalog item reference");
+    }
+
+    const catalogDoc = await CatalogItem.findById(catalogItemId);
+    if (!catalogDoc) {
+      throw new Error(`Catalog item with ID ${catalogItemId} not found in this tenant`);
+    }
+
+    // Only active items can be newly added/selected
+    if (!catalogDoc.isActive && item.isNewSelection) {
+      throw new Error(`Catalog item "${catalogDoc.name}" (${catalogDoc.sku}) is inactive and cannot be selected`);
+    }
+
+    const quantity = Math.max(Number(item.quantity) || 1, 0.01);
+    
+    // Check price override policy: salesperson must have permission or be Admin
+    let unitPrice = catalogDoc.unitPrice;
+    if (item.unitPrice !== undefined && Number(item.unitPrice) >= 0) {
+      if (allowPriceOverride || req.user?.role?.name?.toLowerCase() === "admin") {
+        unitPrice = Number(item.unitPrice);
+      } else {
+        unitPrice = catalogDoc.unitPrice; // Enforce catalog unit price if override not allowed
+      }
+    }
+
+    const taxRate = item.taxRate !== undefined && Number(item.taxRate) >= 0
+      ? Number(item.taxRate)
+      : (catalogDoc.taxRate || 0);
+
+    const discount = Math.max(Number(item.discount) || 0, 0);
+
+    const itemSubtotal = unitPrice * quantity;
+    const discountedSubtotal = Math.max(itemSubtotal - discount, 0);
+    const itemTax = (discountedSubtotal * taxRate) / 100;
+    const lineTotal = discountedSubtotal + itemTax;
+
+    subtotal += itemSubtotal;
+    totalTax += itemTax;
+
+    validatedItems.push({
+      catalogItem: catalogDoc._id,
+      name: catalogDoc.name,
+      sku: catalogDoc.sku,
+      type: catalogDoc.type,
+      category: catalogDoc.category,
+      categoryName: catalogDoc.categoryName,
+      description: catalogDoc.description,
+      billingUnit: catalogDoc.billingUnit,
+      hsnSac: catalogDoc.hsnSac,
+      unitPrice,
+      quantity,
+      taxRate,
+      discount,
+      lineTotal: Number(lineTotal.toFixed(2)),
+    });
+  }
+
+  const overallDiscount = Math.max(Number(req.body.discountGiven) || 0, 0);
+  let total = subtotal + totalTax;
+  if (overallDiscount > 0) {
+    total = total - (total * overallDiscount) / 100;
+  }
+  total = Math.max(total, 0);
+
+  return {
+    items: validatedItems,
+    subtotal: Number(subtotal.toFixed(2)),
+    tax: Number(totalTax.toFixed(2)),
+    total: Number(total.toFixed(2)),
+  };
+};
+
 export default {
   createDealFromLead: async (req, res) => {
     try {
@@ -138,6 +238,7 @@ export default {
         latitude, longitude,
         followUpDate, followUpComment, lossReason, lossNotes, clientType,
         preferredCurrency, preferredCurrencyValue, customFields,
+        items, discountGiven,
       } = req.body;
 
       if (!dealName || !phoneNumber || !companyName)
@@ -148,9 +249,18 @@ export default {
         try { parsedCustomFields = JSON.parse(customFields); } catch { parsedCustomFields = []; }
       }
 
+      // Calculate catalog items if provided
+      const calculated = await validateAndCalculateDealItems(req, items);
+      let calculatedValue = dealValue;
+      if (calculated.items && calculated.items.length > 0) {
+        calculatedValue = calculated.total;
+      }
+
       const allowedStages = ["Qualification","Proposal Sent-Negotiation","Invoice Sent","Closed Won","Closed Lost"];
       const dealStage = stage && allowedStages.includes(stage) ? stage : "Qualification";
-      const formattedValue = dealValue && String(dealValue).trim() !== "" ? formatDealValue(dealValue, currency || "INR") : "0";
+      const formattedValue = calculatedValue !== undefined && calculatedValue !== null && String(calculatedValue).trim() !== ""
+        ? formatDealValue(calculatedValue, currency || "INR")
+        : "0";
 
       let parsedFollowUpDate = null;
       let followUpHistory   = [];
@@ -168,6 +278,10 @@ export default {
         value: formattedValue,
         currency: currency || "INR",
         stage: dealStage,
+        discountGiven: Number(discountGiven) || 0,
+        subtotal: calculated.subtotal !== undefined ? calculated.subtotal : 0,
+        tax: calculated.tax !== undefined ? calculated.tax : 0,
+        items: calculated.items || [],
         notes: notes || "",
         ...(notes && notes.trim() !== "" && { notesUpdatedBy: req.user._id, notesUpdatedAt: new Date() }),
         phoneNumber,
@@ -369,7 +483,9 @@ export default {
         .populate("assignedTo", "firstName lastName email")
         .populate("notesUpdatedBy", "firstName lastName")
         .populate("followUpHistory.changedBy", "firstName lastName email")
-        .populate({ path: "leadId", populate: { path: "assignTo", select: "firstName lastName email" } });
+        .populate({ path: "leadId", populate: { path: "assignTo", select: "firstName lastName email" } })
+        .populate("items.catalogItem")
+        .populate("items.category", "name color icon");
 
       if (!deal) return res.status(404).json({ message: "Deal not found" });
       if (req.user.role.name !== "Admin" && deal.assignedTo && deal.assignedTo._id.toString() !== req.user._id.toString())
@@ -472,6 +588,7 @@ export default {
         taskAction, newTaskName, extendedTaskDueDate, extendedTaskDescription,
         targetAction, extendedTargetEndDate, extendedTargetDescription,
         customFields,
+        items, discountGiven,
       } = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
       const deal = await Deal.findById(req.params.id).populate("assignedTo");
@@ -547,7 +664,21 @@ export default {
         }
       }
       if (Object.keys(pushFields).length > 0) updateFields.$push = pushFields;
-      if (dealValue !== undefined && dealValue !== null && String(dealValue).trim() !== "") {
+
+      if (discountGiven !== undefined) {
+        updateFields.discountGiven = Number(discountGiven) || 0;
+      }
+
+      if (items !== undefined) {
+        const calculated = await validateAndCalculateDealItems(req, items);
+        updateFields.items = calculated.items || [];
+        updateFields.subtotal = calculated.subtotal !== undefined ? calculated.subtotal : 0;
+        updateFields.tax = calculated.tax !== undefined ? calculated.tax : 0;
+        if (calculated.items && calculated.items.length > 0) {
+          updateFields.value = formatDealValue(calculated.total, currency || deal.currency || "INR");
+          updateFields.currency = currency || deal.currency || "INR";
+        }
+      } else if (dealValue !== undefined && dealValue !== null && String(dealValue).trim() !== "") {
         updateFields.value = formatDealValue(dealValue, currency || deal.currency || "INR");
         updateFields.currency = currency || deal.currency || "INR";
       }

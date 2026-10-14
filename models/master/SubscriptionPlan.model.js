@@ -51,6 +51,7 @@ const planFeaturesSchema = new mongoose.Schema(
     live_tracking:          { type: Boolean, default: true },
     device_login_requests:  { type: Boolean, default: true },
     assets:                 { type: Boolean, default: true },
+    products_services:      { type: Boolean, default: true },
   },
   { _id: false }
 );
