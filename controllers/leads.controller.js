@@ -963,12 +963,29 @@ const leads = await leadQuery;
       };
       if (req.user.role.name !== "Admin") query.assignTo = req.user._id;
 
-      const leads = await Lead.find(query)
-        .select("leadName companyName followUpDate assignTo")
-        .populate("assignTo", "firstName lastName")
-        .sort({ followUpDate: 1 });
+      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+      const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+      const skip = (page - 1) * limit;
 
-      res.status(200).json({ leads });
+      const [total, leads] = await Promise.all([
+        Lead.countDocuments(query),
+        Lead.find(query)
+          .select("leadName companyName followUpDate assignTo")
+          .populate("assignTo", "firstName lastName")
+          .sort({ followUpDate: 1 })
+          .skip(skip)
+          .limit(limit),
+      ]);
+
+      const totalPages = Math.ceil(total / limit) || 1;
+
+      res.status(200).json({
+        leads,
+        total,
+        page,
+        totalPages,
+        limit,
+      });
     } catch (error) {
       res.status(500).json({ message: error.message });
     }

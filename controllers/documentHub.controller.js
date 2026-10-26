@@ -1,4 +1,4 @@
-import fs from "fs";
+﻿import fs from "fs";
 import path from "path";
 import { getTenantModels } from "../models/tenant/index.js";
 import LeadLegacy from "../models/leads.model.js";
@@ -531,7 +531,7 @@ const documentHubController = {
       doc.deletedAt = null;
       await doc.save();
 
-      // IMPORTANT: Unified restore — we must also undelete it from the Lead/Deal array!
+      // IMPORTANT: Unified restore â€” we must also undelete it from the Lead/Deal array!
       const { Lead, Deal } = getModels(req);
       if (doc.sourceType === "Lead") {
         await Lead.updateOne(
@@ -598,20 +598,24 @@ const documentHubController = {
 
   uploadExternalDocument: async (req, res) => {
     try {
-      const { ExternalDocument, DocumentAssignment, Notification } = getModels(req);
-      const { name, assignedTo, note } = req.body;
+      const { ExternalDocument, DocumentAssignment, Notification, User, Role } = getModels(req);
+      const { name, note } = req.body;
       const isAdmin = req.user.role?.name === "Admin";
 
-      if (!isAdmin) {
-         return res.status(403).json({ success: false, message: "Only Admin can upload and assign external documents" });
-      }
+      // Admin must specify who to assign to; Salesman auto-assigns to themselves
+      const resolvedAssignedTo = isAdmin ? req.body.assignedTo : String(req.user._id);
 
       if (!req.file) {
         return res.status(400).json({ success: false, message: "File is required" });
       }
-      if (!name || !assignedTo) {
-        return res.status(400).json({ success: false, message: "Name and assignedTo are required" });
+      if (!name) {
+        return res.status(400).json({ success: false, message: "Document name is required" });
       }
+      if (isAdmin && !resolvedAssignedTo) {
+        return res.status(400).json({ success: false, message: "assignedTo is required for Admin uploads" });
+      }
+
+      const uploaderName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || "Salesman";
 
       const newDoc = new ExternalDocument({
         name,
@@ -619,7 +623,7 @@ const documentHubController = {
         type: req.file.mimetype,
         size: req.file.size,
         uploadedBy: req.user._id,
-        assignedTo,
+        assignedTo: resolvedAssignedTo,
       });
 
       await newDoc.save();
@@ -633,7 +637,7 @@ const documentHubController = {
         documentType: newDoc.type,
         documentSize: newDoc.size,
         sourceName: "External Document",
-        assignedTo,
+        assignedTo: resolvedAssignedTo,
         assignedBy: req.user._id,
         note: note || "",
         status: "Assigned",
@@ -641,29 +645,55 @@ const documentHubController = {
           {
             action: "Assigned",
             performedBy: req.user._id,
-            role: req.user.role?.name || "Admin",
+            role: req.user.role?.name || "User",
             note: note || "",
             createdAt: new Date()
           }
         ]
       });
       await newAssignment.save();
-      
+
       if (Notification) {
-        const notif = await Notification.create({
-          userId: assignedTo,
-          createdBy: req.user._id,
-          type: "admin",
-          title: "New External Document Assigned",
-          message: `Admin assigned external document: ${name}`,
-          text: `Admin assigned external document: ${name}`,
-          isRead: false,
-          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-        });
-        notifyUser(assignedTo, "new_notification", notif);
+        if (isAdmin) {
+          // Admin uploaded → notify the assigned salesman
+          const notif = await Notification.create({
+            userId: resolvedAssignedTo,
+            createdBy: req.user._id,
+            type: "admin",
+            title: "New External Document Assigned",
+            message: `Admin assigned external document: ${name}`,
+            text: `Admin assigned external document: ${name}`,
+            isRead: false,
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          });
+          notifyUser(resolvedAssignedTo, "new_notification", notif);
+        } else {
+          // Salesman uploaded → notify ALL admins
+          try {
+            const adminRole = await Role.findOne({ name: "Admin" });
+            if (adminRole) {
+              const admins = await User.find({ role: adminRole._id, status: "Active" }).select("_id");
+              for (const admin of admins) {
+                const notif = await Notification.create({
+                  userId: admin._id,
+                  createdBy: req.user._id,
+                  type: "admin",
+                  title: "Salesman Uploaded External Document",
+                  message: `${uploaderName} uploaded an external document: "${name}"`,
+                  text: `${uploaderName} uploaded an external document: "${name}"`,
+                  isRead: false,
+                  expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                });
+                notifyUser(String(admin._id), "new_notification", notif);
+              }
+            }
+          } catch (notifErr) {
+            console.error("Admin notification error:", notifErr);
+          }
+        }
       }
 
-      res.status(201).json({ success: true, message: "External document uploaded and assigned", data: newAssignment });
+      res.status(201).json({ success: true, message: "External document uploaded successfully", data: newAssignment });
     } catch (error) {
       console.error("Upload external document error:", error);
       res.status(500).json({ success: false, message: error.message });
@@ -760,3 +790,4 @@ const documentHubController = {
 };
 
 export default documentHubController;
+
