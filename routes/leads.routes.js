@@ -42,7 +42,7 @@ router.delete("/deleteLead/:id", adminOrAssigned, indexControllers.leadsControll
 router.patch("/:id/convert", adminOrAssigned, indexControllers.leadsController.convertLeadToDeal);
 router.patch("/:id/status", adminOrAssigned, indexControllers.leadsController.updateLeadStatus);
 router.patch("/:id/reject", adminOnly, indexControllers.leadsController.rejectLead);
-router.patch("/:id/trash", adminOnly, indexControllers.leadsController.trashLead);
+router.patch("/:id/trash", adminOrAssigned, indexControllers.leadsController.trashLead);
 router.patch("/:id/restore", adminOnly, indexControllers.leadsController.restoreLead);
 router.patch("/:id/followup", protect, indexControllers.leadsController.updateFollowUpDate);
 router.post("/:id/followup-notes", adminOrAssigned, upload.single("audio"), indexControllers.leadsController.addFollowUpNote);

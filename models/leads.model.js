@@ -32,7 +32,7 @@ const leadSchema = new mongoose.Schema(
       default: "New",
     },
 
-    lossStage: { type: String, enum: ["New", "Hot", "Warm", "Cold", null], default: null },
+    lossStage: { type: String, enum: ["New", "Hot", "Warm", "Cold", "Follow-up", "Junk", "Unknown", null], default: null },
     rejectionReason: { type: String, default: null },
     customRejectionReason: { type: String, default: null },
     junkReason: { type: String, default: null },
@@ -45,6 +45,9 @@ const leadSchema = new mongoose.Schema(
 
     emailSentAt: { type: Date, default: null },
     lastReminderAt: { type: Date, default: null },
+
+    trash:     { type: Boolean, default: false },
+    trashedAt: { type: Date, default: null },
 
     notes: { type: String },
     notesUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

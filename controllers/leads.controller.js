@@ -677,7 +677,7 @@ const leads = await leadQuery;
           // Calculate follow up count by tracking how many times the followUpDate was created/updated
           patch.followUpCountAtLoss = 1 + (patch.followUpUpdateCount || before.followUpUpdateCount || 0);
             
-          patch.lossStage = before.status;
+          patch.lossStage = before.status || "Unknown";
         }
       }
       if (patch.followUpDate) patch.lastReminderAt = null;
@@ -1243,7 +1243,7 @@ const leads = await leadQuery;
       const createdAt = new Date(lead.createdAt || Date.now());
       lead.leadAgeAtLossDays = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)));
       lead.followUpCountAtLoss = lead.followUpNotes ? lead.followUpNotes.length : 0;
-      lead.lossStage = previousStatus;
+      lead.lossStage = previousStatus || "Unknown";
       
       await lead.save();
 
@@ -1261,12 +1261,9 @@ const leads = await leadQuery;
     }
   },
 
-  // Admin: soft-hide a lead from the main list without deleting it.
+  // Admin or assigned sales person: soft-hide a lead from the main list without deleting it.
   trashLead: async (req, res) => {
     try {
-      if (req.user.role?.name !== "Admin") {
-        return res.status(403).json({ message: "Access denied: Admins only" });
-      }
       const { Lead } = getModels(req);
       const lead = await Lead.findById(req.params.id);
       if (!lead) return res.status(404).json({ message: "Lead not found" });
