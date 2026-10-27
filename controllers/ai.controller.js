@@ -5,6 +5,7 @@ import UserLegacy from "../models/user.model.js";
 import InvoiceLegacy from "../models/invoice.model.js";
 import ProposalLegacy from "../models/proposal.model.js";
 import streakController from "./streak.controller.js";
+import { runAiModules, AI_HELP_EXAMPLES } from "../services/ai/index.js";
 
 const getModels = (req) =>
   req.tenantDB
@@ -201,14 +202,26 @@ export default {
         lower.includes("what are your capabilities") ||
         lower.includes("what do you do") ||
         lower.includes("who are you") ||
-        lower.includes("uses") ||
+        /\buses\b/.test(lower) ||
         lower.includes("commands") ||
         lower.includes("how to use") ||
         lower === "help"
       ) {
-        const responseMsg = "Hello! I am Ziya, your CRM AI Assistant. I'm here to help you manage your CRM data. For best results, you can ask me things like: 'Show my pending tasks', 'Find unpaid invoices', 'List my active targets', or 'Show my deals'.";
+        const responseMsg = `Hello! I am Ziya, your CRM AI Assistant. I can answer questions about leads, deals, invoices, tasks, targets, proposals, meetings, calls, activities, support tickets, products & services, assets, documents, email campaigns, streaks, messages, notifications, client reviews, pricing risk, groups and sales reports. Try: ${AI_HELP_EXAMPLES.map((q) => `'${q}'`).join(", ")}.`;
         await saveChat(AiChat, userId, message, "capabilities", responseMsg, 0);
         return res.json({ success: true, intent: "capabilities", message: responseMsg, data: [] });
+      }
+
+      // --- MODULE HANDLERS (services/ai/modules) ---
+      // Meetings, calls, activities, tickets, catalog, assets, documents, emails, streaks,
+      // messages, notifications, reviews, pricing risk, groups, locations, agreements, sales report.
+      const moduleResult = await runAiModules({
+        req, models: getModels(req), userId, roleName, message, lower, dateFilter, dateLabel, getSearchTerms,
+      });
+      if (moduleResult) {
+        const count = moduleResult.data?.length || 0;
+        await saveChat(AiChat, userId, message, moduleResult.intent, moduleResult.message, count);
+        return res.json({ success: true, ...moduleResult, count });
       }
 
       // --- 3. PROPOSALS ---
@@ -1441,7 +1454,7 @@ export default {
         return res.json({ success: true, intent: intentName, message: responseMsg, count: leads.length, data: leads.map(formatLead) });
       }
 
-      const fallbackMsg = "I couldn't quite understand that request. For best results, try asking specific questions like: 'Show my pending tasks', 'Find unpaid invoices', 'List my active targets', or 'Show my deals'.";
+      const fallbackMsg = `I couldn't quite understand that request. Try asking something like: ${AI_HELP_EXAMPLES.slice(0, 8).map((q) => `'${q}'`).join(", ")}. Type 'help' to see everything I can do.`;
       await saveChat(AiChat, userId, message, "unknown", fallbackMsg, 0);
       return res.json({ success: true, intent: "unknown", message: fallbackMsg, data: [] });
 
