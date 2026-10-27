@@ -1431,9 +1431,12 @@ export default {
       const isAdminImporter = req.user.role?.name === "Admin";
 
       // Resolve all users once, up front, instead of a findOne per row.
-      const users = await User.find({}).select("_id email").lean();
+      const users = await User.find({}).select("_id email status").lean();
+      const isUserActive = (u) => !u.status || String(u.status).trim().toLowerCase() !== "inactive";
       const emailToUserId = new Map(
-        users.filter((u) => u.email).map((u) => [String(u.email).toLowerCase(), u._id])
+        users
+          .filter((u) => u.email && isUserActive(u))
+          .map((u) => [String(u.email).toLowerCase(), u._id])
       );
 
       const ops = [];

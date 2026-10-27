@@ -66,8 +66,12 @@ router.get(
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;
       const users = await User.find()
         .populate("role", "name")
-        .select("firstName lastName email role");
-      const salesUsers = users.filter(u => u.role?.name?.toLowerCase() === "sales");
+        .select("firstName lastName email role status");
+      const salesUsers = users.filter(u => {
+        const isSales = u.role?.name?.toLowerCase() === "sales";
+        const isActive = !u.status || String(u.status).trim().toLowerCase() !== "inactive";
+        return isSales && isActive;
+      });
       res.json({ users: salesUsers });
     } catch (error) {
       console.error("Error fetching sales users:", error);

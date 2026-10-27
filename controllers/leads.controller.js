@@ -189,6 +189,13 @@ export default {
 
       if (!data.assignTo || data.assignTo === "") {
         data.assignTo = await pickNextSalesUser(User, Lead);
+      } else {
+        // If an explicit assignTo was provided, verify the assignee is active.
+        // If inactive, re-assign via round-robin so the lead is never assigned to an inactive user.
+        const assignedUser = await User.findById(data.assignTo).select("status").lean();
+        if (assignedUser && String(assignedUser.status || "").trim().toLowerCase() === "inactive") {
+          data.assignTo = await pickNextSalesUser(User, Lead);
+        }
       }
       if (!data.followUpDate || data.followUpDate === "") data.followUpDate = new Date();
       if (!data.status) data.status = "New";
@@ -1526,18 +1533,22 @@ const leads = await leadQuery;
       const users = await User
         .find({})
         .populate("role", "name")
-        .select("_id email role createdAt")
+        .select("_id email role status createdAt")
         .sort({ createdAt: 1, _id: 1 })
         .lean();
+
+      const isUserActive = (u) => !u.status || String(u.status).trim().toLowerCase() !== "inactive";
 
       const salesUsers = users.filter((u) => {
         const roleName =
           typeof u.role === "string" ? u.role : u.role?.name || u.role?.roleName || "";
-        return String(roleName).toLowerCase() === "sales";
+        return String(roleName).toLowerCase() === "sales" && isUserActive(u);
       });
 
       const emailToUserId = new Map(
-        users.filter((u) => u.email).map((u) => [String(u.email).toLowerCase(), u._id])
+        users
+          .filter((u) => u.email && isUserActive(u))
+          .map((u) => [String(u.email).toLowerCase(), u._id])
       );
 
       let roundRobinIdx = -1;

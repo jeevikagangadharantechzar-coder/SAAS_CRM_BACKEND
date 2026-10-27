@@ -19,8 +19,8 @@ export const pickNextSalesUser = async (User, Lead) => {
   });
 
   // Inactive users are skipped. A missing status counts as Active (older records).
-  const isActive = (u) => u.status !== "Inactive";
-  if (!salesUsers.some(isActive)) return null;
+  const isUserActive = (u) => !u.status || String(u.status).trim().toLowerCase() !== "inactive";
+  if (!salesUsers.some(isUserActive)) return null;
 
   const lastLead = await Lead.findOne({ assignTo: { $ne: null } })
     .sort({ createdAt: -1, _id: -1 })
@@ -37,7 +37,7 @@ export const pickNextSalesUser = async (User, Lead) => {
 
   for (let step = 1; step <= salesUsers.length; step++) {
     const candidate = salesUsers[(lastIdx + step) % salesUsers.length];
-    if (isActive(candidate)) return candidate._id;
+    if (isUserActive(candidate)) return candidate._id;
   }
   return null;
 };
