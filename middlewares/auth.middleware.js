@@ -57,6 +57,10 @@ export const protect = async (req, res, next) => {
       return res.status(401).json({ message: "User not found" });
     }
 
+    if (req.user.status && String(req.user.status).trim().toLowerCase() === "inactive") {
+      return res.status(403).json({ message: "Account is inactive. Access revoked." });
+    }
+
     const tenant = req.tenant;
     if (tenant && tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)) {
       const isTrial = tenant.plan_status === "trial";
@@ -118,7 +122,7 @@ export const adminOnly = (req, res, next) => {
 };
 
 export const adminCreateOnly = (req, res, next) => {
-  const roleName = req.user.role.name?.toLowerCase();
+  const roleName = req.user.role?.name?.toLowerCase();
   if (roleName !== "admin") {
     return res.status(403).json({ message: "Access denied: Admins only" });
   }
@@ -127,7 +131,7 @@ export const adminCreateOnly = (req, res, next) => {
 
 export const adminOrAssigned = async (req, res, next) => {
   try {
-    const roleName = req.user.role.name?.toLowerCase();
+    const roleName = req.user.role?.name?.toLowerCase();
 
     const Lead = req.tenantDB
       ? getTenantModels(req.tenantDB).Lead
@@ -230,7 +234,7 @@ export const adminOrSales = (req, res, next) => {
 };
 
 export const adminOrSelf = (req, res, next) => {
-  const roleName = req.user.role.name?.toLowerCase();
+  const roleName = req.user.role?.name?.toLowerCase();
   if (roleName === "admin" || req.user._id.toString() === req.params.id) return next();
   return res.status(403).json({ message: "Access denied" });
 };

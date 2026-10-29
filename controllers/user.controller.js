@@ -364,6 +364,13 @@ const loginUser = async (req, res) => {
     if (!isMatch)
       return res.status(401).json({ success: false, message: "Invalid email or password" });
 
+    if (user.status && String(user.status).trim().toLowerCase() === "inactive") {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is deactivated. Please contact your administrator.",
+      });
+    }
+
     if (tenant && (tenant.plan_status === "expired" || (tenant.plan_end_date && new Date() > new Date(tenant.plan_end_date)))) {
       const isTrial = tenant.plan_status === "trial";
       const expiryDate = tenant.plan_end_date
