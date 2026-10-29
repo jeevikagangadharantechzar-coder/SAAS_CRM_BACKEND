@@ -9,6 +9,14 @@ const permissionsSchema = new mongoose.Schema(
     create_deal:         { type: Boolean, default: false },
     deals_pipeline:      { type: Boolean, default: false },
     invoices:            { type: Boolean, default: false },
+    // Separate from `invoices` (view/manage) — lets Admin grant invoice
+    // creation to any role (Sales, Finance, ...) instead of hardcoding names.
+    create_invoice:      { type: Boolean, default: false },
+    // See every invoice / every deal (read-only for deals) like Admin does,
+    // instead of only the ones assigned to or created by the user — e.g. for
+    // a Finance role that manages billing across all reps.
+    invoices_view_all:   { type: Boolean, default: false },
+    deals_view_all:      { type: Boolean, default: false },
     proposal:            { type: Boolean, default: false },
     // Independent permission for the Document module (deals-document /
     // lead-document pages) — previously had no dedicated key at all and was

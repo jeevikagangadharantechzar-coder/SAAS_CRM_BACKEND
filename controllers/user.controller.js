@@ -185,7 +185,7 @@ const createUser = async (req, res) => {
     const profileImage = req.file ? req.file.filename : null;
     const user = await User.create({
       firstName, lastName, email, password: hashedPassword, mobileNumber,
-      role, status, gender, address, dateOfBirth, profileImage,
+      role, status, gender, address, dateOfBirth: dateOfBirth || null, profileImage,
       currency: req.user.currency,
     });
     res.status(201).json(user);
@@ -310,7 +310,7 @@ const updateUser = async (req, res) => {
 
     const updatedUser = await User.findByIdAndUpdate(
       id,
-      { firstName, lastName, email, mobileNumber, role, status, gender, address, dateOfBirth, profileImage },
+      { firstName, lastName, email, mobileNumber, role, status, gender, address, dateOfBirth: dateOfBirth || null, profileImage },
       { new: true, runValidators: true }
     ).populate("role");
 

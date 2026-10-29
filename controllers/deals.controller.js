@@ -17,6 +17,7 @@ import {
   notifyDealClosedWonAndArchiveTask,
   notifyDealStageChangedByAdmin,
 } from "../services/taskNotificationService.js";
+import { hasRolePermission } from "../middlewares/auth.middleware.js";
 import { handleReassignmentOptions } from "../services/taskReassignmentService.js";
 
 // Legacy fallbacks
@@ -352,7 +353,7 @@ export default {
       const { Deal, Task, Target } = getModels(req);
       const isAdmin = req.user.role.name === "Admin";
       let query = {};
-      if (!isAdmin) query.assignedTo = req.user._id;
+      if (!hasRolePermission(req, "deals_view_all")) query.assignedTo = req.user._id;
 
       // Rejected deals always live on the dedicated Reject Deals page instead —
       // never in the main list, for anyone (including Admin). Closed Won deals
@@ -488,7 +489,7 @@ export default {
         .populate("items.category", "name color icon");
 
       if (!deal) return res.status(404).json({ message: "Deal not found" });
-      if (req.user.role.name !== "Admin" && deal.assignedTo && deal.assignedTo._id.toString() !== req.user._id.toString())
+      if (!hasRolePermission(req, "deals_view_all") && deal.assignedTo && deal.assignedTo._id.toString() !== req.user._id.toString())
         return res.status(403).json({ message: "Access denied: You can only view deals assigned to you" });
 
       res.status(200).json(deal);
@@ -981,7 +982,9 @@ export default {
 
       const roleName = req.user.role.name?.toLowerCase();
       let query = { _id: { $in: ids } };
-      if (roleName === "sales") query.assignedTo = req.user._id;
+      // Only Admin may bulk-delete other users' deals — every other role
+      // (Sales, Finance, Accounts, custom) is limited to their own.
+      if (roleName !== "admin") query.assignedTo = req.user._id;
 
       const deals = await Deal.find(query).populate("assignedTo");
       for (const deal of deals) {
@@ -1265,7 +1268,7 @@ export default {
     try {
       const { Deal } = getModels(req);
       let query = { stage: { $nin: ["Closed Won", "Closed Lost"] } };
-      if (req.user.role.name !== "Admin") query.assignedTo = req.user._id;
+      if (!hasRolePermission(req, "deals_view_all")) query.assignedTo = req.user._id;
       const deals = await Deal.find(query).populate("assignedTo", "firstName lastName email").sort({ createdAt: -1 }).limit(10);
       res.status(200).json(deals);
     } catch (error) { console.error("Pending deals error:", error); res.status(500).json({ message: "Server error" }); }
@@ -1357,9 +1360,10 @@ export default {
     try {
       const { Deal } = getModels(req);
       const query = {};
-      if (req.user.role.name !== "Admin") query.assignedTo = req.user._id;
+      const viewAll = hasRolePermission(req, "deals_view_all");
+      if (!viewAll) query.assignedTo = req.user._id;
 
-      const hiddenStages = req.user.role.name !== "Admin" ? ["Rejected", "Closed Won"] : ["Rejected"];
+      const hiddenStages = !viewAll ? ["Rejected", "Closed Won"] : ["Rejected"];
       query.stage = { $nin: hiddenStages };
 
       // Optional date range filter (by createdAt) — omit either/both to

@@ -46,12 +46,29 @@ router.get("/exchange-rate", async (req, res) => {
   }
 });
 
+import { validateRequest } from "../middlewares/validate.middleware.js";
+import {
+  validateCreateCategory,
+  validateUpdateCategory,
+  validateCreateCatalogItem,
+} from "../validators/catalog.validator.js";
+
 // Categories routes
 // Listing categories: available to users with products_services permission
 router.get("/categories", requirePermission("products_services"), getCatalogCategories);
 // Managing categories: requires manage_catalog_categories or Admin
-router.post("/categories", requirePermission("manage_catalog_categories"), createCatalogCategory);
-router.put("/categories/:id", requirePermission("manage_catalog_categories"), updateCatalogCategory);
+router.post(
+  "/categories",
+  requirePermission("manage_catalog_categories"),
+  validateRequest(validateCreateCategory),
+  createCatalogCategory
+);
+router.put(
+  "/categories/:id",
+  requirePermission("manage_catalog_categories"),
+  validateRequest(validateUpdateCategory),
+  updateCatalogCategory
+);
 router.delete("/categories/:id", requirePermission("manage_catalog_categories"), deleteCatalogCategory);
 
 // Catalog Items routes
@@ -60,7 +77,7 @@ router.get("/", requirePermission("products_services"), getCatalogItems);
 router.get("/:id", requirePermission("products_services"), getCatalogItemById);
 
 // Create, update, toggle, delete: Admin only (or authorized admins)
-router.post("/", adminOnly, createCatalogItem);
+router.post("/", adminOnly, validateRequest(validateCreateCatalogItem), createCatalogItem);
 router.put("/:id", adminOnly, updateCatalogItem);
 router.patch("/:id/toggle-status", adminOnly, toggleCatalogItemStatus);
 router.delete("/:id", adminOnly, deleteCatalogItem);

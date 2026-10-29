@@ -6,6 +6,8 @@ import {
   adminOrAssigned,
   adminCreateOnly,
   adminOrSelf,
+  requirePermission,
+  isSalesLike,
 } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
 import { getTenantModels } from "../models/tenant/index.js";
@@ -18,22 +20,24 @@ import {
   disableUserMfa
 } from "../controllers/mfa.controller.js";
 
+import { authRateLimiter, passwordResetLimiter } from "../middlewares/rateLimiter.middleware.js";
+
 const router = express.Router();
 
-router.post("/login", indexControllers.usersController.loginUser);
-router.post("/login/verify-mfa", indexControllers.usersController.verifyMfaLogin);
+router.post("/login", authRateLimiter, indexControllers.usersController.loginUser);
+router.post("/login/verify-mfa", authRateLimiter, indexControllers.usersController.verifyMfaLogin);
 
 // Export data during expiration (Public route, verified by password)
-router.post("/export-expired", indexControllers.usersController.exportExpiredData);
-router.post("/verify-export-credentials", indexControllers.usersController.verifyExportCredentials);
+router.post("/export-expired", authRateLimiter, indexControllers.usersController.exportExpiredData);
+router.post("/verify-export-credentials", authRateLimiter, indexControllers.usersController.verifyExportCredentials);
 
 // MFA Routes
 router.post("/mfa/setup", protect, generateUserMfa);
 router.post("/mfa/enable", protect, verifyAndEnableUserMfa);
 router.post("/mfa/disable", protect, disableUserMfa);
 
-router.post("/forgot-password", indexControllers.usersController.forgotPassword);
-router.post("/reset-password/:token", indexControllers.usersController.resetPassword);
+router.post("/forgot-password", passwordResetLimiter, indexControllers.usersController.forgotPassword);
+router.post("/reset-password/:token", passwordResetLimiter, indexControllers.usersController.resetPassword);
 
 // Polled by a client waiting on device-login approval — no token exists yet
 // at this point, so this stays public (tenant is still resolved via the URL
@@ -57,10 +61,15 @@ router.post("/dismiss-plan-update", protect, indexControllers.usersController.di
 // permission (still requires being logged in as Admin or Sales).
 router.get("/", protect, adminOrSales, indexControllers.usersController.getUsers);
 
+// Also open to any role granted "create_invoice" — the invoice form's
+// "Assign To" dropdown is populated from here.
 router.get(
   "/sales",
   protect,
-  adminOrSales,
+  (req, res, next) =>
+    isSalesLike(req.user.role?.name)
+      ? next()
+      : requirePermission("create_invoice")(req, res, next),
   async (req, res) => {
     try {
       const User = req.tenantDB ? getTenantModels(req.tenantDB).User : UserLegacy;

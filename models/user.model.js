@@ -51,10 +51,8 @@ const userSchema = new mongoose.Schema(
     address: String,
 
 
-    dateOfBirth: {
-      type: Date,
-      required: [true, "Date of birth is required"],
-    },
+    // Optional — not every user wants to share it.
+    dateOfBirth: { type: Date, default: null },
 
 
     profileImage: String,

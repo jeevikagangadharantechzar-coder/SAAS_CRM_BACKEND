@@ -1,6 +1,6 @@
 import express from "express";
 import indexController from "../controllers/index.controllers.js";
-import { adminOnly, adminOrSales, protect, requirePermission } from "../middlewares/auth.middleware.js";
+import { protect, requirePermission } from "../middlewares/auth.middleware.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
 const router = express.Router();
@@ -12,10 +12,10 @@ router.use(checkPlanFeature("invoices"));
 // requirePermission closes both gaps for every route in this file at once.
 router.use(protect, requirePermission("invoices"));
 
-//save the invoice
+//save the invoice — Admin, or any role granted "create_invoice"
 router.post(
   "/createinvoice",
-  adminOrSales,
+  requirePermission("create_invoice"),
   indexController.invoiceController.createInvoice
 );
 

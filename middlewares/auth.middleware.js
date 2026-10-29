@@ -97,9 +97,21 @@ export const protect = async (req, res, next) => {
   }
 };
 
+// Roles that get the same route access as Sales (adminOnly / adminOrSales).
+// Access only — "sales team" membership (lead auto-assignment, leaderboard,
+// location tracking, sales stats) still checks for the "sales" name alone.
+export const SALES_LIKE_ROLES = ["sales", "finance", "accounts"];
+export const isSalesLike = (roleName) =>
+  SALES_LIKE_ROLES.includes(String(roleName || "").toLowerCase());
+
+// True for Admin, or any role with the given permission toggle on — for
+// controllers that widen a user's data scope (e.g. invoices_view_all).
+export const hasRolePermission = (req, key) =>
+  req.user?.role?.name?.toLowerCase() === "admin" || !!req.user?.role?.permissions?.[key];
+
 export const adminOnly = (req, res, next) => {
   const roleName = req.user.role.name?.toLowerCase();
-  if (roleName !== "admin" && roleName !== "sales") {
+  if (roleName !== "admin" && !isSalesLike(roleName)) {
     return res.status(403).json({ message: "Access denied: Admins only" });
   }
   next();
@@ -188,6 +200,10 @@ export const adminOrAssignedToDeal = async (req, res, next) => {
 
     if (roleName === "admin") return next();
 
+    // "View All Deals" grants read access to any deal; writes still require
+    // being the assignee.
+    if (req.method === "GET" && req.user.role?.permissions?.deals_view_all) return next();
+
     if (deal.assignedTo && deal.assignedTo.toString() === req.user._id.toString()) {
       // Disabled (overdue, pending admin reassignment) deals are read-only for
       // the sales person — GET is fine, any write is blocked until reassigned.
@@ -209,8 +225,8 @@ export const adminOrAssignedToDeal = async (req, res, next) => {
 
 export const adminOrSales = (req, res, next) => {
   const roleName = req.user.role.name?.toLowerCase();
-  if (roleName === "admin" || roleName === "sales") return next();
-  return res.status(403).json({ message: "Access denied: Admins or Sales only" });
+  if (roleName === "admin" || isSalesLike(roleName)) return next();
+  return res.status(403).json({ message: "Access denied: Admins, Sales, Finance or Accounts only" });
 };
 
 export const adminOrSelf = (req, res, next) => {

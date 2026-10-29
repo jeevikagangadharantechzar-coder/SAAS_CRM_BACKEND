@@ -11,6 +11,7 @@ import InvoiceLegacy from "../models/invoice.model.js";
 import SettingsLegacy from "../models/Settings.js";
 import { sendEmailWithAttachments } from "../utils/gmailService.js";
 import { sendNotification, sendNotificationToAdmins } from "../services/notificationService.js";
+import { hasRolePermission } from "../middlewares/auth.middleware.js";
 import DocumentAssignmentLegacy from "../models/schemas/documentAssignmentSchema.js";
 
 const getInvoice = (req) => req.tenantDB ? getTenantModels(req.tenantDB).Invoice : InvoiceLegacy;
@@ -71,9 +72,7 @@ const getBrowser = async () => {
 export default {
   createInvoice: async (req, res) => {
     try {
-      if (!req.user?.role || req.user.role.name?.toLowerCase() !== "admin")
-        return res.status(403).json({ error: "Only Admin can create invoices" });
-
+      // Access is enforced on the route by requirePermission("create_invoice").
       const Invoice = getInvoice(req);
       let {
         items, tax = 0, taxType = "percentage", discountValue = 0, discountType = "percentage",
@@ -179,8 +178,11 @@ export default {
       if (start && end) {
         filter.createdAt = { $gte: new Date(start), $lte: new Date(end + "T23:59:59.999Z") };
       }
-      if (roleName === "sales") filter.assignTo = req.user._id;
-      else if (roleName !== "admin") return res.status(403).json({ error: "Access denied" });
+      // Admin and roles with "View All Invoices" see everything; any other
+      // role (route already requires "invoices") sees invoices assigned to or
+      // created by them.
+      if (!hasRolePermission(req, "invoices_view_all"))
+        filter.$or = [{ assignTo: req.user._id }, { createdBy: req.user._id }];
 
       const invoices = await Invoice.find(filter)
         .populate("assignTo", "firstName lastName email")
