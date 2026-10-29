@@ -29,6 +29,20 @@ const softDeleteInvoiceAssignments = async (req, invoiceIds) => {
 // Statuses where an invoice is considered (at least partly) paid and tracks amountPaid
 const PAID_FAMILY = ["paid", "partially_paid"];
 
+// Invoice PDFs use the Company Logo from Settings (falling back to the
+// separate invoice/template logo only when no company logo is set).
+const getInvoiceLogoDataURI = (settings) => {
+  const logoRelativePath = settings?.logo || settings?.invoiceLogo;
+  if (!logoRelativePath) return "";
+  const logoPath = path.join(process.cwd(), logoRelativePath);
+  if (!fs.existsSync(logoPath)) return "";
+  const ext = path.extname(logoPath).substring(1).toLowerCase();
+  // "image/svg" / "image/jpg" aren't real MIME types — the browser drops the image
+  const mime = { svg: "svg+xml", jpg: "jpeg" }[ext] || ext;
+  const base64 = fs.readFileSync(logoPath, { encoding: "base64" });
+  return `data:image/${mime};base64,${base64}`;
+};
+
 let browserInstance = null;
 const getBrowser = async () => {
   if (!browserInstance || !browserInstance.isConnected()) {
@@ -384,18 +398,7 @@ export default {
       const Settings = req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
       const settings = await Settings.findOne();
 
-      let logoDataURI = "";
-      if (settings) {
-        const logoRelativePath = settings.invoiceLogo || settings.logo;
-        if (logoRelativePath) {
-          const logoPath = path.join(process.cwd(), logoRelativePath);
-          if (fs.existsSync(logoPath)) {
-            const ext = path.extname(logoPath).substring(1);
-            const base64 = fs.readFileSync(logoPath, { encoding: 'base64' });
-            logoDataURI = `data:image/${ext};base64,${base64}`;
-          }
-        }
-      }
+      const logoDataURI = getInvoiceLogoDataURI(settings);
 
       const templatePath = path.join(process.cwd(), "views", "invoiceTemplate.ejs");
       if (!fs.existsSync(templatePath)) return res.status(500).json({ error: "Template file not found" });
@@ -430,25 +433,17 @@ export default {
       const invoice = await Invoice.findById(id).populate("items.deal", "dealName email value stage companyName address country phoneNumber");
       if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
-      const clientEmails = (invoice.items || []).map(i => i.deal?.email).filter(Boolean);
+      // The invoice's own client email (autofilled from the deal, editable) wins over the deal's
+      const clientEmails = invoice.clientEmail
+        ? [invoice.clientEmail]
+        : (invoice.items || []).map(i => i.deal?.email).filter(Boolean);
       const targetEmails = toEmail ? [toEmail] : clientEmails;
       if (targetEmails.length === 0) return res.status(400).json({ error: "No client emails found in invoice deals" });
 
       const Settings = req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
       const settings = await Settings.findOne();
 
-      let logoDataURI = "";
-      if (settings) {
-        const logoRelativePath = settings.invoiceLogo || settings.logo;
-        if (logoRelativePath) {
-          const logoPath = path.join(process.cwd(), logoRelativePath);
-          if (fs.existsSync(logoPath)) {
-            const ext = path.extname(logoPath).substring(1);
-            const base64 = fs.readFileSync(logoPath, { encoding: 'base64' });
-            logoDataURI = `data:image/${ext};base64,${base64}`;
-          }
-        }
-      }
+      const logoDataURI = getInvoiceLogoDataURI(settings);
 
       const templatePath = path.join(process.cwd(), "views", "invoiceTemplate.ejs");
       if (!fs.existsSync(templatePath)) return res.status(500).json({ error: "Invoice template not found" });
@@ -462,7 +457,7 @@ export default {
       const pdfBuffer = Buffer.from(await page.pdf({ format: "A4", margin: { top: "20mm", right: "10mm", bottom: "20mm", left: "10mm" }, printBackground: true }));
       await page.close();
 
-      const subject = `Invoice #${invoice.invoicenumber || invoice._id}`;
+      const subject = `${invoice.invoiceType || "Invoice"} #${invoice.invoicenumber || invoice._id}`;
       const message = `Hello,\n\nPlease find attached your invoice #${invoice.invoicenumber || invoice._id}.\n\nIncluded deals:\n${(invoice.items || []).map(i => `- ${i.deal?.dealName || 'Unknown Deal'}`).join("\n")}\n\nThank you!`;
       const attachmentFilename = `Invoice_${invoice.invoicenumber || invoice._id}.pdf`;
 

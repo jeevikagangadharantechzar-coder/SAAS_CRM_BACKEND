@@ -75,6 +75,21 @@ const invoiceSchema = new mongoose.Schema(
     // re-fetching a live rate (which fluctuates) on every page load
     totalPreferredCurrencyValue: { type: Number, default: null },
 
+    // Document title printed in the PDF header — label only, same format/logic for all
+    invoiceType: {
+      type: String,
+      enum: ["Invoice", "Performa Invoice", "Credit Note", "Service Invoice"],
+      // Earlier spelling — converted on save so those invoices still validate
+      set: (v) => (v === "Proforma Invoice" ? "Performa Invoice" : v),
+      default: "Invoice",
+    },
+
+    // Client contact details — autofilled from the selected deal, editable per
+    // invoice. Empty falls back to the deal's own values on the PDF.
+    clientName:  { type: String, default: "" },
+    clientEmail: { type: String, default: "" },
+    clientPhone: { type: String, default: "" },
+
     // Client-side fields that vary by country/client — not always applicable
     billingAddress: { type: String, default: "" },
     clientTaxId:    { type: String, default: "" },

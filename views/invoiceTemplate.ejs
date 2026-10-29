@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Invoice</title>
+    <title><%= invoice.invoiceType || "Invoice" %></title>
     <style>
       * { box-sizing: border-box; }
       body {
@@ -163,8 +163,14 @@
     <%
       const s = locals.settings || {};
       const bank = s.bankDetails || {};
-      const hasBankDetails = bank.accountNumber || bank.accountName || bank.bankName;
+      const hasBankDetails = bank.accountNumber || bank.accountName || bank.bankName || bank.ifsc || bank.swift || bank.ifscOrSwift;
       const clientDeal = invoice.items[0]?.deal || {};
+      // Invoice's own client details (autofilled from the deal, editable) win over the deal's
+      const clientName = invoice.clientName || clientDeal.companyName || clientDeal.dealName || "Client";
+      const clientEmail = invoice.clientEmail || clientDeal.email;
+      const clientPhone = invoice.clientPhone || clientDeal.phoneNumber;
+      const documentTitle = invoice.invoiceType || "Invoice";
+      const extraTaxIds = (s.extraTaxIds || []).filter(r => r.label || r.value);
       const billingAddress = invoice.billingAddress || clientDeal.address || "";
       const terms = s.termsAndConditions || "Payment due within 30 days.";
       const invoiceDate = invoice.issueDate || invoice.createdAt;
@@ -188,7 +194,7 @@
         </div>
         <div class="header-company-name"><%= s.companyName || "Your Company" %></div>
         <div class="header-right">
-          <h1>INVOICE</h1>
+          <h1><%= documentTitle.toUpperCase() %></h1>
           <table class="detail-table meta-table">
             <tr><td class="field-name">No.</td><td><%= invoice.invoicenumber %></td></tr>
             <tr><td class="field-name">Date</td><td><%= new Date(invoiceDate).toLocaleDateString() %></td></tr>
@@ -209,14 +215,15 @@
             <% if (s.address) { %><%= s.address %><br /><% } %>
             <% if (s.email) { %>Email: <%= s.email %><br /><% } %>
             <% if (s.phone) { %>Phone: <%= s.phone %><br /><% } %>
-            <% if (s.taxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= s.taxId %><% } %>
+            <% if (s.taxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= s.taxId %><br /><% } %>
+            <% extraTaxIds.forEach(function(r) { %><%= r.label %><%= r.label && r.value ? ": " : "" %><%= r.value %><br /><% }) %>
           </td>
           <td>
-            <span class="name"><%= clientDeal.companyName || clientDeal.dealName || "Client" %></span>
+            <span class="name"><%= clientName %></span>
             <% if (billingAddress) { %><%= billingAddress %><br /><% } %>
             <% if (clientDeal.country) { %><%= clientDeal.country %><br /><% } %>
-            <% if (clientDeal.email) { %>Email: <%= clientDeal.email %><br /><% } %>
-            <% if (clientDeal.phoneNumber) { %>Phone: <%= clientDeal.phoneNumber %><br /><% } %>
+            <% if (clientEmail) { %>Email: <%= clientEmail %><br /><% } %>
+            <% if (clientPhone) { %>Phone: <%= clientPhone %><br /><% } %>
             <% if (invoice.clientTaxId) { %><%= s.taxIdLabel || "Tax ID" %>: <%= invoice.clientTaxId %><% } %>
           </td>
         </tr>
@@ -383,7 +390,9 @@
         <% if (bank.accountName) { %><tr><td class="field-name">Account Name</td><td><%= bank.accountName %></td></tr><% } %>
         <% if (bank.accountNumber) { %><tr><td class="field-name">Account Number</td><td><%= bank.accountNumber %></td></tr><% } %>
         <% if (bank.bankName) { %><tr><td class="field-name">Bank</td><td><%= bank.bankName %></td></tr><% } %>
-        <% if (bank.ifscOrSwift) { %><tr><td class="field-name">IFSC/SWIFT</td><td><%= bank.ifscOrSwift %></td></tr><% } %>
+        <% if (bank.ifsc) { %><tr><td class="field-name">IFSC Code</td><td><%= bank.ifsc %></td></tr><% } %>
+        <% if (bank.swift) { %><tr><td class="field-name">SWIFT Code</td><td><%= bank.swift %></td></tr><% } %>
+        <% if (!bank.ifsc && !bank.swift && bank.ifscOrSwift) { %><tr><td class="field-name">IFSC/SWIFT</td><td><%= bank.ifscOrSwift %></td></tr><% } %>
         <% if (bank.branch) { %><tr><td class="field-name">Branch</td><td><%= bank.branch %></td></tr><% } %>
       </table>
       <% } %>

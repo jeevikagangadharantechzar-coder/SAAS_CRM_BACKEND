@@ -94,7 +94,7 @@ export default {
 
   updateBusinessDetails: async (req, res) => {
     try {
-      const { address, phone, email, taxIdLabel, taxId, state, defaultSacCode } = req.body;
+      const { address, phone, email, taxIdLabel, taxId, extraTaxIds, state, defaultSacCode } = req.body;
       const Settings = getSettings(req);
       let settings = await Settings.findOne();
       if (!settings) settings = new Settings({});
@@ -103,6 +103,12 @@ export default {
       if (email !== undefined) settings.email = email;
       if (taxIdLabel !== undefined) settings.taxIdLabel = taxIdLabel;
       if (taxId !== undefined) settings.taxId = taxId;
+      // Drop rows left completely blank so they don't print as an empty "label:" line
+      if (Array.isArray(extraTaxIds)) {
+        settings.extraTaxIds = extraTaxIds
+          .map((r) => ({ label: String(r?.label || "").trim(), value: String(r?.value || "").trim() }))
+          .filter((r) => r.label || r.value);
+      }
       if (state !== undefined) settings.state = state;
       if (defaultSacCode !== undefined) settings.defaultSacCode = String(defaultSacCode).trim();
       await settings.save();
@@ -115,15 +121,20 @@ export default {
 
   updateBankDetails: async (req, res) => {
     try {
-      const { accountName, accountNumber, bankName, ifscOrSwift, branch } = req.body;
+      const { accountName, accountNumber, bankName, ifscOrSwift, ifsc, swift, branch } = req.body;
       const Settings = getSettings(req);
       let settings = await Settings.findOne();
       if (!settings) settings = new Settings({});
+      // Once the separate IFSC / SWIFT fields are sent, the legacy combined
+      // value is cleared so it doesn't print alongside them.
+      const usesSplitCodes = ifsc !== undefined || swift !== undefined;
       settings.bankDetails = {
         accountName: accountName ?? settings.bankDetails?.accountName ?? "",
         accountNumber: accountNumber ?? settings.bankDetails?.accountNumber ?? "",
         bankName: bankName ?? settings.bankDetails?.bankName ?? "",
-        ifscOrSwift: ifscOrSwift ?? settings.bankDetails?.ifscOrSwift ?? "",
+        ifscOrSwift: usesSplitCodes ? "" : (ifscOrSwift ?? settings.bankDetails?.ifscOrSwift ?? ""),
+        ifsc: ifsc ?? settings.bankDetails?.ifsc ?? "",
+        swift: swift ?? settings.bankDetails?.swift ?? "",
         branch: branch ?? settings.bankDetails?.branch ?? "",
       };
       await settings.save();

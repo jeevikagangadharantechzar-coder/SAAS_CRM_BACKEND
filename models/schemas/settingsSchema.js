@@ -13,6 +13,14 @@ const settingsSchema = new mongoose.Schema(
     email:       { type: String, default: "" },
     taxIdLabel:  { type: String, default: "Tax ID" }, // e.g. "GSTIN", "VAT No.", "EIN"
     taxId:       { type: String, default: "" },
+    // Additional label/value pairs shown under the Tax ID (e.g. PAN, CIN)
+    extraTaxIds: [
+      {
+        _id:   false,
+        label: { type: String, default: "" },
+        value: { type: String, default: "" },
+      },
+    ],
     // Seller's own state — compared against an invoice's clientState to decide
     // CGST+SGST (same state) vs IGST (different state) for Indian GST invoices
     state:       { type: String, default: "" },
@@ -23,7 +31,11 @@ const settingsSchema = new mongoose.Schema(
       accountName:   { type: String, default: "" },
       accountNumber: { type: String, default: "" },
       bankName:      { type: String, default: "" },
+      // Legacy combined field — kept so older saved values still print until
+      // the separate IFSC / SWIFT fields below are saved.
       ifscOrSwift:   { type: String, default: "" },
+      ifsc:          { type: String, default: "" },
+      swift:         { type: String, default: "" },
       branch:        { type: String, default: "" },
     },
 
