@@ -59,10 +59,7 @@ const getBrowser = async () => {
       }
     }
 
-    // If no direct path was found, tell Puppeteer to use the installed Chrome channel
-    if (!launchOptions.executablePath) {
-      launchOptions.channel = "chrome";
-    }
+   
 
     browserInstance = await puppeteer.launch(launchOptions);
   }

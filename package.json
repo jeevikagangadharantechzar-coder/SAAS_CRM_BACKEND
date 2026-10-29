@@ -8,7 +8,8 @@
     "seed": "node seeder/admin.seeder.js && node seeder/superAdmin.seeder.js && node seeder/emailTemplatesSeeder.js",
     "seed:templates": "node seeder/emailTemplatesSeeder.js",
     "migrate": "node scripts/migrate-to-tenant.js",
-    "seed:superadmin": "node seeder/superAdmin.seeder.js"
+    "seed:superadmin": "node seeder/superAdmin.seeder.js",
+    "postinstall": "npx puppeteer browsers install chrome"
   },
   "keywords": [],
   "author": "",
