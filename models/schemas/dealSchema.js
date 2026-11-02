@@ -14,6 +14,8 @@ const dealSchema = new mongoose.Schema({
     type: String,
     enum: ["B2B", "B2C"],
     trim: true,
+    // "" (blank select) isn't a valid enum value — treat it as not set
+    set: (v) => v || null,
   },
   discountGiven: { type: Number, default: 0, min: 0, max: 100 },
   subtotal: { type: Number, default: 0 },

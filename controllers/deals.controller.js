@@ -627,7 +627,8 @@ export default {
         ...(longitude   !== undefined && { longitude: longitude ? parseFloat(longitude) : null }),
         ...(lossReason  !== undefined && { lossReason }),
         ...(lossNotes   !== undefined && { lossNotes }),
-        ...(clientType  !== undefined && { clientType }),
+        // A blank select sends "" — store "not set" instead of an invalid enum value
+        ...(clientType  !== undefined && { clientType: clientType || null }),
         updatedAt: new Date(),
       };
 

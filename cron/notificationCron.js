@@ -67,8 +67,9 @@ const runForModels = async ({ Deal, Lead, Proposal, Invoice, Notification, User,
               { dealId: deal._id, dealName: deal.dealName, profileImage: deal.assignedTo?.profileImage },
               { title: "Deal Follow-up", followUpDate: deal.followUpDate }, tenantDB);
         }
-        deal.lastReminderAt = new Date();
-        await deal.save();
+        // Only stamp the reminder time — a full save() re-validates every field,
+        // so one bad legacy value would block this forever and repeat the reminder.
+        await Deal.updateOne({ _id: deal._id }, { $set: { lastReminderAt: new Date() } });
       } catch (e) { console.error(`[${label}] Error processing deal ${deal._id}:`, e.message); }
     }
   } catch (e) { console.error(`[${label}] Error in deals section:`, e.message); }
@@ -152,8 +153,8 @@ const runForModels = async ({ Deal, Lead, Proposal, Invoice, Notification, User,
           if (!assignedTo?._id || String(adminId) !== String(assignedTo._id))
             await sendNotification(adminId, message, "invoice", meta, { title: "Invoice Overdue", followUpDate: invoice.dueDate }, tenantDB);
         }
-        invoice.lastReminderAt = new Date();
-        await invoice.save();
+        // Same as deals above — stamp only, don't re-validate the whole invoice
+        await Invoice.updateOne({ _id: invoice._id }, { $set: { lastReminderAt: new Date() } });
       } catch (e) { console.error(`[${label}] Error processing invoice ${invoice._id}:`, e.message); }
     }
   } catch (e) { console.error(`[${label}] Error in invoices section:`, e.message); }

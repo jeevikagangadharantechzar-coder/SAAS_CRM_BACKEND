@@ -29,10 +29,10 @@ const softDeleteInvoiceAssignments = async (req, invoiceIds) => {
 // Statuses where an invoice is considered (at least partly) paid and tracks amountPaid
 const PAID_FAMILY = ["paid", "partially_paid"];
 
-// Invoice PDFs use the Company Logo from Settings (falling back to the
-// separate invoice/template logo only when no company logo is set).
+// Invoice PDFs use the Message Template Logo from Settings, same as proposals
+// and email campaigns — the Company Logo is only a fallback when none is set.
 const getInvoiceLogoDataURI = (settings) => {
-  const logoRelativePath = settings?.logo || settings?.invoiceLogo;
+  const logoRelativePath = settings?.invoiceLogo || settings?.logo;
   if (!logoRelativePath) return "";
   const logoPath = path.join(process.cwd(), logoRelativePath);
   if (!fs.existsSync(logoPath)) return "";
