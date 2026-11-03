@@ -15,6 +15,8 @@ const leadSchema = new mongoose.Schema(
       type: String,
       enum: ["B2B", "B2C"],
       trim: true,
+      // "" (blank select) isn't a valid enum value — treat it as not set
+      set: (v) => v || null,
     },
     industry:    { type: String },
     requirement: { type: String },

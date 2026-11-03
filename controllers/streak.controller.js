@@ -142,7 +142,8 @@ export default {
       if (!currentUser) return res.status(401).json({ success: false, error: "Unauthorized" });
       const { User, Deal, Lead, Role } = getModels(req);
       const currentUserId = currentUser._id.toString();
-      const timeZone = req.headers['x-timezone'] || req.headers['timezone'] || "Asia/Kolkata";
+      // Also called internally (dashboard overview, AI chat) with a copied/mock req that has no headers
+      const timeZone = req.headers?.['x-timezone'] || req.headers?.['timezone'] || "Asia/Kolkata";
 
       let userRoleName = "";
       if (typeof currentUser.role === "string") userRoleName = currentUser.role;

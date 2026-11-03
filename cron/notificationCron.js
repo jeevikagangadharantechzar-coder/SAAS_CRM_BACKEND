@@ -98,8 +98,8 @@ const runForModels = async ({ Deal, Lead, Proposal, Invoice, Notification, User,
         await sendNotification(lead.assignTo._id, `Lead follow-up due: ${lead.leadName || "Unnamed"}`, "followup",
           { leadId: lead._id, leadName: lead.leadName, profileImage: lead.assignTo?.profileImage },
           { title: "Lead Follow-up", followUpDate: lead.followUpDate }, tenantDB);
-        lead.lastReminderAt = new Date();
-        await lead.save();
+        // Same as deals above — stamp only, don't re-validate the whole lead
+        await Lead.updateOne({ _id: lead._id }, { $set: { lastReminderAt: new Date() } });
       } catch (e) { console.error(`[${label}] Error processing lead ${lead._id}:`, e.message); }
     }
   } catch (e) { console.error(`[${label}] Error in leads section:`, e.message); }
