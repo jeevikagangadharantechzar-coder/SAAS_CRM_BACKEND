@@ -1,6 +1,6 @@
 import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
-import { protect, adminOrAssigned, adminOnly, adminOrSales, requirePermission } from "../middlewares/auth.middleware.js";
+import { protect, adminOrAssigned, adminOnly, adminOrSales, requirePermission, salesLikeOrPermission } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
@@ -29,7 +29,7 @@ router.post("/bulk-import", adminOrSales, indexControllers.leadsController.bulkI
 //  CREATE ROUTE
 router.post(
   "/create",
-  adminOrSales,
+  salesLikeOrPermission("create_lead"),
   upload.fields([{ name: "attachments", maxCount: 5 }, { name: "images", maxCount: 5 }]),
   indexControllers.leadsController.createLead
 );

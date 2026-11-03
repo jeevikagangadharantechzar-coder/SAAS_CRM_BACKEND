@@ -6,6 +6,7 @@ import {
   adminOrSales,
   adminOrAssignedToDeal,
   requirePermission,
+  salesLikeOrPermission,
 } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/upload.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
@@ -63,7 +64,7 @@ router.patch(
 // Create manual deal
 router.post(
   "/createManual",
-  adminOnly,
+  salesLikeOrPermission("create_deal"),
   upload.fields([{ name: "attachments", maxCount: 10 }, { name: "images", maxCount: 10 }]),
   indexControllers.dealsController.createManualDeal
 );

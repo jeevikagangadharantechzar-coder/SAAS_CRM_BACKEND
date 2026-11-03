@@ -255,3 +255,8 @@ export const requirePermission = (...keys) => (req, res, next) => {
   if (keys.some((key) => permissions[key])) return next();
   return res.status(403).json({ message: "Access denied: your role does not have permission for this feature" });
 };
+
+// Admin and sales-like roles keep their existing access; any other role gets
+// in when the Admin has ticked the given toggle (e.g. "create_deal").
+export const salesLikeOrPermission = (key) => (req, res, next) =>
+  isSalesLike(req.user.role?.name) ? next() : requirePermission(key)(req, res, next);
