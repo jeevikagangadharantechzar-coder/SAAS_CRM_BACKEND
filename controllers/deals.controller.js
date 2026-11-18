@@ -24,10 +24,40 @@ import { handleReassignmentOptions } from "../services/taskReassignmentService.j
 import DealLegacy         from "../models/deals.model.js";
 import LeadLegacy         from "../models/leads.model.js";
 import NotificationLegacy from "../models/notification.model.js";
+import InvoiceLegacy      from "../models/invoice.model.js";
+import ProposalLegacy     from "../models/proposal.model.js";
 
 const getModels = (req) => {
   if (req.tenantDB) return getTenantModels(req.tenantDB);
   return { Deal: DealLegacy, Lead: LeadLegacy, Notification: NotificationLegacy, Task: null, Target: null };
+};
+
+// When a deal's contact details change, push them to every invoice and
+// proposal created from that deal, since those keep their own copy (autofilled
+// at creation). Only fields that actually changed in this edit are written.
+const syncDealContactToDocuments = async (req, oldDeal, newDeal) => {
+  const Invoice  = req.tenantDB ? getTenantModels(req.tenantDB).Invoice  : InvoiceLegacy;
+  const Proposal = req.tenantDB ? getTenantModels(req.tenantDB).Proposal : ProposalLegacy;
+  const changed = (f) => String(newDeal[f] ?? "") !== String(oldDeal[f] ?? "");
+
+  const invoiceSet = {};
+  if (changed("email"))       invoiceSet.clientEmail    = newDeal.email || "";
+  if (changed("phoneNumber")) invoiceSet.clientPhone    = newDeal.phoneNumber || "";
+  if (changed("address"))     invoiceSet.billingAddress = newDeal.address || "";
+  if (changed("state"))       invoiceSet.clientState    = newDeal.state || "";
+  if (changed("companyName") || changed("dealName"))
+    invoiceSet.clientName = newDeal.companyName || newDeal.dealName || "";
+
+  const proposalSet = {};
+  // Proposal email is required — never blank it out
+  if (changed("email") && newDeal.email) proposalSet.email = newDeal.email;
+  if (changed("companyName")) proposalSet.companyName = newDeal.companyName || "";
+  if (changed("dealName") && newDeal.dealName) proposalSet.dealTitle = newDeal.dealName;
+
+  const ops = [];
+  if (Object.keys(invoiceSet).length)  ops.push(Invoice.updateMany({ "items.deal": newDeal._id }, { $set: invoiceSet }));
+  if (Object.keys(proposalSet).length) ops.push(Proposal.updateMany({ deal: newDeal._id }, { $set: proposalSet }));
+  await Promise.all(ops);
 };
 
 // Standard MDN escape so a raw search value can be dropped into a
@@ -736,6 +766,12 @@ export default {
         .populate("assignedTo", "firstName lastName email")
         .populate("notesUpdatedBy", "firstName lastName")
         .populate("followUpHistory.changedBy", "firstName lastName email");
+
+      try {
+        await syncDealContactToDocuments(req, deal, updatedDeal);
+      } catch (syncErr) {
+        console.error("Deal contact sync to invoices/proposals failed:", syncErr);
+      }
 
       if (assignTo && String(assignTo) !== oldAssignedToId) {
         notifyLeadOrDealAssigned(getModels(req), { itemType: "deal", item: updatedDeal, actorId: req.user._id, isReassignment: !!oldAssignedToId })
