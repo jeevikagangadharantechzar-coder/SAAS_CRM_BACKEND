@@ -24,6 +24,10 @@ const settingsSchema = new mongoose.Schema(
     email:       { type: String, default: "" },
     taxIdLabel:  { type: String, default: "Tax ID" },
     taxId:       { type: String, default: "" },
+    // Invoice numbering: prefix + running number. The digit count of
+    // invoiceStartNumber sets the zero-padding ("0001" -> TZI-0001).
+    invoicePrefix:      { type: String, default: "TZI-" },
+    invoiceStartNumber: { type: String, default: "0001" },
 
     bankDetails: {
       accountName:   { type: String, default: "" },

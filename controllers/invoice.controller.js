@@ -43,6 +43,44 @@ const getInvoiceLogoDataURI = (settings) => {
   return `data:image/${mime};base64,${base64}`;
 };
 
+// Sequential invoice numbers built from Settings > Business Details:
+// invoicePrefix ("TZI-") + running number starting at invoiceStartNumber ("0001").
+// The digit count of the start number sets the zero-padding. The counter lives in
+// its own "counters" collection (one per prefix), so old random-numbered invoices
+// don't affect it. Changing the start number restarts the sequence from it.
+// $inc is atomic, so simultaneous invoices never share a number; a number that is
+// already taken (e.g. by an older invoice) is skipped.
+const getNextInvoiceNumber = async (Invoice, settings) => {
+  const prefix = settings?.invoicePrefix ?? "TZI-";
+  const startStr = /^\d{1,9}$/.test(String(settings?.invoiceStartNumber || "").trim())
+    ? String(settings.invoiceStartNumber).trim() : "0001";
+  const start = parseInt(startStr, 10);
+  const width = startStr.length;
+  const counters = Invoice.db.collection("counters");
+  const key = `invoiceNumber:${prefix}`;
+
+  // (Re)start the sequence when the counter is new or the start number was changed
+  try {
+    await counters.updateOne(
+      { _id: key, start: { $ne: start } },
+      { $set: { seq: start - 1, start } },
+      { upsert: true }
+    );
+  } catch (err) {
+    if (err?.code !== 11000) throw err; // counter already set to this start by a parallel request
+  }
+
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const res = await counters.findOneAndUpdate(
+      { _id: key }, { $inc: { seq: 1 } }, { returnDocument: "after" }
+    );
+    const seq = (res?.value ?? res)?.seq;
+    const number = `${prefix}${String(seq).padStart(width, "0")}`;
+    if (!(await Invoice.exists({ invoicenumber: number }))) return number;
+  }
+  throw new Error("Could not allocate a unique invoice number");
+};
+
 let browserInstance = null;
 const getBrowser = async () => {
   if (!browserInstance || !browserInstance.isConnected()) {
@@ -143,6 +181,9 @@ export default {
         { status, amountPaid: invoiceFields.amountPaid || 0, changedAt: new Date(), changedBy: req.user._id },
       ];
 
+      const SettingsModel = req.tenantDB ? getTenantModels(req.tenantDB).Settings : SettingsLegacy;
+      const numberingSettings = await SettingsModel.findOne().select("invoicePrefix invoiceStartNumber").lean();
+      invoiceFields.invoicenumber = await getNextInvoiceNumber(Invoice, numberingSettings);
       const newInvoice = new Invoice(invoiceFields);
       await newInvoice.save();
       res.status(201).json({ message: "Invoice created successfully", invoice: newInvoice });

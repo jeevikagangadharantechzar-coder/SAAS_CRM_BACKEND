@@ -24,6 +24,10 @@ const settingsSchema = new mongoose.Schema(
     // Seller's own state — compared against an invoice's clientState to decide
     // CGST+SGST (same state) vs IGST (different state) for Indian GST invoices
     state:       { type: String, default: "" },
+    // Invoice numbering: prefix + running number. The digit count of
+    // invoiceStartNumber sets the zero-padding ("0001" -> TZI-0001).
+    invoicePrefix:      { type: String, default: "TZI-" },
+    invoiceStartNumber: { type: String, default: "0001" },
     // Default HSN/SAC code prefilled on new invoice item rows (still editable per row)
     defaultSacCode: { type: String, default: "" },
 

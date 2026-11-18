@@ -94,7 +94,17 @@ export default {
 
   updateBusinessDetails: async (req, res) => {
     try {
-      const { address, phone, email, taxIdLabel, taxId, extraTaxIds, state, defaultSacCode } = req.body;
+      const { address, phone, email, taxIdLabel, taxId, extraTaxIds, state, defaultSacCode, invoicePrefix, invoiceStartNumber } = req.body;
+      if (invoicePrefix !== undefined) {
+        const prefix = String(invoicePrefix).trim();
+        if (prefix.length > 20 || !/^[A-Za-z0-9\-_/#.]*$/.test(prefix)) {
+          return res.status(400).json({ message: "Invoice prefix can have up to 20 letters, numbers or - _ / # . characters" });
+        }
+      }
+      if (invoiceStartNumber !== undefined && String(invoiceStartNumber).trim() !== "" &&
+          !/^\d{1,9}$/.test(String(invoiceStartNumber).trim())) {
+        return res.status(400).json({ message: "Invoice starting number must contain only digits (up to 9), e.g. 0001" });
+      }
       const Settings = getSettings(req);
       let settings = await Settings.findOne();
       if (!settings) settings = new Settings({});
@@ -111,6 +121,8 @@ export default {
       }
       if (state !== undefined) settings.state = state;
       if (defaultSacCode !== undefined) settings.defaultSacCode = String(defaultSacCode).trim();
+      if (invoicePrefix !== undefined) settings.invoicePrefix = String(invoicePrefix).trim();
+      if (invoiceStartNumber !== undefined) settings.invoiceStartNumber = String(invoiceStartNumber).trim() || "0001";
       await settings.save();
       res.status(200).json({ success: true, message: "Business details updated successfully", data: settings });
     } catch (error) {
