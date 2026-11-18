@@ -13,6 +13,17 @@ import { sendEmailWithAttachments } from "../utils/gmailService.js";
 import { sendNotification, sendNotificationToAdmins } from "../services/notificationService.js";
 import { hasRolePermission } from "../middlewares/auth.middleware.js";
 import DocumentAssignmentLegacy from "../models/schemas/documentAssignmentSchema.js";
+import { propagateClientDetails, invoiceToDealFields, invoiceDealIds } from "../services/dealContactSync.service.js";
+
+// Push client details typed on an invoice to its deal(s) and every invoice/proposal of
+// that deal. Never fails the invoice request — errors are only logged.
+const syncInvoiceClientToDeals = async (req, items, changes) => {
+  if (!changes || !Object.values(changes).some((v) => v !== undefined)) return;
+  for (const dealId of invoiceDealIds(items)) {
+    try { await propagateClientDetails(req, dealId, changes); }
+    catch (err) { console.error("Invoice client-details sync failed:", err); }
+  }
+};
 
 const getInvoice = (req) => req.tenantDB ? getTenantModels(req.tenantDB).Invoice : InvoiceLegacy;
 
@@ -186,6 +197,7 @@ export default {
       invoiceFields.invoicenumber = await getNextInvoiceNumber(Invoice, numberingSettings);
       const newInvoice = new Invoice(invoiceFields);
       await newInvoice.save();
+      await syncInvoiceClientToDeals(req, newInvoice.items, invoiceToDealFields(newInvoice));
       res.status(201).json({ message: "Invoice created successfully", invoice: newInvoice });
       notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(newInvoice._id), action: "created" });
 
@@ -367,6 +379,18 @@ export default {
       const updated = await Invoice.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
         .populate("assignTo", "firstName lastName email role")
         .populate("items.deal", "dealName value stage");
+
+      // Only client fields the user actually changed on this invoice are synced, so an
+      // older invoice saved for another reason (e.g. status) can't overwrite the deal.
+      const CLIENT_FIELDS = ["clientEmail", "clientPhone", "clientName", "billingAddress", "clientState"];
+      const changedClient = {};
+      for (const f of CLIENT_FIELDS) {
+        if (req.body[f] !== undefined && String(req.body[f] ?? "").trim() !== String(invoice[f] ?? "").trim())
+          changedClient[f] = req.body[f];
+      }
+      if (updated && Object.keys(changedClient).length)
+        await syncInvoiceClientToDeals(req, updated.items, invoiceToDealFields(changedClient));
+
       res.status(200).json(updated);
       try {
         notifyUser(String(req.user._id), "invoice_updated", { invoiceId: String(updated._id), action: "updated", status: updateData.status });

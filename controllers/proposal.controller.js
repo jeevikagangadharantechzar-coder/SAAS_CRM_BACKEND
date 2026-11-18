@@ -18,7 +18,19 @@ import NotificationLegacy from "../models/notification.model.js";
 import DealLegacy         from "../models/deals.model.js";
 import SettingsLegacy     from "../models/Settings.js";
 
+import { propagateClientDetails, firstEmail } from "../services/dealContactSync.service.js";
+
 dotenv.config();
+
+// Push a changed client email on a proposal to its deal and every invoice/proposal
+// of that deal. Never fails the proposal request — errors are only logged.
+const syncProposalEmailToDeal = async (req, dealId, newEmailList, oldEmailList) => {
+  const next = firstEmail(newEmailList);
+  if (!dealId || !next) return;
+  if (oldEmailList !== undefined && next.toLowerCase() === (firstEmail(oldEmailList) || "").toLowerCase()) return;
+  try { await propagateClientDetails(req, dealId, { email: next }); }
+  catch (err) { console.error("Proposal email sync failed:", err); }
+};
 
 const getModels = (req) =>
   req.tenantDB
@@ -82,8 +94,10 @@ export default {
       const statusHistoryEntry = { status, changedAt: new Date(), changedBy: req.user._id };
 
       let proposal;
+      let previousEmail;
       if (id) {
-        const existing = await Proposal.findById(id).select("status");
+        const existing = await Proposal.findById(id).select("status email");
+        previousEmail = existing?.email;
         const statusChanged = !existing || existing.status !== status;
         proposal = await Proposal.findByIdAndUpdate(
           id,
@@ -95,6 +109,10 @@ export default {
         proposal = new Proposal({ ...proposalData, createdBy: req.user._id, statusHistory: [statusHistoryEntry] });
         await proposal.save();
       }
+
+      // New proposal: sync if its recipient differs from the deal. Edited proposal:
+      // sync only if the recipient was changed.
+      await syncProposalEmailToDeal(req, selectedDealId, proposalData.email, id ? previousEmail : undefined);
 
       res.json({ message: status === "draft" ? "Proposal saved as draft successfully!" : "Proposal saved successfully! Email is sending in background.", proposal });
 
@@ -388,6 +406,9 @@ export default {
 
       if (followUpChanged && original.deal?.assignedTo)
         await deleteNotificationsByEntity("proposal", id, original.deal.assignedTo._id, tDB);
+
+      if (email !== undefined)
+        await syncProposalEmailToDeal(req, original.deal?._id, email, original.email);
 
       res.json({ message: "Proposal updated", proposal: updated });
     } catch (error) {
