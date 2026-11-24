@@ -509,6 +509,10 @@ export default {
       if (req.user.role.name !== "Admin" && deal.assignedTo._id.toString() !== req.user._id.toString())
         return res.status(403).json({ message: "Access denied: You can only update deals assigned to you" });
 
+      // Closed Won deals keep their stage; only their other details are editable.
+      if (deal.stage === "Closed Won" && stage !== "Closed Won")
+        return res.status(403).json({ message: "The stage of a Closed Won deal cannot be changed." });
+
       const previousStage = deal.stage;
       deal.stage = stage;
       if (stage === "Closed Lost" && previousStage !== "Closed Lost") {
@@ -600,6 +604,10 @@ export default {
 
       const allowedStages = ["Qualification","Proposal Sent-Negotiation","Invoice Sent","Closed Won","Closed Lost"];
       if (stage && !allowedStages.includes(stage)) return res.status(400).json({ message: "Invalid stage" });
+
+      // Closed Won deals keep their stage; only their other details are editable.
+      if (deal.stage === "Closed Won" && stage && stage !== "Closed Won")
+        return res.status(403).json({ message: "The stage of a Closed Won deal cannot be changed." });
 
       const oldFollowUpDate = deal.followUpDate;
       const newFollowUpDateParsed = followUpDate ? new Date(followUpDate) : null;

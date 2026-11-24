@@ -46,6 +46,14 @@ saveLostDealReason : async (req, res) => {
       });
     }
 
+    // Closed Won deals keep their stage; only their other details are editable.
+    if (deal.stage === "Closed Won") {
+      return res.status(403).json({
+        success: false,
+        message: "The stage of a Closed Won deal cannot be changed.",
+      });
+    }
+
     // Create lost reason record
     const lostReason = await LostDealReason.create({
       dealId,

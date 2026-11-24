@@ -194,7 +194,10 @@ export const adminOrAssignedToDeal = async (req, res, next) => {
     // Rejected/Closed Won deals are terminal — read-only for everyone, Admin
     // included — except DELETE, which Admin can always use to permanently
     // remove a rejected deal (e.g. from the dedicated Reject Deals page).
-    const isTerminal = deal.stage === "Rejected" || deal.stage === "Closed Won";
+    // Closed Won deals can still be edited; only deleting them stays blocked.
+    const isTerminal =
+      deal.stage === "Rejected" ||
+      (deal.stage === "Closed Won" && req.method === "DELETE");
     const isAdminDelete = roleName === "admin" && req.method === "DELETE";
     if (isTerminal && req.method !== "GET" && !isAdminDelete) {
       return res.status(403).json({
