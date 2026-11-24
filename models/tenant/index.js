@@ -49,6 +49,7 @@ import externalDocumentSchema     from "../schemas/externalDocumentSchema.js";
 import documentAssignmentSchema   from "../schemas/documentAssignmentSchema.js";
 import catalogCategorySchema      from "../schemas/catalogCategorySchema.js";
 import catalogItemSchema          from "../schemas/catalogItemSchema.js";
+import leadTableConfigSchema      from "../schemas/leadTableConfigSchema.js";
 
 
 const MODEL_MAP = [
@@ -103,6 +104,7 @@ const MODEL_MAP = [
   ["DocumentAssignment",    documentAssignmentSchema],
   ["CatalogCategory",       catalogCategorySchema],
   ["CatalogItem",           catalogItemSchema],
+  ["LeadTableConfig",       leadTableConfigSchema],
 ];
 
 /**
@@ -175,5 +177,6 @@ export function getTenantModels(conn) {
     DocumentAssignment:    conn.model("DocumentAssignment"),
     CatalogCategory:       conn.model("CatalogCategory"),
     CatalogItem:           conn.model("CatalogItem"),
+    LeadTableConfig:       conn.model("LeadTableConfig"),
   };
 }

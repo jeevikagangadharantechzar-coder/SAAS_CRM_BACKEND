@@ -196,6 +196,53 @@ const validateAndCalculateDealItems = async (req, rawItems, allowPriceOverride =
   };
 };
 
+// Deal details shown in the Activity Log when they change, with the label
+// users see. Stage, assignee, follow-up and attachments have their own
+// history entries, so they're not repeated here.
+const TRACKED_DEAL_FIELDS = [
+  ["dealName", "Deal name"],
+  ["value", "Deal value"],
+  ["currency", "Currency"],
+  ["discountGiven", "Discount"],
+  ["companyName", "Company name"],
+  ["clientType", "Client type"],
+  ["phoneNumber", "Phone number"],
+  ["alternativeNumber", "Alternative number"],
+  ["email", "Email"],
+  ["alternativeEmail", "Alternative email"],
+  ["source", "Source"],
+  ["industry", "Industry"],
+  ["requirement", "Requirement"],
+  ["address", "Address"],
+  ["city", "City"],
+  ["state", "State"],
+  ["pincode", "Pincode"],
+  ["country", "Country"],
+  ["notes", "Notes"],
+];
+
+const toComparable = (v) => (v === undefined || v === null ? "" : String(v).trim());
+
+// Lists { field, from, to } for every tracked field this update changes.
+const collectDealDetailChanges = (oldDeal, updateFields) => {
+  const changes = [];
+  for (const [key, label] of TRACKED_DEAL_FIELDS) {
+    if (!(key in updateFields)) continue;
+    const from = toComparable(oldDeal[key]);
+    const to = toComparable(updateFields[key]);
+    if (from !== to) changes.push({ field: label, from, to });
+  }
+  if ("customFields" in updateFields) {
+    const valuesOf = (fields) =>
+      JSON.stringify((Array.isArray(fields) ? fields : []).map((f) => [f?.name, toComparable(f?.value)]));
+    const oldCustom = typeof oldDeal.toObject === "function" ? oldDeal.toObject().customFields : oldDeal.customFields;
+    if (valuesOf(oldCustom) !== valuesOf(updateFields.customFields)) {
+      changes.push({ field: "Custom fields", from: "", to: "" });
+    }
+  }
+  return changes;
+};
+
 export default {
   createDealFromLead: async (req, res) => {
     try {
@@ -674,8 +721,6 @@ export default {
           );
         }
       }
-      if (Object.keys(pushFields).length > 0) updateFields.$push = pushFields;
-
       if (discountGiven !== undefined) {
         updateFields.discountGiven = Number(discountGiven) || 0;
       }
@@ -740,6 +785,13 @@ export default {
           updateFields.customFields = typeof customFields === "string" ? JSON.parse(customFields) : customFields;
         } catch { /* leave customFields untouched on parse failure */ }
       }
+
+      // Activity Log: record which details this save actually changed.
+      const detailChanges = collectDealDetailChanges(deal, updateFields);
+      if (detailChanges.length > 0) {
+        pushFields.editHistory = { changes: detailChanges, editedAt: new Date(), editedBy: req.user._id };
+      }
+      if (Object.keys(pushFields).length > 0) updateFields.$push = pushFields;
 
       const updatedDeal = await Deal.findByIdAndUpdate(req.params.id, updateFields, { new: true })
         .populate("assignedTo", "firstName lastName email")
