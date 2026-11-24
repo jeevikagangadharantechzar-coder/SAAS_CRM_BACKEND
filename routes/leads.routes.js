@@ -1,6 +1,7 @@
 import express from "express";
 import indexControllers from "../controllers/index.controllers.js";
-import { protect, adminOrAssigned, adminOnly, adminOrSales, requirePermission, salesLikeOrPermission } from "../middlewares/auth.middleware.js";
+import { protect, adminOrAssigned, adminOnly, adminCreateOnly, adminOrSales, requirePermission, salesLikeOrPermission } from "../middlewares/auth.middleware.js";
+import leadTableColumnsController from "../controllers/leadTableColumns.controller.js";
 import upload from "../middlewares/upload.js";
 import checkPlanFeature from "../middlewares/checkPlanFeature.js";
 
@@ -21,6 +22,10 @@ router.post("/rejected/bulk-delete", adminOnly, indexControllers.leadsController
 router.get("/trash", adminOnly, indexControllers.leadsController.getTrashLeads);
 router.post("/trash/bulk-restore", adminOnly, indexControllers.leadsController.bulkRestoreLeads);
 router.post("/trash/bulk-delete", adminOnly, indexControllers.leadsController.bulkDeleteTrashLeads);
+
+//  TABLE COLUMN LAYOUT (chosen by Admin on the Leads page, shown to all users)
+router.get("/table-columns", leadTableColumnsController.getLeadTableColumns);
+router.put("/table-columns", adminCreateOnly, leadTableColumnsController.updateLeadTableColumns);
 
 //  IMPORT / EXPORT ROUTES
 router.get("/export", indexControllers.leadsController.exportLeads);

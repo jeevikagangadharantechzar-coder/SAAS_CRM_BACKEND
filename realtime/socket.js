@@ -126,6 +126,22 @@ export const notifyUser = (userId, event, payload) => {
   console.log("Event sent:", event, "-> User:", uid);
 };
 
+// Sends an event to every connected user of one tenant (matched by the dbName
+// the client sent in its socket handshake). dbName null/undefined = sockets
+// of the legacy single-tenant setup, which connect without one.
+export const notifyTenant = (dbName, event, payload) => {
+  if (!io) return;
+  const target = dbName || null;
+  let count = 0;
+  for (const socket of io.sockets.sockets.values()) {
+    if ((socket.handshake.auth?.dbName || null) === target) {
+      socket.emit(event, payload);
+      count++;
+    }
+  }
+  console.log("Tenant event sent:", event, "-> tenant:", target, `(${count} sockets)`);
+};
+
 export const notifyAdmins = (adminIds, event, payload) => {
   adminIds.forEach((id) => {
     redisPub.publish("socket_broadcast", JSON.stringify({ userId: id, event, payload }));
