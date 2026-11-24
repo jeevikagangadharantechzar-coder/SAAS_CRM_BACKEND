@@ -70,19 +70,28 @@
         letter-spacing: 0.2px;
         color: #1f3864;
         line-height: 1.35;
-        overflow-wrap: break-word;
-        word-break: break-word;
         text-align: center;
-        padding: 0 10px;
-        /* Floats over the Date row instead of sizing it, so a long name that wraps
-           to two lines never stretches the No./Date/Due spacing. Centred on the
-           Date line vertically; right: 98px offsets the logo column (200px) vs the
-           No./Date column (~118px) so the name sits on the page centre. */
+        padding: 0;
+        /* One line, level with "Date", centred on the PAGE. The cell sits between
+           the 200px logo column and the ~96px No./Date column, so the box is
+           pulled 9px left (to just past the logo) and stops 85px short of the
+           Date label — that makes its centre the page centre. A name wider than
+           the box starts right after the logo and runs right instead of covering
+           it. Floats over the Date row, so No./Date/Due spacing never changes. */
+        white-space: nowrap;
         position: absolute;
-        left: 0;
-        right: 98px;
+        left: -9px;
+        right: 85px;
         top: 50%;
         transform: translateY(-50%);
+      }
+      /* Very long names: smaller font, and wrap only as a last resort rather than
+         running into the No./Date column. */
+      .header-company-name.long {
+        font-size: 12.5px;
+        right: 10px;
+        white-space: normal;
+        overflow-wrap: break-word;
       }
       .header-table .name-cell { position: relative; }
       /* Shared "details table" look — used for meta, from/to, extra details, payment details */
@@ -222,7 +231,8 @@
             <td class="meta-label">No.</td><td class="meta-value"><%= invoice.invoicenumber %></td>
           </tr>
           <tr>
-            <td class="name-cell"><div class="header-company-name"><%= s.companyName || "Your Company" %></div></td>
+            <% const headerCompanyName = s.companyName || "Your Company"; %>
+            <td class="name-cell"><div class="header-company-name<%= headerCompanyName.length > 45 ? ' long' : '' %>"><%= headerCompanyName %></div></td>
             <td class="meta-label">Date</td><td class="meta-value"><%= new Date(invoiceDate).toLocaleDateString() %></td>
           </tr>
           <% if (invoice.dueDate) { %>
