@@ -131,6 +131,23 @@ const dealSchema = new mongoose.Schema({
       assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     },
   ],
+  // Every edit of the deal's details (name, value, contact, address...),
+  // oldest first — one entry per save, listing each field that changed, so
+  // the Activity Log shows edits and not just stage/assignee moves.
+  editHistory: [
+    {
+      changes: [
+        {
+          _id: false,
+          field: { type: String },
+          from:  { type: String, default: "" },
+          to:    { type: String, default: "" },
+        },
+      ],
+      editedAt: { type: Date, default: Date.now },
+      editedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    },
+  ],
   // Hides this deal from the Task Management / Target Management "Admin
   // Completed" activity feeds once Admin dismisses it there — purely a
   // feed-declutter flag, the deal record itself is untouched. Two independent

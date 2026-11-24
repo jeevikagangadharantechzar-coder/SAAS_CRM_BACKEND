@@ -36,10 +36,42 @@ export default {
         .populate("followUpHistory.changedBy", "firstName lastName")
         .populate("attachments.uploadedBy", "firstName lastName")
         .populate("assignmentHistory.assignedTo", "firstName lastName")
-        .populate("assignmentHistory.assignedBy", "firstName lastName");
+        .populate("assignmentHistory.assignedBy", "firstName lastName")
+        .populate("editHistory.editedBy", "firstName lastName")
+        .populate("convertedBy", "firstName lastName");
       if (!deal) return res.status(404).json({ message: "Deal not found" });
 
       const events = [];
+
+      if (deal.createdAt) {
+        const firstMove = (deal.stageHistory || [])[0];
+        events.push({
+          type: "deal_created",
+          description: deal.leadId ? "Deal created from lead" : "Deal created",
+          performedBy: asPerson(deal.convertedBy) || asPerson(firstMove?.movedBy),
+          timestamp: deal.createdAt,
+        });
+      }
+
+      // Detail edits — one event per save, naming every field that changed.
+      (deal.editHistory || []).forEach((h) => {
+        const parts = (h.changes || []).map((c) => {
+          if (c.field === "Custom fields" || c.field === "Notes" || c.field === "Requirement" || c.field === "Address") {
+            return `${c.field} updated`;
+          }
+          const short = (v) => (v && v.length > 40 ? v.slice(0, 40) + "…" : v);
+          return c.from
+            ? `${c.field}: "${short(c.from)}" → "${short(c.to) || "(blank)"}"`
+            : `${c.field} set to "${short(c.to)}"`;
+        });
+        if (!parts.length) return;
+        events.push({
+          type: "deal_edited",
+          description: `Deal details updated — ${parts.join(", ")}`,
+          performedBy: asPerson(h.editedBy),
+          timestamp: h.editedAt,
+        });
+      });
 
       (deal.stageHistory || []).forEach((h) => {
         events.push({
