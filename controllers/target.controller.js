@@ -40,7 +40,7 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
         ]
       }).then(ids => ids.length)
     : targetLeadsGoal > 0 && !hadSpecificLeads
-      ? Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: start, $lte: end } })
+      ? Lead.countDocuments({ assignTo: userId, trash: { $ne: true }, status: "Converted", updatedAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   // Deals won: same self-only rule — filtered by wonAt (the moment it was
@@ -50,19 +50,20 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
   // double-count it in a later one). Same no-goal-means-zero rule as leads
   // converted above.
   const dealsWonQuery = linkedDealIds && linkedDealIds.length > 0
-    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won", wonBy: userId })
+    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, trash: { $ne: true }, stage: "Closed Won", wonBy: userId })
     : targetDealsGoal > 0 && !hadSpecificDeals
-      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
+      ? Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const leadDealWonQuery = linkedLeadIds && linkedLeadIds.length > 0
     ? Deal.distinct("leadId", { 
         leadId: { $in: linkedLeadIds }, 
         stage: "Closed Won",
+        trash: { $ne: true },
         wonBy: userId
       }).then(ids => ids.length)
     : targetLeadsGoal > 0 && !hadSpecificLeads
-      ? Deal.countDocuments({ assignedTo: userId, leadId: { $ne: null }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
+      ? Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, leadId: { $ne: null }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const dealsLostQuery = (linkedDealIds && linkedDealIds.length > 0) || (linkedLeadIds && linkedLeadIds.length > 0)
@@ -71,10 +72,11 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
           ...(linkedDealIds?.length ? [{ _id: { $in: linkedDealIds } }] : []),
           ...(linkedLeadIds?.length ? [{ leadId: { $in: linkedLeadIds } }] : [])
         ],
+        trash: { $ne: true },
         stage: "Closed Lost" 
       })
     : targetDealsGoal > 0 || targetLeadsGoal > 0
-      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Lost", updatedAt: { $gte: start, $lte: end } })
+      ? Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, stage: "Closed Lost", updatedAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const [leadsConverted, dealsWon, leadDealWon, dealsLost] = await Promise.all([
@@ -676,10 +678,10 @@ export default {
         // Rejected leads are dead ends and Converted leads have already become
         // a Deal (shown below via the Deals query instead) — neither belongs
         // in this "pick leads to link" list.
-        Lead.find({ assignTo: userId })
+        Lead.find({ assignTo: userId, trash: { $ne: true }  })
           .select("leadName companyName phoneNumber email status createdAt updatedAt")
           .sort({ createdAt: -1 }),
-        Deal.find({ assignedTo: userId })
+        Deal.find({ assignedTo: userId, trash: { $ne: true } })
           .select("dealName dealTitle stage value currency companyName phoneNumber email createdAt updatedAt wonAt convertedAt convertedBy stageHistory lossReason lossNotes stageLostAt")
           .populate("convertedBy", "firstName lastName")
           .populate(STAGE_HISTORY_MOVER_POPULATE)
@@ -1245,13 +1247,13 @@ export default {
         weekCalls,
         weekMeetings,
       ] = await Promise.all([
-        Lead.countDocuments({ ...dateFilterCreatedAt }),
-        Lead.countDocuments({ ...dateFilterCreatedAt, status: { $nin: ["Converted", "Rejected"] } }),
-        Lead.countDocuments({ status: "Converted", ...dateFilterUpdatedAt }),
-        Deal.countDocuments({ ...dateFilterCreatedAt }),
-        Deal.countDocuments({ ...dateFilterCreatedAt, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
-        Deal.countDocuments({ stage: "Closed Won", ...dateFilterUpdatedAt }),
-        Deal.countDocuments({ stage: "Closed Lost", ...dateFilterUpdatedAt }),
+        Lead.countDocuments( { trash: { $ne: true },...dateFilterCreatedAt }),
+        Lead.countDocuments({ trash: { $ne: true },...dateFilterCreatedAt, status: { $nin: ["Converted", "Rejected"] } }),
+        Lead.countDocuments( { trash: { $ne: true },status: "Converted", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ trash: { $ne: true }, ...dateFilterCreatedAt }),
+        Deal.countDocuments({ trash: { $ne: true }, ...dateFilterCreatedAt, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
+        Deal.countDocuments({ trash: { $ne: true }, stage: "Closed Won", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ trash: { $ne: true }, stage: "Closed Lost", ...dateFilterUpdatedAt }),
         CallLog.countDocuments({ userId: { $exists: true }, ...dateFilterCreatedAt }),
         Activity.countDocuments({ activityCategory: "Meeting", ...dateFilterStartDate }),
         CallLog.countDocuments({ userId: { $exists: true }, createdAt: { $gte: weekStart } }),
@@ -1328,13 +1330,13 @@ export default {
         weekCalls,
         weekMeetings,
       ] = await Promise.all([
-        Lead.countDocuments({ assignTo: userId, ...dateFilterCreatedAt }),
-        Lead.countDocuments({ assignTo: userId, ...dateFilterCreatedAt, status: { $nin: ["Converted", "Rejected"] } }),
-        Lead.countDocuments({ assignTo: userId, status: "Converted", ...dateFilterUpdatedAt }),
-        Deal.countDocuments({ assignedTo: userId, ...dateFilterCreatedAt }),
-        Deal.countDocuments({ assignedTo: userId, ...dateFilterCreatedAt, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
-        Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", ...dateFilterUpdatedAt }),
-        Deal.countDocuments({ assignedTo: userId, stage: "Closed Lost", ...dateFilterUpdatedAt }),
+        Lead.countDocuments({ assignTo: userId, trash: { $ne: true }, ...dateFilterCreatedAt }),
+        Lead.countDocuments({ assignTo: userId, trash: { $ne: true }, ...dateFilterCreatedAt, status: { $nin: ["Converted", "Rejected"] } }),
+        Lead.countDocuments({ assignTo: userId, trash: { $ne: true }, status: "Converted", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, ...dateFilterCreatedAt }),
+        Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, ...dateFilterCreatedAt, stage: { $nin: ["Closed Won", "Closed Lost"] } }),
+        Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, stage: "Closed Won", ...dateFilterUpdatedAt }),
+        Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, stage: "Closed Lost", ...dateFilterUpdatedAt }),
         CallLog.countDocuments({ userId, ...dateFilterCreatedAt }),
         Activity.countDocuments({ userId, activityCategory: "Meeting", ...dateFilterStartDate }),
         CallLog.countDocuments({ userId, createdAt: { $gte: weekStart } }),
@@ -1870,7 +1872,7 @@ export default {
               if (completedLeadsForTask.length > 0 || completedDealsForTask.length > 0 || retainedRemainingLeads.length > 0 || retainedRemainingDeals.length > 0) {
                 t.leadRefs = [...completedLeadsForTask, ...retainedRemainingLeads];
                 t.dealRefs = [...completedDealsForTask, ...retainedRemainingDeals];
-                t.leadRef = t.leadRefs.length > 0 ? t.leadRefs[t.leadRefs.length - 1] : null;
+                t .leadRef = t.leadRefs.length > 0 ? t.leadRefs[t.leadRefs.length - 1] : null;
                 t.dealRef = t.dealRefs.length > 0 ? t.dealRefs[t.dealRefs.length - 1] : null;
                 
                 if (retainedRemainingLeads.length === 0 && retainedRemainingDeals.length === 0) {

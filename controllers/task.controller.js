@@ -34,23 +34,24 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
         ]
       }).then(ids => ids.length)
     : targetLeadsGoal > 0 && !hadSpecificLeads
-      ? Lead.countDocuments({ assignTo: userId, status: "Converted", updatedAt: { $gte: start, $lte: end } })
+      ? Lead.countDocuments({ assignTo: userId, trash: { $ne: true }, status: "Converted", updatedAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const dealsWonQuery = linkedDealIds && linkedDealIds.length > 0
-    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, stage: "Closed Won", wonBy: userId })
+    ? Deal.countDocuments({ _id: { $in: linkedDealIds }, trash: { $ne: true }, stage: "Closed Won", wonBy: userId })
     : targetDealsGoal > 0 && !hadSpecificDeals
-      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
+      ? Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const leadDealWonQuery = linkedLeadIds && linkedLeadIds.length > 0
     ? Deal.distinct("leadId", { 
         leadId: { $in: linkedLeadIds }, 
         stage: "Closed Won",
+        trash: { $ne: true },
         wonBy: userId
       }).then(ids => ids.length)
     : targetLeadsGoal > 0 && !hadSpecificLeads
-      ? Deal.countDocuments({ assignedTo: userId, leadId: { $ne: null }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
+      ? Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, leadId: { $ne: null }, stage: "Closed Won", wonAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const dealsLostQuery = (linkedDealIds && linkedDealIds.length > 0) || (linkedLeadIds && linkedLeadIds.length > 0)
@@ -59,10 +60,11 @@ async function computeActuals(models, userId, startDate, endDate, linkedLeadIds 
           ...(linkedDealIds?.length ? [{ _id: { $in: linkedDealIds } }] : []),
           ...(linkedLeadIds?.length ? [{ leadId: { $in: linkedLeadIds } }] : [])
         ],
+        trash: { $ne: true },
         stage: "Closed Lost" 
       })
     : targetDealsGoal > 0 || targetLeadsGoal > 0
-      ? Deal.countDocuments({ assignedTo: userId, stage: "Closed Lost", updatedAt: { $gte: start, $lte: end } })
+      ? Deal.countDocuments({ assignedTo: userId, trash: { $ne: true }, stage: "Closed Lost", updatedAt: { $gte: start, $lte: end } })
       : Promise.resolve(0);
 
   const [leadsConverted, dealsWon, leadDealWon, dealsLost] = await Promise.all([

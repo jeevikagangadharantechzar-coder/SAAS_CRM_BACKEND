@@ -123,8 +123,10 @@ function toPlainDateMap(mapField) {
 }
 
 export function attachLinkedArrays(taskObj) {
-  taskObj.leadRefs = (taskObj.leadRefs && taskObj.leadRefs.length) ? taskObj.leadRefs : (taskObj.leadRef ? [taskObj.leadRef] : []);
-  taskObj.dealRefs = (taskObj.dealRefs && taskObj.dealRefs.length) ? taskObj.dealRefs : (taskObj.dealRef ? [taskObj.dealRef] : []);
+  taskObj.leadRefs = ((taskObj.leadRefs && taskObj.leadRefs.length) ? taskObj.leadRefs : (taskObj.leadRef ? [taskObj.leadRef] : []))
+    .filter(l => l && l.trash !== true);
+  taskObj.dealRefs = ((taskObj.dealRefs && taskObj.dealRefs.length) ? taskObj.dealRefs : (taskObj.dealRef ? [taskObj.dealRef] : []))
+    .filter(d => d && d.trash !== true);
   taskObj.leadDueDates = toPlainDateMap(taskObj.leadDueDates);
   taskObj.dealDueDates = toPlainDateMap(taskObj.dealDueDates);
   return taskObj;
